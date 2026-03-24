@@ -40,13 +40,14 @@ OCRと意味分析は役割が異なるフレームワークで分担する。
 ```swift
 @Generable
 struct ParsedCard {
-    @Guide("氏名")      var name: String
-    @Guide("会社名")    var company: String
-    @Guide("役職")      var title: String
-    @Guide("電話番号")  var phone: String
-    @Guide("メールアドレス") var email: String
-    @Guide("住所")      var address: String
-    @Guide("WebサイトURL")  var website: String
+    @Guide("姓（ファミリーネーム）")  var lastName: String
+    @Guide("名（ファーストネーム）")  var firstName: String
+    @Guide("会社名")                  var company: String
+    @Guide("役職")                    var title: String
+    @Guide("電話番号")                var phone: String
+    @Guide("メールアドレス")          var email: String
+    @Guide("住所")                    var address: String
+    @Guide("WebサイトURL")            var website: String
 }
 ```
 
@@ -105,7 +106,8 @@ Meishi/
 | 属性名 | 型 | 備考 |
 |---|---|---|
 | id | UUID | 主キー |
-| name | String | 氏名 |
+| lastName | String | 姓 |
+| firstName | String | 名 |
 | company | String | 会社名 |
 | title | String | 役職 |
 | email | String | メールアドレス |
