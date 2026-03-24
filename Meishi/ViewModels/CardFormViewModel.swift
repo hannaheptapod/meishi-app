@@ -20,6 +20,9 @@ class CardFormViewModel: ObservableObject {
     @Published var isProcessingOCR: Bool = false
     @Published var ocrErrorMessage: String? = nil
 
+    // モデル未取得時にダウンロード同意アラートを表示するフラグ
+    @Published var shouldPromptLLMDownload: Bool = false
+
     // 撮影した名刺画像（保存用）
     var capturedImageData: Data? = nil
 
@@ -81,7 +84,7 @@ class CardFormViewModel: ObservableObject {
             if #available(iOS 18.0, *) {
                 await populateWithFoundationModels(lines: lines)
             } else {
-                populateWithClassifier(lines: lines)
+                await populateWithLocalLLMOrClassifier(lines: lines)
             }
         } catch {
             ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
@@ -95,7 +98,6 @@ class CardFormViewModel: ObservableObject {
     private func populateWithFoundationModels(lines: [String]) async {
         // NOTE: FoundationModels framework をリンク後、下のコメントを外して有効化
         // シミュレータでは動作しないため実機（iPhone 15 Pro以降）でテスト
-        populateWithClassifier(lines: lines)
 
         // switch SystemLanguageModel.default.availability {
         // case .available:
@@ -120,11 +122,39 @@ class CardFormViewModel: ObservableObject {
         //             self.website   = parsed.website
         //         }
         //     } catch {
-        //         populateWithClassifier(lines: lines)
+        //         await populateWithLocalLLMOrClassifier(lines: lines)
         //     }
         // default:
-        //     populateWithClassifier(lines: lines)
+        //     await populateWithLocalLLMOrClassifier(lines: lines)
         // }
+
+        // Foundation Models 未リンクのため、層2→層3へフォールバック
+        await populateWithLocalLLMOrClassifier(lines: lines)
+    }
+
+    // 層2: Core ML OSSモデル → 層3: 正規表現フォールバック
+    private func populateWithLocalLLMOrClassifier(lines: [String]) async {
+        if !LocalLLMService.shared.isModelAvailable {
+            // モデル未取得 → ダウンロード同意アラートを表示してから正規表現にフォールバック
+            shouldPromptLLMDownload = true
+            populateWithClassifier(lines: lines)
+            return
+        }
+
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
+            // 層2: Core ML OSSモデルで構造化成功
+            lastName  = parsed.lastName
+            firstName = parsed.firstName
+            company   = parsed.company
+            title     = parsed.title
+            phone     = parsed.phone
+            email     = parsed.email
+            address   = parsed.address
+            website   = parsed.website
+        } else {
+            // 層3: 正規表現フォールバック（既存）
+            populateWithClassifier(lines: lines)
+        }
     }
 
     private func populateWithClassifier(lines: [String]) {
