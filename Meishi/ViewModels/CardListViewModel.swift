@@ -6,8 +6,10 @@ import Combine
 class CardListViewModel: ObservableObject {
 
     @Published var cards: [BusinessCard] = []
+    @Published var duplicatePairs: [DuplicatePair] = []
 
     private let context: NSManagedObjectContext
+    private let checker = DuplicateChecker()
 
     init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.context = context
@@ -18,13 +20,19 @@ class CardListViewModel: ObservableObject {
 
     func fetchCards() {
         let request = BusinessCard.fetchRequest()
-        // 登録日の新しい順に並べる
         request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: false)]
         do {
             cards = try context.fetch(request)
+            detectDuplicates()
         } catch {
             print("名刺の取得に失敗しました: \(error)")
         }
+    }
+
+    // MARK: - 重複検出
+
+    func detectDuplicates() {
+        duplicatePairs = checker.findDuplicates(in: cards)
     }
 
     // MARK: - 削除
