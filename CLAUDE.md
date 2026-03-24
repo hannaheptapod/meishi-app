@@ -65,7 +65,8 @@ Meishi/
 ├── CLAUDE.md                  # このファイル
 ├── Meishi/
 │   ├── App/
-│   │   └── MeishiApp.swift
+│   │   ├── MeishiApp.swift
+│   │   └── PersistenceController.swift  # CoreData スタック管理
 │   ├── Models/
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   └── BusinessCard+CoreDataProperties.swift
@@ -73,7 +74,9 @@ Meishi/
 │   │   ├── CardListView.swift
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
-│   │   └── CameraView.swift
+│   │   ├── CameraView.swift
+│   │   ├── DuplicateListView.swift      # フェーズ4: 重複候補一覧
+│   │   └── DuplicateMergeView.swift     # フェーズ4: マージUI
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
 │   │   └── CardFormViewModel.swift
@@ -86,7 +89,11 @@ Meishi/
 │   │   └── CardFieldClassifier.swift
 │   └── Resources/
 │       └── BusinessCard.xcdatamodeld
-└── MeishiTests/
+├── MeishiTests/
+│   └── MeishiTests.swift
+└── MeishiUITests/
+    ├── MeishiUITests.swift
+    └── MeishiUITestsLaunchTests.swift
 ```
 
 ---
@@ -114,13 +121,13 @@ Meishi/
 
 ## 開発フェーズ
 
-### フェーズ 1（MVP）— 基本CRUD ✅ 着手前
+### フェーズ 1（MVP）— 基本CRUD ✅ 実装完了
 - 名刺一覧画面（CardListView）
 - 名刺詳細画面（CardDetailView）
 - 手動入力フォーム（CardFormView）
 - CoreData による保存・編集・削除
 
-### フェーズ 2 — カメラ + OCR + AI意味分析 ✅ 着手前
+### フェーズ 2 — カメラ + OCR + AI意味分析 ✅ 実装完了
 - AVFoundation でカメラ起動（CameraView）
 - Vision Framework で文字認識（OCRService）
 - Foundation Models で生テキストを `ParsedCard` 型に構造化（CardFormViewModel）
@@ -128,12 +135,12 @@ Meishi/
 - `SystemLanguageModel.availability` で起動時に利用可否を判定する
 - 認識後フォームで内容を確認・修正してから保存
 
-### フェーズ 3 — 連絡先連携 ✅ 着手前
+### フェーズ 3 — 連絡先連携 ✅ 実装完了
 - iPhoneの連絡先へのエクスポート（CNContactStore）
 - iPhoneの連絡先からのインポート
 - CSV・vCard（.vcf）エクスポート（ExportService）
 
-### フェーズ 4 — 重複チェック・名寄せ ✅ 着手前
+### フェーズ 4 — 重複チェック・名寄せ ✅ 実装完了
 - 名前・会社名の類似度判定（Levenshtein距離）
 - 重複候補の提示UI
 - マージ機能
@@ -185,9 +192,9 @@ Meishi/
 
 ## 現在の状態
 
-- [ ] GitHubリポジトリ作成済み
-- [ ] Xcodeプロジェクト作成済み
-- [ ] フェーズ1 実装完了
-- [ ] フェーズ2 実装完了
-- [ ] フェーズ3 実装完了
-- [ ] フェーズ4 実装完了
+- [x] GitHubリポジトリ作成済み
+- [x] Xcodeプロジェクト作成済み
+- [x] フェーズ1 実装完了
+- [x] フェーズ2 実装完了
+- [x] フェーズ3 実装完了
+- [x] フェーズ4 実装完了
