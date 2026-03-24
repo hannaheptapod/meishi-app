@@ -140,6 +140,14 @@ Meishi/
 
 ---
 
+## ブランチ命名規則
+
+- 機能ベースで命名する：`feature/<機能名>`
+- 例：`feature/basic-crud`、`feature/camera-ocr`、`feature/contacts-export`、`feature/duplicate-check`
+- フェーズ完了後は main にマージしてから次のブランチを切る
+
+---
+
 ## コーディング規約
 
 - Swift の命名規則に従う（型はUpperCamelCase・変数はlowerCamelCase）
