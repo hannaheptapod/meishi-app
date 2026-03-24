@@ -10,8 +10,17 @@ struct CardDetailView: View {
 
     var body: some View {
         List {
-            if let name = card.name, !name.isEmpty {
-                Section("氏名") { Text(name) }
+            if !card.fullName.isEmpty {
+                Section("氏名") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let lastName = card.lastName, !lastName.isEmpty {
+                            LabeledContent("姓", value: lastName)
+                        }
+                        if let firstName = card.firstName, !firstName.isEmpty {
+                            LabeledContent("名", value: firstName)
+                        }
+                    }
+                }
             }
             if let company = card.company, !company.isEmpty {
                 Section("会社名") { Text(company) }
@@ -21,7 +30,6 @@ struct CardDetailView: View {
             }
             if let phone = card.phone, !phone.isEmpty {
                 Section("電話番号") {
-                    // 電話番号をタップで発信
                     let digits = phone.filter { $0.isNumber || $0 == "+" }
                     if let url = URL(string: "tel:\(digits)") {
                         Link(phone, destination: url)
@@ -61,7 +69,7 @@ struct CardDetailView: View {
                 }
             }
         }
-        .navigationTitle(card.name ?? "名刺詳細")
+        .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

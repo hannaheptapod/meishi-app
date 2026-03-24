@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 名刺の新規作成・編集フォーム画面
 struct CardFormView: View {
@@ -8,10 +9,17 @@ struct CardFormView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    // MARK: - 初期化（新規作成）
+    // MARK: - 初期化（手動入力・新規作成）
 
     init(onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel())
+        self.onSave = onSave
+    }
+
+    // MARK: - 初期化（カメラ撮影画像からOCR）
+
+    init(image: UIImage, onSave: @escaping () -> Void) {
+        _viewModel = StateObject(wrappedValue: CardFormViewModel(image: image))
         self.onSave = onSave
     }
 
@@ -25,8 +33,32 @@ struct CardFormView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("基本情報") {
-                    TextField("氏名", text: $viewModel.name)
+                // OCR処理中インジケーター
+                if viewModel.isProcessingOCR {
+                    Section {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("名刺を読み取り中...")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                // OCRエラー表示
+                if let errorMessage = viewModel.ocrErrorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundColor(.red)
+                            .font(.footnote)
+                    }
+                }
+
+                Section("氏名") {
+                    TextField("姓", text: $viewModel.lastName)
+                    TextField("名", text: $viewModel.firstName)
+                }
+                Section("所属") {
                     TextField("会社名", text: $viewModel.company)
                     TextField("役職", text: $viewModel.title)
                 }
@@ -57,8 +89,11 @@ struct CardFormView: View {
                         onSave()
                         dismiss()
                     }
-                    // 氏名が空の場合は保存不可
-                    .disabled(viewModel.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    // 姓が空またはOCR処理中は保存不可
+                    .disabled(
+                        viewModel.lastName.trimmingCharacters(in: .whitespaces).isEmpty ||
+                        viewModel.isProcessingOCR
+                    )
                 }
             }
         }

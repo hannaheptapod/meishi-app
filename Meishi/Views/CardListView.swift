@@ -1,10 +1,13 @@
 import SwiftUI
+import UIKit
 
 // 名刺一覧画面
 struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
     @State private var isShowingForm = false
+    @State private var isShowingCamera = false
+    @State private var capturedImage: UIImage? = nil
 
     var body: some View {
         NavigationStack {
@@ -17,7 +20,14 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    // カメラで撮影して登録
+                    Button {
+                        isShowingCamera = true
+                    } label: {
+                        Image(systemName: "camera")
+                    }
+                    // 手動入力で登録
                     Button {
                         isShowingForm = true
                     } label: {
@@ -25,8 +35,18 @@ struct CardListView: View {
                     }
                 }
             }
+            // 手動入力フォーム
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
+            }
+            // カメラ撮影
+            .fullScreenCover(isPresented: $isShowingCamera) {
+                CameraView(capturedImage: $capturedImage)
+                    .ignoresSafeArea()
+            }
+            // 撮影完了後にOCRフォームを表示
+            .sheet(item: $capturedImage, onDismiss: viewModel.fetchCards) { image in
+                CardFormView(image: image, onSave: { capturedImage = nil })
             }
             .onAppear(perform: viewModel.fetchCards)
         }
@@ -55,10 +75,21 @@ struct CardListView: View {
             Text("名刺がありません")
                 .font(.title3)
                 .foregroundColor(.secondary)
-            Button("名刺を追加") {
-                isShowingForm = true
+            HStack(spacing: 12) {
+                Button {
+                    isShowingCamera = true
+                } label: {
+                    Label("カメラで撮影", systemImage: "camera")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    isShowingForm = true
+                } label: {
+                    Label("手動で追加", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
     }
 }
@@ -71,7 +102,8 @@ private struct CardRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(card.name ?? "（名前なし）")
+            let fullName = card.fullName
+            Text(fullName.isEmpty ? "（名前なし）" : fullName)
                 .font(.headline)
             if let company = card.company, !company.isEmpty {
                 Text(company)
@@ -86,4 +118,9 @@ private struct CardRowView: View {
         }
         .padding(.vertical, 2)
     }
+}
+
+// UIImage を sheet(item:) で使えるように Identifiable に準拠させる拡張
+extension UIImage: @retroactive Identifiable {
+    public var id: ObjectIdentifier { ObjectIdentifier(self) }
 }
