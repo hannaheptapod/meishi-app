@@ -7,18 +7,22 @@ struct CardDetailView: View {
     let onUpdate: () -> Void
 
     @State private var isShowingEditForm = false
+    @State private var exportItem: ExportItem? = nil
+    @State private var alertMessage: String? = nil
+    @State private var isShowingAlert = false
+
+    private let contactsService = ContactsService()
+    private let exportService   = ExportService()
 
     var body: some View {
         List {
             if !card.fullName.isEmpty {
                 Section("氏名") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if let lastName = card.lastName, !lastName.isEmpty {
-                            LabeledContent("姓", value: lastName)
-                        }
-                        if let firstName = card.firstName, !firstName.isEmpty {
-                            LabeledContent("名", value: firstName)
-                        }
+                    if let lastName = card.lastName, !lastName.isEmpty {
+                        LabeledContent("姓", value: lastName)
+                    }
+                    if let firstName = card.firstName, !firstName.isEmpty {
+                        LabeledContent("名", value: firstName)
                     }
                 }
             }
@@ -68,6 +72,23 @@ struct CardDetailView: View {
                         .foregroundColor(.secondary)
                 }
             }
+
+            // アクションセクション
+            Section {
+                // 連絡先に保存
+                Button {
+                    Task { await exportToContacts() }
+                } label: {
+                    Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
+                }
+
+                // vCard として共有
+                Button {
+                    shareVCard()
+                } label: {
+                    Label("vCard として共有", systemImage: "square.and.arrow.up")
+                }
+            }
         }
         .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
         .navigationBarTitleDisplayMode(.large)
@@ -79,5 +100,38 @@ struct CardDetailView: View {
         .sheet(isPresented: $isShowingEditForm, onDismiss: onUpdate) {
             CardFormView(card: card, onSave: { isShowingEditForm = false })
         }
+        .sheet(item: $exportItem) { item in
+            ShareSheet(activityItems: [item.url])
+        }
+        .alert("連絡先", isPresented: $isShowingAlert, presenting: alertMessage) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { msg in
+            Text(msg)
+        }
+    }
+
+    // MARK: - アクション
+
+    private func exportToContacts() async {
+        do {
+            try await contactsService.export(card: card)
+            alertMessage = "\(card.fullName) を連絡先に保存しました。"
+            isShowingAlert = true
+        } catch {
+            alertMessage = error.localizedDescription
+            isShowingAlert = true
+        }
+    }
+
+    private func shareVCard() {
+        do {
+            let url = try exportService.exportVCard(from: [card])
+            exportItem = ExportItem(url: url)
+        } catch {
+            alertMessage = "vCard の生成に失敗しました: \(error.localizedDescription)"
+            isShowingAlert = true
+        }
     }
 }
+
+// ShareSheet と ExportItem は CardListView.swift で定義

@@ -8,6 +8,10 @@ struct CardListView: View {
     @State private var isShowingForm = false
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
+    @State private var exportItem: ExportItem? = nil
+    @State private var isShowingExportMenu = false
+
+    private let exportService = ExportService()
 
     var body: some View {
         NavigationStack {
@@ -20,14 +24,32 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
+                // 左：エクスポートメニュー（名刺がある場合のみ）
+                if !viewModel.cards.isEmpty {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Menu {
+                            Button {
+                                exportAllCSV()
+                            } label: {
+                                Label("CSV としてエクスポート", systemImage: "tablecells")
+                            }
+                            Button {
+                                exportAllVCard()
+                            } label: {
+                                Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
+                            }
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+                }
+                // 右：カメラ・追加
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    // カメラで撮影して登録
                     Button {
                         isShowingCamera = true
                     } label: {
                         Image(systemName: "camera")
                     }
-                    // 手動入力で登録
                     Button {
                         isShowingForm = true
                     } label: {
@@ -35,18 +57,18 @@ struct CardListView: View {
                     }
                 }
             }
-            // 手動入力フォーム
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
             }
-            // カメラ撮影
             .fullScreenCover(isPresented: $isShowingCamera) {
                 CameraView(capturedImage: $capturedImage)
                     .ignoresSafeArea()
             }
-            // 撮影完了後にOCRフォームを表示
             .sheet(item: $capturedImage, onDismiss: viewModel.fetchCards) { image in
                 CardFormView(image: image, onSave: { capturedImage = nil })
+            }
+            .sheet(item: $exportItem) { item in
+                ShareSheet(activityItems: [item.url])
             }
             .onAppear(perform: viewModel.fetchCards)
         }
@@ -92,6 +114,26 @@ struct CardListView: View {
             }
         }
     }
+
+    // MARK: - エクスポート
+
+    private func exportAllCSV() {
+        do {
+            let url = try exportService.exportCSV(from: viewModel.cards)
+            exportItem = ExportItem(url: url)
+        } catch {
+            print("CSVエクスポート失敗: \(error)")
+        }
+    }
+
+    private func exportAllVCard() {
+        do {
+            let url = try exportService.exportVCard(from: viewModel.cards)
+            exportItem = ExportItem(url: url)
+        } catch {
+            print("vCardエクスポート失敗: \(error)")
+        }
+    }
 }
 
 // MARK: - 一覧行
@@ -118,6 +160,24 @@ private struct CardRowView: View {
         }
         .padding(.vertical, 2)
     }
+}
+
+// MARK: - 共有シート
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// sheet(item:) 用の Identifiable ラッパー
+struct ExportItem: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 // UIImage を sheet(item:) で使えるように Identifiable に準拠させる拡張
