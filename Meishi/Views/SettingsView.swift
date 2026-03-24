@@ -1,4 +1,6 @@
 import SwiftUI
+import CoreData
+import FoundationModels
 
 // 設定画面
 struct SettingsView: View {
@@ -30,11 +32,19 @@ struct SettingsView: View {
     private var aiEngineSection: some View {
         Section {
             // 層1: Apple Intelligence
-            LabeledContent {
-                Text("準備中")
-                    .foregroundStyle(.secondary)
-            } label: {
-                Label("Apple Intelligence", systemImage: "apple.intelligence")
+            if #available(iOS 18.0, *) {
+                LabeledContent {
+                    appleIntelligenceStatusText
+                } label: {
+                    Label("Apple Intelligence", systemImage: "apple.intelligence")
+                }
+            } else {
+                LabeledContent {
+                    Text("非対応")
+                        .foregroundStyle(.secondary)
+                } label: {
+                    Label("Apple Intelligence", systemImage: "apple.intelligence")
+                }
             }
 
             // 層2: ローカルLLM
@@ -132,6 +142,27 @@ struct SettingsView: View {
             Text("重複チェック")
         } footer: {
             Text("感度が低いほど曖昧な一致も検出します。高いほど厳密に一致した場合のみ検出します。（現在: \(String(format: "%.0f", settings.duplicateThreshold * 100))%）")
+        }
+    }
+
+    @available(iOS 18.0, *)
+    private var appleIntelligenceStatusText: some View {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return Text("利用可能")
+                .foregroundStyle(.green)
+        case .unavailable(.deviceNotEligible):
+            return Text("非対応デバイス")
+                .foregroundStyle(.secondary)
+        case .unavailable(.appleIntelligenceNotEnabled):
+            return Text("Apple Intelligence が無効")
+                .foregroundStyle(.orange)
+        case .unavailable(.modelNotReady):
+            return Text("準備中")
+                .foregroundStyle(.secondary)
+        default:
+            return Text("利用不可")
+                .foregroundStyle(.secondary)
         }
     }
 

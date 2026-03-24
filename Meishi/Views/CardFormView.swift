@@ -81,7 +81,7 @@ struct CardFormView: View {
             .navigationBarTitleDisplayMode(.inline)
             .alert("読み取り精度を向上しますか？", isPresented: $viewModel.shouldPromptLLMDownload) {
                 Button("ダウンロード（約300MB）") {
-                    Task { try? await LocalLLMService.shared.downloadModel { _ in } }
+                    Task { try? await LocalLLMService.shared.downloadModel() }
                 }
                 Button("スキップ", role: .cancel) {}
             } message: {

@@ -2,6 +2,7 @@ import Foundation
 import CoreData
 import Combine
 import UIKit
+import FoundationModels
 
 // 名刺の新規作成・編集フォームのViewModel
 class CardFormViewModel: ObservableObject {
@@ -96,40 +97,32 @@ class CardFormViewModel: ObservableObject {
     // Foundation Models（Apple Intelligence）による構造化
     @available(iOS 18.0, *)
     private func populateWithFoundationModels(lines: [String]) async {
-        // NOTE: FoundationModels framework をリンク後、下のコメントを外して有効化
-        // シミュレータでは動作しないため実機（iPhone 15 Pro以降）でテスト
-
-        // switch SystemLanguageModel.default.availability {
-        // case .available:
-        //     do {
-        //         let rawText = lines.joined(separator: "\n")
-        //         let session = LanguageModelSession()
-        //         let prompt = """
-        //             以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-        //             姓と名は必ず分けてください。
-        //             \(rawText)
-        //             """
-        //         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-        //         let parsed = response.content
-        //         await MainActor.run {
-        //             self.lastName  = parsed.lastName
-        //             self.firstName = parsed.firstName
-        //             self.company   = parsed.company
-        //             self.title     = parsed.title
-        //             self.phone     = parsed.phone
-        //             self.email     = parsed.email
-        //             self.address   = parsed.address
-        //             self.website   = parsed.website
-        //         }
-        //     } catch {
-        //         await populateWithLocalLLMOrClassifier(lines: lines)
-        //     }
-        // default:
-        //     await populateWithLocalLLMOrClassifier(lines: lines)
-        // }
-
-        // Foundation Models 未リンクのため、層2→層3へフォールバック
-        await populateWithLocalLLMOrClassifier(lines: lines)
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            do {
+                let rawText = lines.joined(separator: "\n")
+                let session = LanguageModelSession()
+                let prompt = """
+                    以下は名刺から読み取ったテキストです。各フィールドに分類してください。
+                    姓と名は必ず分けてください。
+                    \(rawText)
+                    """
+                let response = try await session.respond(to: prompt, generating: ParsedCard.self)
+                let parsed = response.content
+                lastName  = parsed.lastName
+                firstName = parsed.firstName
+                company   = parsed.company
+                title     = parsed.title
+                phone     = parsed.phone
+                email     = parsed.email
+                address   = parsed.address
+                website   = parsed.website
+            } catch {
+                await populateWithLocalLLMOrClassifier(lines: lines)
+            }
+        default:
+            await populateWithLocalLLMOrClassifier(lines: lines)
+        }
     }
 
     // 層2: Core ML OSSモデル → 層3: 正規表現フォールバック
@@ -200,16 +193,15 @@ class CardFormViewModel: ObservableObject {
 }
 
 // MARK: - ParsedCard（Foundation Models @Generable 定義）
-// FoundationModels framework リンク後に有効化
-//
-// @Generable
-// struct ParsedCard {
-//     @Guide("姓（ファミリーネーム）")  var lastName: String
-//     @Guide("名（ファーストネーム）")  var firstName: String
-//     @Guide("会社名")                  var company: String
-//     @Guide("役職")                    var title: String
-//     @Guide("電話番号")                var phone: String
-//     @Guide("メールアドレス")          var email: String
-//     @Guide("住所")                    var address: String
-//     @Guide("WebサイトURL")            var website: String
-// }
+
+@Generable
+struct ParsedCard {
+    @Guide(description: "姓（ファミリーネーム）")  var lastName: String
+    @Guide(description: "名（ファーストネーム）")  var firstName: String
+    @Guide(description: "会社名")                  var company: String
+    @Guide(description: "役職")                    var title: String
+    @Guide(description: "電話番号")                var phone: String
+    @Guide(description: "メールアドレス")          var email: String
+    @Guide(description: "住所")                    var address: String
+    @Guide(description: "WebサイトURL")            var website: String
+}
