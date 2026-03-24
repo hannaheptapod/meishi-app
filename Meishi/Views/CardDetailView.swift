@@ -16,6 +16,16 @@ struct CardDetailView: View {
 
     var body: some View {
         List {
+            // 名刺画像
+            if let data = card.imageData, let image = UIImage(data: data) {
+                Section {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .cornerRadius(8)
+                }
+            }
+
             if !card.fullName.isEmpty {
                 Section("氏名") {
                     if let lastName = card.lastName, !lastName.isEmpty {
