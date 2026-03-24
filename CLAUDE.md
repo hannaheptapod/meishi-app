@@ -30,12 +30,14 @@ OCRと意味分析は役割が異なるフレームワークで分担する。
 **層1 — OCR（Vision Framework）**
 - `VNRecognizeTextRequest` で名刺画像からテキストを抽出する
 - `.accurate` モードを使用し、`usesLanguageCorrection = true` を設定する
-- 出力：生のテキスト文字列
+- `recognitionLanguages = ["ja-JP", "en-US"]` で日本語・英語に対応
+- 出力：テキスト行の配列（`[String]`）
 
 **層2 — 意味分析（Foundation Models）**
-- Vision が抽出した生テキストを受け取り、フィールドに構造化する
-- `@Generable` マクロで定義した `ParsedCard` 型を使い、型安全な出力を得る
+- Vision が抽出したテキスト行を受け取り、フィールドに構造化する
+- `@Generable` マクロで定義した `ParsedCard` 型を使い、型安全な出力を得る（FoundationModels framework リンク後に有効化）
 - Apple Intelligence が有効な端末（iPhone 15 Pro以降）でのみ利用可能
+- **現状：** FoundationModels framework 未リンクのため、Foundation Models 呼び出し部分はコメントアウト中。`#available(iOS 18.0, *)` の分岐は存在するが、常に CardFieldClassifier にフォールバックしている
 
 ```swift
 @Generable
@@ -51,11 +53,11 @@ struct ParsedCard {
 }
 ```
 
-**フォールバック（Foundation Models利用不可の場合）**
-- `SystemLanguageModel.availability` を起動時に確認する
-- 利用不可の場合は `CardFieldClassifier`（正規表現ベース）で分類する
-- 電話番号・メール・URLは正規表現で高精度に判定できる
-- 氏名・会社・役職は行順ヒューリスティック（1行目=氏名、2行目=会社 等）で推定する
+**フォールバック（CardFieldClassifier）**
+- `#available(iOS 18.0, *)` で分岐し、Foundation Models 利用不可の場合（または未リンク時）は `CardFieldClassifier`（正規表現ベース）で分類する
+- **2パス方式：**
+  - パス1：メール・電話・URL・住所・会社名・役職をキーワード／正規表現で抽出
+  - パス2：未分類の残り行から氏名を推定し、スペース（全角・半角）で姓・名に分割
 
 ---
 
@@ -185,18 +187,13 @@ Meishi/
 - ビルドエラーはそのままコピーして Claude Code に渡せばOK
 - フェーズが完了したら `git commit` してから次フェーズに進む
 - `.gitignore` はSwift公式テンプレートを使用すること
-- Foundation Models はシミュレータで動作しない。フェーズ2以降は実機（iPhone 15 Pro以降）でテストする
-- Foundation Models の利用可否は `SystemLanguageModel.default.availability` で確認する
-  → `.available` 以外の場合は必ず CardFieldClassifier にフォールバックすること
-- `@Generable` / `@Guide` は FoundationModels framework のマクロ。import FoundationModels が必要
+- Foundation Models はシミュレータで動作しない。実機（iPhone 15 Pro以降）でテストする
+- Foundation Models の組み込みは `CardFormViewModel` の `populateWithFoundationModels` 内にコメントアウトで残してある
+  → FoundationModels framework をリンクしてからコメントを外す
+  → 利用可否は `SystemLanguageModel.default.availability` で確認し、`.available` 以外は CardFieldClassifier にフォールバックする
+- `@Generable` / `@Guide` は FoundationModels framework のマクロ。`import FoundationModels` が必要
 
 ---
 
 ## 現在の状態
 
-- [x] GitHubリポジトリ作成済み
-- [x] Xcodeプロジェクト作成済み
-- [x] フェーズ1 実装完了
-- [x] フェーズ2 実装完了
-- [x] フェーズ3 実装完了
-- [x] フェーズ4 実装完了
