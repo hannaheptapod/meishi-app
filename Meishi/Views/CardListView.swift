@@ -102,7 +102,8 @@ private struct CardRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(card.name ?? "（名前なし）")
+            let fullName = card.fullName
+            Text(fullName.isEmpty ? "（名前なし）" : fullName)
                 .font(.headline)
             if let company = card.company, !company.isEmpty {
                 Text(company)

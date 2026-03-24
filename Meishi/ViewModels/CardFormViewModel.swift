@@ -6,7 +6,8 @@ import UIKit
 // 名刺の新規作成・編集フォームのViewModel
 class CardFormViewModel: ObservableObject {
 
-    @Published var name: String = ""
+    @Published var lastName: String = ""
+    @Published var firstName: String = ""
     @Published var company: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
@@ -41,9 +42,7 @@ class CardFormViewModel: ObservableObject {
     init(image: UIImage,
          context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.context = context
-        // 画像データを保存
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
-        // 初期化後すぐにOCR処理を開始
         Task { await populateFromOCR(image: image) }
     }
 
@@ -53,15 +52,15 @@ class CardFormViewModel: ObservableObject {
          context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.card = card
         self.context = context
-        // 既存の値をフォームフィールドに反映
-        name    = card.name    ?? ""
-        company = card.company ?? ""
-        title   = card.title   ?? ""
-        email   = card.email   ?? ""
-        phone   = card.phone   ?? ""
-        address = card.address ?? ""
-        website = card.website ?? ""
-        notes   = card.notes   ?? ""
+        lastName  = card.lastName  ?? ""
+        firstName = card.firstName ?? ""
+        company   = card.company   ?? ""
+        title     = card.title     ?? ""
+        email     = card.email     ?? ""
+        phone     = card.phone     ?? ""
+        address   = card.address   ?? ""
+        website   = card.website   ?? ""
+        notes     = card.notes     ?? ""
     }
 
     // MARK: - OCR + AI意味分析
@@ -72,7 +71,6 @@ class CardFormViewModel: ObservableObject {
         ocrErrorMessage = nil
 
         do {
-            // 層1: Vision Framework でテキスト抽出
             let lines = try await ocrService.recognizeText(from: image)
             guard !lines.isEmpty else {
                 ocrErrorMessage = "テキストを認識できませんでした"
@@ -80,7 +78,6 @@ class CardFormViewModel: ObservableObject {
                 return
             }
 
-            // 層2: Foundation Models で構造化（利用可能な場合）
             if #available(iOS 18.0, *) {
                 await populateWithFoundationModels(lines: lines)
             } else {
@@ -96,15 +93,10 @@ class CardFormViewModel: ObservableObject {
     // Foundation Models（Apple Intelligence）による構造化
     @available(iOS 18.0, *)
     private func populateWithFoundationModels(lines: [String]) async {
-        // Foundation Models の利用可否を確認
-        // 利用不可の場合は正規表現フォールバックへ
-        // NOTE: FoundationModels framework が Xcode プロジェクトにリンクされている必要あり
-        // シミュレータでは動作しないため、実機（iPhone 15 Pro以降）でテスト
+        // NOTE: FoundationModels framework をリンク後、下のコメントを外して有効化
+        // シミュレータでは動作しないため実機（iPhone 15 Pro以降）でテスト
         populateWithClassifier(lines: lines)
 
-        // --- Foundation Models 統合コード（FoundationModels framework リンク後に有効化）---
-        // import FoundationModels が必要
-        //
         // switch SystemLanguageModel.default.availability {
         // case .available:
         //     do {
@@ -112,21 +104,22 @@ class CardFormViewModel: ObservableObject {
         //         let session = LanguageModelSession()
         //         let prompt = """
         //             以下は名刺から読み取ったテキストです。各フィールドに分類してください。
+        //             姓と名は必ず分けてください。
         //             \(rawText)
         //             """
         //         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         //         let parsed = response.content
         //         await MainActor.run {
-        //             self.name    = parsed.name
-        //             self.company = parsed.company
-        //             self.title   = parsed.title
-        //             self.phone   = parsed.phone
-        //             self.email   = parsed.email
-        //             self.address = parsed.address
-        //             self.website = parsed.website
+        //             self.lastName  = parsed.lastName
+        //             self.firstName = parsed.firstName
+        //             self.company   = parsed.company
+        //             self.title     = parsed.title
+        //             self.phone     = parsed.phone
+        //             self.email     = parsed.email
+        //             self.address   = parsed.address
+        //             self.website   = parsed.website
         //         }
         //     } catch {
-        //         // Foundation Models が失敗した場合もフォールバック
         //         populateWithClassifier(lines: lines)
         //     }
         // default:
@@ -134,22 +127,21 @@ class CardFormViewModel: ObservableObject {
         // }
     }
 
-    // 正規表現ベースのフォールバック分類
     private func populateWithClassifier(lines: [String]) {
         let parsed = classifier.classify(lines: lines)
-        name    = parsed.name
-        company = parsed.company
-        title   = parsed.title
-        phone   = parsed.phone
-        email   = parsed.email
-        address = parsed.address
-        website = parsed.website
+        lastName  = parsed.lastName
+        firstName = parsed.firstName
+        company   = parsed.company
+        title     = parsed.title
+        phone     = parsed.phone
+        email     = parsed.email
+        address   = parsed.address
+        website   = parsed.website
     }
 
     // MARK: - 保存
 
     func save() {
-        // 既存カードがあれば上書き、なければ新規作成
         let target = card ?? {
             let newCard = BusinessCard(context: context)
             newCard.id = UUID()
@@ -157,7 +149,8 @@ class CardFormViewModel: ObservableObject {
             return newCard
         }()
 
-        target.name      = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.lastName  = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.firstName = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         target.company   = company.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title     = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,16 +170,16 @@ class CardFormViewModel: ObservableObject {
 }
 
 // MARK: - ParsedCard（Foundation Models @Generable 定義）
-// FoundationModels framework をリンク後、以下のコメントを外して有効化
-// import FoundationModels が必要
+// FoundationModels framework リンク後に有効化
 //
 // @Generable
 // struct ParsedCard {
-//     @Guide("氏名")           var name: String
-//     @Guide("会社名")         var company: String
-//     @Guide("役職")           var title: String
-//     @Guide("電話番号")       var phone: String
-//     @Guide("メールアドレス") var email: String
-//     @Guide("住所")           var address: String
-//     @Guide("WebサイトURL")   var website: String
+//     @Guide("姓（ファミリーネーム）")  var lastName: String
+//     @Guide("名（ファーストネーム）")  var firstName: String
+//     @Guide("会社名")                  var company: String
+//     @Guide("役職")                    var title: String
+//     @Guide("電話番号")                var phone: String
+//     @Guide("メールアドレス")          var email: String
+//     @Guide("住所")                    var address: String
+//     @Guide("WebサイトURL")            var website: String
 // }

@@ -54,8 +54,11 @@ struct CardFormView: View {
                     }
                 }
 
-                Section("基本情報") {
-                    TextField("氏名", text: $viewModel.name)
+                Section("氏名") {
+                    TextField("姓", text: $viewModel.lastName)
+                    TextField("名", text: $viewModel.firstName)
+                }
+                Section("所属") {
                     TextField("会社名", text: $viewModel.company)
                     TextField("役職", text: $viewModel.title)
                 }
@@ -86,9 +89,9 @@ struct CardFormView: View {
                         onSave()
                         dismiss()
                     }
-                    // 氏名が空またはOCR処理中は保存不可
+                    // 姓が空またはOCR処理中は保存不可
                     .disabled(
-                        viewModel.name.trimmingCharacters(in: .whitespaces).isEmpty ||
+                        viewModel.lastName.trimmingCharacters(in: .whitespaces).isEmpty ||
                         viewModel.isProcessingOCR
                     )
                 }

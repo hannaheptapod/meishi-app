@@ -7,7 +7,8 @@ import Foundation
 struct CardFieldClassifier {
 
     struct ParsedCard {
-        var name: String = ""
+        var lastName: String = ""
+        var firstName: String = ""
         var company: String = ""
         var title: String = ""
         var phone: String = ""
@@ -45,14 +46,20 @@ struct CardFieldClassifier {
             }
         }
 
-        // --- パス2：未分類の行から氏名を推定 ---
+        // --- パス2：未分類の行から氏名を推定し、姓と名に分割 ---
         // 日本語名らしい行（漢字・仮名を含み短い）を優先、なければ先頭行
+        let rawName: String
         if let nameIndex = unclassified.indices.first(where: { isLikelyPersonName(unclassified[$0]) }) {
-            result.name = unclassified.remove(at: nameIndex)
+            rawName = unclassified.remove(at: nameIndex)
         } else if let first = unclassified.first {
-            result.name = first
+            rawName = first
             unclassified.removeFirst()
+        } else {
+            rawName = ""
         }
+        let (last, first) = splitName(rawName)
+        result.lastName  = last
+        result.firstName = first
 
         // まだ会社名が未設定なら残り行から補完
         if result.company.isEmpty, let companyLine = unclassified.first {
@@ -104,6 +111,26 @@ struct CardFieldClassifier {
         // 行が短すぎる場合は役職でなく氏名の可能性が高いため除外
         guard text.count >= 3 else { return false }
         return keywords.contains { text.contains($0) }
+    }
+
+    // MARK: - 氏名分割
+
+    /// スペース（全角・半角）で姓と名に分割する
+    /// スペースなしの場合は全体を姓として扱う
+    private func splitName(_ text: String) -> (lastName: String, firstName: String) {
+        guard !text.isEmpty else { return ("", "") }
+
+        // 全角スペース・半角スペースどちらでも分割
+        let separators = CharacterSet(charactersIn: " \u{3000}")
+        let parts = text.components(separatedBy: separators)
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+
+        switch parts.count {
+        case 0:           return ("", "")
+        case 1:           return (parts[0], "")          // スペースなし → 全部を姓
+        default:          return (parts[0], parts[1...].joined(separator: " "))
+        }
     }
 
     // MARK: - 氏名らしさ判定
