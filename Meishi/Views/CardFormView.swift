@@ -79,6 +79,14 @@ struct CardFormView: View {
             }
             .navigationTitle(viewModel.isEditing ? "名刺を編集" : "名刺を追加")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("読み取り精度を向上しますか？", isPresented: $viewModel.shouldPromptLLMDownload) {
+                Button("ダウンロード（約300MB）") {
+                    Task { try? await LocalLLMService.shared.downloadModel { _ in } }
+                }
+                Button("スキップ", role: .cancel) {}
+            } message: {
+                Text("オンデバイスAIモデルを取得すると、名刺の読み取り精度が向上します。Wi-Fi環境を推奨します。")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("キャンセル") { dismiss() }
