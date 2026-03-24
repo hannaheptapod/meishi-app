@@ -10,6 +10,7 @@ struct CardListView: View {
     @State private var capturedImage: UIImage? = nil
     @State private var exportItem: ExportItem? = nil
     @State private var isShowingExportMenu = false
+    @State private var isShowingSettings = false
 
     private let exportService = ExportService()
 
@@ -61,8 +62,13 @@ struct CardListView: View {
                         }
                     }
                 }
-                // 右：カメラ・追加
+                // 右：設定・カメラ・追加
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button {
+                        isShowingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
                     Button {
                         isShowingCamera = true
                     } label: {
@@ -87,6 +93,9 @@ struct CardListView: View {
             }
             .sheet(item: $exportItem) { item in
                 ShareSheet(activityItems: [item.url])
+            }
+            .sheet(isPresented: $isShowingSettings) {
+                SettingsView()
             }
             .onAppear(perform: viewModel.fetchCards)
         }

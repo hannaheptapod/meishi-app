@@ -9,11 +9,17 @@ class CardListViewModel: ObservableObject {
     @Published var duplicatePairs: [DuplicatePair] = []
 
     private let context: NSManagedObjectContext
-    private let checker = DuplicateChecker()
+    private var cancellables = Set<AnyCancellable>()
 
     init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.context = context
         fetchCards()
+
+        // 閾値が変わったら重複検出を再実行
+        SettingsStore.shared.$duplicateThreshold
+            .dropFirst()
+            .sink { [weak self] _ in self?.detectDuplicates() }
+            .store(in: &cancellables)
     }
 
     // MARK: - データ取得
@@ -32,6 +38,7 @@ class CardListViewModel: ObservableObject {
     // MARK: - 重複検出
 
     func detectDuplicates() {
+        let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
         duplicatePairs = checker.findDuplicates(in: cards)
     }
 

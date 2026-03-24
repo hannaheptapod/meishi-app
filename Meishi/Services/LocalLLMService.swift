@@ -1,31 +1,40 @@
 import Foundation
 import CoreML
+import Combine
 
 // オンデバイスOSSモデルによる意味分析サービス
 // Foundation Modelsが利用不可の場合のフォールバック（層2）
-class LocalLLMService {
+class LocalLLMService: ObservableObject {
 
     static let shared = LocalLLMService()
 
     // MARK: - 定数
 
-    private let modelFileName = "Qwen2.5-0.5B-Instruct-4bit.mlpackage"
-    private let downloadURL   = URL(string: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlpackage")!
+    let modelFileName = "Qwen2.5-0.5B-Instruct-4bit.mlpackage"
+    private let downloadURL = URL(string: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlpackage")!
 
     // MARK: - 状態
 
     /// モデルが取得済みかつロード可能な状態かどうか
-    var isModelAvailable: Bool {
-        FileManager.default.fileExists(atPath: modelFileURL.path)
-    }
+    @Published var isModelAvailable: Bool = false
+
+    /// ダウンロード中かどうか
+    @Published var isDownloading: Bool = false
+
+    /// ダウンロード進捗（0.0〜1.0）
+    @Published var downloadProgress: Double = 0.0
 
     private var loadedModel: MLModel? = nil
 
-    private var modelFileURL: URL {
+    var modelFileURL: URL {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LocalLLM", isDirectory: true)
         return dir.appendingPathComponent(modelFileName)
+    }
+
+    private init() {
+        isModelAvailable = FileManager.default.fileExists(atPath: modelFileURL.path)
     }
 
     // MARK: - モデルロード
@@ -99,15 +108,74 @@ class LocalLLMService {
 
     // MARK: - ダウンロード
 
-    /// ユーザーの同意を得たあとに呼び出す
-    /// progress コールバックで進捗を受け取れる（0.0〜1.0）
-    func downloadModel(progress: @escaping (Double) -> Void) async throws {
-        let dir = modelFileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir,
-            withIntermediateDirectories: true)
+    /// ユーザーの同意を得たあとに呼び出す。@Published プロパティで進捗を通知する
+    func downloadModel() async throws {
+        await MainActor.run {
+            isDownloading = true
+            downloadProgress = 0.0
+        }
+        defer {
+            Task { @MainActor in isDownloading = false }
+        }
 
-        let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
+        let dir = modelFileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // URLSession の delegate で進捗を追跡
+        let tracker = DownloadProgressTracker { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.downloadProgress = progress
+            }
+        }
+        let session = URLSession(configuration: .default, delegate: tracker, delegateQueue: nil)
+        let (tempURL, _) = try await session.download(from: downloadURL)
         try FileManager.default.moveItem(at: tempURL, to: modelFileURL)
         try loadModelIfNeeded()
+
+        await MainActor.run { isModelAvailable = true }
     }
+
+    // MARK: - 削除
+
+    /// ダウンロード済みモデルを削除する
+    func deleteModel() throws {
+        guard isModelAvailable else { return }
+        try FileManager.default.removeItem(at: modelFileURL)
+        loadedModel = nil
+        isModelAvailable = false
+    }
+
+    // MARK: - モデルファイルサイズ
+
+    /// ダウンロード済みモデルのファイルサイズ（バイト）
+    var modelFileSize: Int64? {
+        guard isModelAvailable,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: modelFileURL.path),
+              let size = attrs[.size] as? Int64
+        else { return nil }
+        return size
+    }
+}
+
+// MARK: - ダウンロード進捗トラッカー
+
+private class DownloadProgressTracker: NSObject, URLSessionDownloadDelegate {
+    private let onProgress: (Double) -> Void
+
+    init(onProgress: @escaping (Double) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        onProgress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {}
 }

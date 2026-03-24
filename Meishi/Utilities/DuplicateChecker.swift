@@ -3,8 +3,12 @@ import Foundation
 // 名前・会社名の類似度判定により重複候補を検出するユーティリティ
 struct DuplicateChecker {
 
-    /// 重複ペアの閾値（0.0〜1.0、高いほど厳しい）
-    private let threshold: Double = 0.75
+    /// 重複検出の閾値（0.0〜1.0、高いほど厳しい）
+    private let threshold: Double
+
+    init(threshold: Double = 0.75) {
+        self.threshold = threshold
+    }
 
     // MARK: - 重複検出
 
