@@ -24,22 +24,40 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
-                // 左：エクスポートメニュー（名刺がある場合のみ）
+                // 左：エクスポート・重複チェックメニュー（名刺がある場合のみ）
                 if !viewModel.cards.isEmpty {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Menu {
-                            Button {
-                                exportAllCSV()
+                            // 重複チェック
+                            NavigationLink {
+                                DuplicateListView(
+                                    pairs: viewModel.duplicatePairs,
+                                    onMerge: viewModel.fetchCards
+                                )
                             } label: {
+                                Label(
+                                    viewModel.duplicatePairs.isEmpty
+                                        ? "重複チェック"
+                                        : "重複チェック（\(viewModel.duplicatePairs.count)件）",
+                                    systemImage: "person.2.slash"
+                                )
+                            }
+                            Divider()
+                            Button { exportAllCSV() } label: {
                                 Label("CSV としてエクスポート", systemImage: "tablecells")
                             }
-                            Button {
-                                exportAllVCard()
-                            } label: {
+                            Button { exportAllVCard() } label: {
                                 Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                             }
                         } label: {
-                            Image(systemName: "square.and.arrow.up")
+                            // 重複がある場合はバッジ付きアイコン
+                            if viewModel.duplicatePairs.isEmpty {
+                                Image(systemName: "ellipsis.circle")
+                            } else {
+                                Image(systemName: "ellipsis.circle.fill")
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.red, .primary)
+                            }
                         }
                     }
                 }
