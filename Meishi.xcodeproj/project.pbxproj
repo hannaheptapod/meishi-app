@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		39AA91BC2F734A1D007B1313 /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 39AA91BB2F734A1C007B1313 /* FoundationModels.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3979F8AF2F7275F300BC90DC /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		3979F89F2F7275F200BC90DC /* Meishi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meishi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3979F8AE2F7275F300BC90DC /* MeishiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeishiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3979F8B82F7275F300BC90DC /* MeishiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeishiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		39AA91BB2F734A1C007B1313 /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				39AA91BC2F734A1D007B1313 /* FoundationModels.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +84,7 @@
 				3979F8A12F7275F200BC90DC /* Meishi */,
 				3979F8B12F7275F300BC90DC /* MeishiTests */,
 				3979F8BB2F7275F300BC90DC /* MeishiUITests */,
+				39AA91BA2F734A1C007B1313 /* Frameworks */,
 				3979F8A02F7275F200BC90DC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +97,14 @@
 				3979F8B82F7275F300BC90DC /* MeishiUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		39AA91BA2F734A1C007B1313 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				39AA91BB2F734A1C007B1313 /* FoundationModels.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
