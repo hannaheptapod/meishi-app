@@ -13,7 +13,8 @@ struct PersistenceController {
         // プレビュー用のサンプルデータを1件追加
         let sample = BusinessCard(context: context)
         sample.id = UUID()
-        sample.name = "山田 太郎"
+        sample.lastName = "山田"
+        sample.firstName = "太郎"
         sample.company = "株式会社サンプル"
         sample.title = "営業部長"
         sample.email = "yamada@example.com"
