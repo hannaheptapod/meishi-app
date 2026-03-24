@@ -101,7 +101,7 @@ struct DuplicateMergeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if selected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.accentColor)
+                        .foregroundStyle(Color.accentColor)
                 }
             }
             .padding(.vertical, 4)
