@@ -46,8 +46,15 @@ class CardFormViewModel: ObservableObject {
     init(image: UIImage,
          context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.context = context
+        // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
-        Task { await populateFromOCR(image: image) }
+        Task {
+            // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
+            let cardImage = await ocrService.detectAndCropCard(from: image)
+            // 補正済み画像で保存データを上書き
+            self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
+            await populateFromOCR(image: cardImage)
+        }
     }
 
     // MARK: - 初期化（既存カードの編集）
