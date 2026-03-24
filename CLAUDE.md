@@ -136,12 +136,12 @@ Meishi/
 - Vision Framework で文字認識（OCRService）
 - Foundation Models で生テキストを `ParsedCard` 型に構造化（CardFormViewModel）
 - Foundation Models 利用不可の場合は CardFieldClassifier（正規表現）でフォールバック
-- `SystemLanguageModel.availability` で起動時に利用可否を判定する
+- **現状：** Foundation Models 呼び出しはコメントアウト中。常に CardFieldClassifier にフォールバックしている
 - 認識後フォームで内容を確認・修正してから保存
 
 ### フェーズ 3 — 連絡先連携 ✅ 実装完了
 - iPhoneの連絡先へのエクスポート（CNContactStore）
-- iPhoneの連絡先からのインポート
+- iPhoneの連絡先からのインポート（ContactsService に実装済み・UI未公開）
 - CSV・vCard（.vcf）エクスポート（ExportService）
 
 ### フェーズ 4 — 重複チェック・名寄せ ✅ 実装完了
@@ -188,12 +188,35 @@ Meishi/
 - フェーズが完了したら `git commit` してから次フェーズに進む
 - `.gitignore` はSwift公式テンプレートを使用すること
 - Foundation Models はシミュレータで動作しない。実機（iPhone 15 Pro以降）でテストする
-- Foundation Models の組み込みは `CardFormViewModel` の `populateWithFoundationModels` 内にコメントアウトで残してある
+- Foundation Models の組み込みは `CardFormViewModel` の `populateFromOCR(image:)` 内にコメントアウトで残してある（行96〜128付近）
   → FoundationModels framework をリンクしてからコメントを外す
   → 利用可否は `SystemLanguageModel.default.availability` で確認し、`.available` 以外は CardFieldClassifier にフォールバックする
 - `@Generable` / `@Guide` は FoundationModels framework のマクロ。`import FoundationModels` が必要
+- `ContactsService.importContacts()` は実装済みだが、CardListView に取り込みボタンが未追加。追加する場合は CardListView のメニューに項目を足す
 
 ---
 
 ## 現在の状態
+
+全4フェーズの実装が完了し、main ブランチにマージ済み。
+
+### 実装済み（動作確認可能）
+- 基本CRUD（一覧・詳細・手動入力フォーム・CoreData永続化）
+- カメラ撮影 → OCR → CardFieldClassifier（正規表現）によるフィールド自動分類
+- iPhoneの連絡先へのエクスポート
+- CSV（UTF-8 BOM付き）・vCard 3.0 エクスポート
+- Levenshtein距離による重複検出（閾値0.75）・マージUI
+
+### 未完了 / 保留中
+- **Foundation Models 統合：** `CardFormViewModel` にコメントアウトで残存。FoundationModels framework をリンクすれば有効化できる
+- **連絡先インポートのUI：** `ContactsService.importContacts()` は実装済みだが CardListView のメニューに未追加
+- **テスト：** `MeishiTests.swift` / `MeishiUITests.swift` はプレースホルダーのみ。実テストは未実装
+
+### 技術的な注意点
+- Foundation Models はシミュレータで動作しない（実機 iPhone 15 Pro以降 + Apple Intelligence有効が必要）
+- OCR認識言語：`["ja-JP", "en-US"]`。他言語は非対応
+- 重複判定は名前70%・会社名30%の重み付きスコア
+- CSV は Excel での文字化けを防ぐため UTF-8 BOM を付与
+- vCard は 3.0 形式（4.0ではない）
+- `Item.swift` はXcodeテンプレートの残骸（未使用）
 
