@@ -10,8 +10,16 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - 定数
 
-    let modelFileName = "Qwen2.5-0.5B-Instruct-4bit.mlpackage"
-    private let downloadURL = URL(string: "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlpackage")!
+    let modelFileName = "Qwen2.5-0.5B-Instruct-4bit.mlmodelc"
+    private let hfBase = "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlmodelc"
+    // mlmodelc はディレクトリ構造のため、構成ファイルを個別にダウンロードする
+    private let modelFiles: [(path: String, approxBytes: Int64)] = [
+        ("metadata.json",           10_000),
+        ("coremldata.bin",          50_000),
+        ("analytics/coremldata.bin", 5_000),
+        ("model.mil",            5_000_000),
+        ("weights/weight.bin", 268_000_000),
+    ]
 
     // MARK: - 状態
 
@@ -30,11 +38,13 @@ class LocalLLMService: ObservableObject {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LocalLLM", isDirectory: true)
-        return dir.appendingPathComponent(modelFileName)
+        return dir.appendingPathComponent(modelFileName, isDirectory: true)
     }
 
     private init() {
-        isModelAvailable = FileManager.default.fileExists(atPath: modelFileURL.path)
+        // weight.bin が存在すればダウンロード完了とみなす
+        let weightURL = modelFileURL.appendingPathComponent("weights/weight.bin")
+        isModelAvailable = FileManager.default.fileExists(atPath: weightURL.path)
     }
 
     // MARK: - モデルロード
@@ -122,14 +132,26 @@ class LocalLLMService: ObservableObject {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         // URLSession の delegate で進捗を追跡
-        let tracker = DownloadProgressTracker { [weak self] progress in
-            Task { @MainActor [weak self] in
-                self?.downloadProgress = progress
-            }
+        let totalBytes = modelFiles.reduce(0) { $0 + $1.approxBytes }
+        var downloadedBytes: Int64 = 0
+
+        let session = URLSession(configuration: .default)
+
+        for (relativePath, approxBytes) in modelFiles {
+            let fileURL = modelFileURL.appendingPathComponent(relativePath)
+            let parentDir = fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+
+            let remoteURL = URL(string: "\(hfBase)/\(relativePath)")!
+            let (tempURL, _) = try await session.download(from: remoteURL)
+            try? FileManager.default.removeItem(at: fileURL)
+            try FileManager.default.moveItem(at: tempURL, to: fileURL)
+
+            downloadedBytes += approxBytes
+            let progress = min(Double(downloadedBytes) / Double(totalBytes), 1.0)
+            await MainActor.run { self.downloadProgress = progress }
         }
-        let session = URLSession(configuration: .default, delegate: tracker, delegateQueue: nil)
-        let (tempURL, _) = try await session.download(from: downloadURL)
-        try FileManager.default.moveItem(at: tempURL, to: modelFileURL)
+
         try loadModelIfNeeded()
 
         await MainActor.run { isModelAvailable = true }
@@ -137,7 +159,7 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - 削除
 
-    /// ダウンロード済みモデルを削除する
+    /// ダウンロード済みモデルディレクトリを削除する
     func deleteModel() throws {
         guard isModelAvailable else { return }
         try FileManager.default.removeItem(at: modelFileURL)
@@ -147,35 +169,20 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - モデルファイルサイズ
 
-    /// ダウンロード済みモデルのファイルサイズ（バイト）
+    /// ダウンロード済みモデルのファイルサイズ合計（バイト）
     var modelFileSize: Int64? {
-        guard isModelAvailable,
-              let attrs = try? FileManager.default.attributesOfItem(atPath: modelFileURL.path),
-              let size = attrs[.size] as? Int64
-        else { return nil }
-        return size
+        guard isModelAvailable else { return nil }
+        let enumerator = FileManager.default.enumerator(
+            at: modelFileURL,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )
+        var total: Int64 = 0
+        while let fileURL = enumerator?.nextObject() as? URL {
+            let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            total += Int64(size)
+        }
+        return total > 0 ? total : nil
     }
 }
 
-// MARK: - ダウンロード進捗トラッカー
-
-private class DownloadProgressTracker: NSObject, URLSessionDownloadDelegate {
-    private let onProgress: (Double) -> Void
-
-    init(onProgress: @escaping (Double) -> Void) {
-        self.onProgress = onProgress
-    }
-
-    func urlSession(_ session: URLSession,
-                    downloadTask: URLSessionDownloadTask,
-                    didWriteData bytesWritten: Int64,
-                    totalBytesWritten: Int64,
-                    totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        onProgress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
-    }
-
-    func urlSession(_ session: URLSession,
-                    downloadTask: URLSessionDownloadTask,
-                    didFinishDownloadingTo location: URL) {}
-}
