@@ -36,8 +36,7 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    // 左：操作メニュー
+                ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
                         Menu {
                             Picker("並び替え", selection: $viewModel.sortOrder) {
@@ -49,9 +48,12 @@ struct CardListView: View {
                             Label("並び替え", systemImage: "arrow.up.arrow.down")
                         }
 
-                        Divider()
+                        Button { isShowingSettings = true } label: {
+                            Label("設定", systemImage: "gearshape")
+                        }
 
                         if !viewModel.cards.isEmpty {
+                            Divider()
                             NavigationLink {
                                 DuplicateListView(
                                     pairs: viewModel.duplicatePairs,
@@ -65,21 +67,13 @@ struct CardListView: View {
                                     systemImage: "person.2.slash"
                                 )
                             }
-
                             Divider()
-
                             Button { exportAllCSV() } label: {
                                 Label("CSV としてエクスポート", systemImage: "tablecells")
                             }
                             Button { exportAllVCard() } label: {
                                 Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                             }
-
-                            Divider()
-                        }
-
-                        Button { isShowingSettings = true } label: {
-                            Label("設定", systemImage: "gearshape")
                         }
                     } label: {
                         if !viewModel.duplicatePairs.isEmpty {
@@ -90,9 +84,12 @@ struct CardListView: View {
                             Image(systemName: "ellipsis.circle")
                         }
                     }
-
-                    // 中央：検索バー
-                    HStack {
+                }
+            }
+            // 連絡先アプリと同じ: 検索バー + + ボタンを下部に safeAreaInset で配置
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
                         TextField("検索", text: $searchText)
@@ -105,11 +102,10 @@ struct CardListView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
-                    // 右：追加ボタン
                     Menu {
                         Button { isShowingCamera = true } label: {
                             Label("カメラで撮影", systemImage: "camera")
@@ -119,8 +115,12 @@ struct CardListView: View {
                         }
                     } label: {
                         Image(systemName: "plus")
+                            .font(.title3)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
@@ -168,15 +168,11 @@ struct CardListView: View {
                 .font(.title3)
                 .foregroundColor(.secondary)
             HStack(spacing: 12) {
-                Button {
-                    isShowingCamera = true
-                } label: {
+                Button { isShowingCamera = true } label: {
                     Label("カメラで撮影", systemImage: "camera")
                 }
                 .buttonStyle(.borderedProminent)
-                Button {
-                    isShowingForm = true
-                } label: {
+                Button { isShowingForm = true } label: {
                     Label("手動で追加", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
