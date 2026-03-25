@@ -37,35 +37,66 @@ struct DuplicateMergeView: View {
 
     private var headerSection: some View {
         Section {
-            HStack(spacing: 0) {
-                // A 列ヘッダー
-                Text(pair.cardA.fullName.isEmpty ? "（名前なし）" : pair.cardA.fullName)
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                Divider()
-                // B 列ヘッダー
-                Text(pair.cardB.fullName.isEmpty ? "（名前なし）" : pair.cardB.fullName)
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 12) {
+                cardHeader(pair.cardA, side: .a)
+                // 類似度バッジ
+                VStack(spacing: 4) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .foregroundStyle(.secondary)
+                    Text(pair.scoreText)
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(scoreColor(pair.score), in: Capsule())
+                }
+                cardHeader(pair.cardB, side: .b)
             }
+            .padding(.vertical, 4)
         } header: {
-            Text("どちらの値を残しますか？タップで選択")
+            Text("残したい値をタップして選択してください")
         }
+    }
+
+    @ViewBuilder
+    private func cardHeader(_ card: BusinessCard, side: Side) -> some View {
+        VStack(alignment: side == .a ? .leading : .trailing, spacing: 2) {
+            Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                .font(.subheadline.bold())
+                .lineLimit(1)
+            if let company = card.company, !company.isEmpty {
+                Text(company)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if let createdAt = card.createdAt {
+                Text(createdAt.formatted(date: .abbreviated, time: .omitted))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: side == .a ? .leading : .trailing)
     }
 
     // MARK: - フィールド行
 
     private var fieldRows: some View {
         Group {
-            mergeRow(label: "姓",      a: pair.cardA.lastName,  b: pair.cardB.lastName,  binding: $selections.lastName)
-            mergeRow(label: "名",      a: pair.cardA.firstName, b: pair.cardB.firstName, binding: $selections.firstName)
-            mergeRow(label: "会社名",  a: pair.cardA.company,   b: pair.cardB.company,   binding: $selections.company)
-            mergeRow(label: "役職",    a: pair.cardA.title,     b: pair.cardB.title,     binding: $selections.title)
-            mergeRow(label: "電話",    a: pair.cardA.phone,     b: pair.cardB.phone,     binding: $selections.phone)
-            mergeRow(label: "メール",  a: pair.cardA.email,     b: pair.cardB.email,     binding: $selections.email)
-            mergeRow(label: "住所",    a: pair.cardA.address,   b: pair.cardB.address,   binding: $selections.address)
-            mergeRow(label: "Web",     a: pair.cardA.website,   b: pair.cardB.website,   binding: $selections.website)
-            mergeRow(label: "メモ",    a: pair.cardA.notes,     b: pair.cardB.notes,     binding: $selections.notes)
+            mergeRow(label: "姓",     a: pair.cardA.lastName,  b: pair.cardB.lastName,  binding: $selections.lastName)
+            mergeRow(label: "名",     a: pair.cardA.firstName, b: pair.cardB.firstName, binding: $selections.firstName)
+            mergeRow(label: "会社名", a: pair.cardA.company,   b: pair.cardB.company,   binding: $selections.company)
+            mergeRow(label: "役職",   a: pair.cardA.title,     b: pair.cardB.title,     binding: $selections.title)
+            mergeRow(
+                label: "電話",
+                a: pair.cardA.phoneList.isEmpty ? nil : pair.cardA.phoneList.joined(separator: "\n"),
+                b: pair.cardB.phoneList.isEmpty ? nil : pair.cardB.phoneList.joined(separator: "\n"),
+                binding: $selections.phone
+            )
+            mergeRow(label: "メール", a: pair.cardA.email,   b: pair.cardB.email,   binding: $selections.email)
+            mergeRow(label: "住所",   a: pair.cardA.address, b: pair.cardB.address, binding: $selections.address)
+            mergeRow(label: "Web",    a: pair.cardA.website, b: pair.cardB.website, binding: $selections.website)
+            mergeRow(label: "メモ",   a: pair.cardA.notes,   b: pair.cardB.notes,   binding: $selections.notes)
         }
     }
 
@@ -73,17 +104,14 @@ struct DuplicateMergeView: View {
     private func mergeRow(label: String, a: String?, b: String?, binding: Binding<Side>) -> some View {
         let aVal = a ?? ""
         let bVal = b ?? ""
-        // 両方空なら行を表示しない
         if !aVal.isEmpty || !bVal.isEmpty {
             Section(label) {
                 HStack(spacing: 0) {
-                    // A 側
-                    selectionCell(value: aVal, selected: binding.wrappedValue == .a) {
+                    selectionCell(value: aVal, side: .a, selected: binding.wrappedValue == .a) {
                         binding.wrappedValue = .a
                     }
                     Divider()
-                    // B 側
-                    selectionCell(value: bVal, selected: binding.wrappedValue == .b) {
+                    selectionCell(value: bVal, side: .b, selected: binding.wrappedValue == .b) {
                         binding.wrappedValue = .b
                     }
                 }
@@ -92,24 +120,34 @@ struct DuplicateMergeView: View {
     }
 
     @ViewBuilder
-    private func selectionCell(value: String, selected: Bool, onTap: @escaping () -> Void) -> some View {
+    private func selectionCell(value: String, side: Side, selected: Bool, onTap: @escaping () -> Void) -> some View {
         Button(action: onTap) {
-            HStack {
+            HStack(alignment: .top) {
+                if side == .b {
+                    Spacer()
+                }
                 Text(value.isEmpty ? "（なし）" : value)
-                    .foregroundStyle(value.isEmpty ? .secondary : .primary)
+                    .foregroundStyle(value.isEmpty ? .tertiary : .primary)
                     .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(side == .a ? .leading : .trailing)
+                    .frame(maxWidth: .infinity, alignment: side == .a ? .leading : .trailing)
                 if selected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color.accentColor)
+                        .font(.body)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
-        .background(selected ? Color.accentColor.opacity(0.08) : .clear)
+        .background(
+            selected
+                ? Color.accentColor.opacity(0.12)
+                : (value.isEmpty ? Color.clear : Color.clear)
+        )
     }
 
     // MARK: - マージ実行
@@ -118,7 +156,6 @@ struct DuplicateMergeView: View {
         let a = pair.cardA
         let b = pair.cardB
 
-        // A カードに選択値を書き込む
         a.lastName  = selections.lastName  == .a ? (a.lastName  ?? "") : (b.lastName  ?? "")
         a.firstName = selections.firstName == .a ? (a.firstName ?? "") : (b.firstName ?? "")
         a.company   = selections.company   == .a ? (a.company   ?? "") : (b.company   ?? "")
@@ -128,11 +165,9 @@ struct DuplicateMergeView: View {
         a.address   = selections.address   == .a ? (a.address   ?? "") : (b.address   ?? "")
         a.website   = selections.website   == .a ? (a.website   ?? "") : (b.website   ?? "")
         a.notes     = selections.notes     == .a ? (a.notes     ?? "") : (b.notes     ?? "")
-        // 画像は非 nil の方を優先
         if a.imageData == nil { a.imageData = b.imageData }
         a.updatedAt = Date()
 
-        // B カードを削除
         context.delete(b)
 
         do {
@@ -143,6 +178,10 @@ struct DuplicateMergeView: View {
 
         onComplete()
         dismiss()
+    }
+
+    private func scoreColor(_ score: Double) -> Color {
+        score >= 0.9 ? .red : score >= 0.8 ? .orange : .yellow
     }
 }
 

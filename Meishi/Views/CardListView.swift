@@ -5,14 +5,26 @@ import UIKit
 struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
+    @State private var searchText = ""
     @State private var isShowingForm = false
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
     @State private var exportItem: ExportItem? = nil
-    @State private var isShowingExportMenu = false
     @State private var isShowingSettings = false
 
     private let exportService = ExportService()
+
+    // 検索・ソート済み名刺リスト
+    private var displayedCards: [BusinessCard] {
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return viewModel.cards }
+        return viewModel.cards.filter { card in
+            card.fullName.lowercased().contains(q)
+            || (card.company?.lowercased().contains(q) ?? false)
+            || (card.title?.lowercased().contains(q) ?? false)
+            || (card.email?.lowercased().contains(q) ?? false)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -29,7 +41,6 @@ struct CardListView: View {
                 if !viewModel.cards.isEmpty {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Menu {
-                            // 重複チェック
                             NavigationLink {
                                 DuplicateListView(
                                     pairs: viewModel.duplicatePairs,
@@ -51,7 +62,6 @@ struct CardListView: View {
                                 Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                             }
                         } label: {
-                            // 重複がある場合はバッジ付きアイコン
                             if viewModel.duplicatePairs.isEmpty {
                                 Image(systemName: "ellipsis.circle")
                             } else {
@@ -62,21 +72,25 @@ struct CardListView: View {
                         }
                     }
                 }
-                // 右：設定・カメラ・追加
+                // 右：ソート・設定・カメラ・追加
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button {
-                        isShowingSettings = true
+                    // ソートメニュー
+                    Menu {
+                        Picker("並び替え", selection: $viewModel.sortOrder) {
+                            ForEach(CardSortOrder.allCases) { order in
+                                Label(order.rawValue, systemImage: order.systemImage).tag(order)
+                            }
+                        }
                     } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    Button { isShowingSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
-                    Button {
-                        isShowingCamera = true
-                    } label: {
+                    Button { isShowingCamera = true } label: {
                         Image(systemName: "camera")
                     }
-                    Button {
-                        isShowingForm = true
-                    } label: {
+                    Button { isShowingForm = true } label: {
                         Image(systemName: "plus")
                     }
                 }
@@ -105,15 +119,18 @@ struct CardListView: View {
 
     private var cardList: some View {
         List {
-            ForEach(viewModel.cards) { card in
+            ForEach(displayedCards) { card in
                 NavigationLink {
                     CardDetailView(card: card, onUpdate: viewModel.fetchCards)
                 } label: {
                     CardRowView(card: card)
                 }
             }
-            .onDelete(perform: viewModel.deleteCards)
+            .onDelete { offsets in
+                viewModel.deleteCards(offsets.map { displayedCards[$0] })
+            }
         }
+        .searchable(text: $searchText, prompt: "名前・会社名・メールで検索")
     }
 
     private var emptyState: some View {
@@ -190,10 +207,24 @@ private struct CardRowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                if let title = card.title, !title.isEmpty {
-                    Text(title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                // 電話・メールをコンパクトに表示
+                let phones = card.phoneList
+                let email  = card.email ?? ""
+                if !phones.isEmpty || !email.isEmpty {
+                    HStack(spacing: 10) {
+                        if let phone = phones.first {
+                            Label(phone, systemImage: "phone")
+                                .foregroundStyle(.secondary)
+                                .labelStyle(.titleAndIcon)
+                        }
+                        if !email.isEmpty {
+                            Label(email, systemImage: "envelope")
+                                .foregroundStyle(.secondary)
+                                .labelStyle(.titleAndIcon)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.caption)
                 }
             }
         }

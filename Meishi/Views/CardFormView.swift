@@ -8,6 +8,11 @@ struct CardFormView: View {
     let onSave: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: FormField?
+
+    private enum FormField: Hashable {
+        case lastName, firstName, company, title, email, address, website, notes
+    }
 
     // MARK: - 初期化（手動入力・新規作成）
 
@@ -55,18 +60,41 @@ struct CardFormView: View {
                 }
 
                 Section("氏名") {
-                    TextField("姓", text: $viewModel.lastName)
+                    TextField("姓 *", text: $viewModel.lastName)
+                        .textContentType(.familyName)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .lastName)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .firstName }
                     TextField("名", text: $viewModel.firstName)
+                        .textContentType(.givenName)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .firstName)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .company }
                 }
+
                 Section("所属") {
                     TextField("会社名", text: $viewModel.company)
+                        .textContentType(.organizationName)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .company)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .title }
                     TextField("役職", text: $viewModel.title)
+                        .textContentType(.jobTitle)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .title)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = nil }
                 }
+
                 Section("連絡先") {
                     ForEach(viewModel.phones.indices, id: \.self) { i in
                         HStack {
                             TextField("電話番号", text: $viewModel.phones[i])
                                 .keyboardType(.phonePad)
+                                .textContentType(.telephoneNumber)
                             if viewModel.phones.count > 1 {
                                 Button {
                                     viewModel.phones.remove(at: i)
@@ -86,14 +114,32 @@ struct CardFormView: View {
                     }
                     TextField("メールアドレス", text: $viewModel.email)
                         .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
                         .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .email)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .address }
                 }
+
                 Section("その他") {
                     TextField("住所", text: $viewModel.address)
+                        .textContentType(.fullStreetAddress)
+                        .focused($focusedField, equals: .address)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .website }
                     TextField("Webサイト", text: $viewModel.website)
                         .keyboardType(.URL)
+                        .textContentType(.URL)
                         .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .website)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .notes }
                     TextField("メモ", text: $viewModel.notes)
+                        .focused($focusedField, equals: .notes)
+                        .submitLabel(.done)
+                        .onSubmit { focusedField = nil }
                 }
             }
             .navigationTitle(viewModel.isEditing ? "名刺を編集" : "名刺を追加")
@@ -112,15 +158,20 @@ struct CardFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
+                        focusedField = nil
                         viewModel.save()
                         onSave()
                         dismiss()
                     }
-                    // 姓が空またはOCR処理中は保存不可
                     .disabled(
                         viewModel.lastName.trimmingCharacters(in: .whitespaces).isEmpty ||
                         viewModel.isProcessingOCR
                     )
+                }
+                // キーボード上の「完了」ボタン
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完了") { focusedField = nil }
                 }
             }
         }
