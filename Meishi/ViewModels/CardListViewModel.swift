@@ -2,11 +2,33 @@ import Foundation
 import CoreData
 import Combine
 
+// 名刺一覧のソート順
+enum CardSortOrder: String, CaseIterable, Identifiable {
+    case newestFirst      = "登録が新しい順"
+    case oldestFirst      = "登録が古い順"
+    case nameAscending    = "名前順"
+    case companyAscending = "会社名順"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .newestFirst:      return "clock.arrow.counterclockwise"
+        case .oldestFirst:      return "clock"
+        case .nameAscending:    return "person.text.rectangle"
+        case .companyAscending: return "building.2"
+        }
+    }
+}
+
 // 名刺一覧画面のViewModel
 class CardListViewModel: ObservableObject {
 
     @Published var cards: [BusinessCard] = []
     @Published var duplicatePairs: [DuplicatePair] = []
+    @Published var sortOrder: CardSortOrder = .newestFirst {
+        didSet { fetchCards() }
+    }
 
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
@@ -26,7 +48,22 @@ class CardListViewModel: ObservableObject {
 
     func fetchCards() {
         let request = BusinessCard.fetchRequest()
-        request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: false)]
+        switch sortOrder {
+        case .newestFirst:
+            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: false)]
+        case .oldestFirst:
+            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: true)]
+        case .nameAscending:
+            request.sortDescriptors = [
+                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true),
+                NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: true)
+            ]
+        case .companyAscending:
+            request.sortDescriptors = [
+                NSSortDescriptor(keyPath: \BusinessCard.company,   ascending: true),
+                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true)
+            ]
+        }
         do {
             cards = try context.fetch(request)
             detectDuplicates()
@@ -44,10 +81,8 @@ class CardListViewModel: ObservableObject {
 
     // MARK: - 削除
 
-    func deleteCards(at offsets: IndexSet) {
-        offsets.forEach { index in
-            context.delete(cards[index])
-        }
+    func deleteCards(_ cardsToDelete: [BusinessCard]) {
+        cardsToDelete.forEach { context.delete($0) }
         save()
     }
 

@@ -16,7 +16,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                aiEngineSection
+                ocrEngineSection
                 duplicateCheckSection
                 exportSection
                 dataSection
@@ -27,11 +27,11 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - AIエンジン
+    // MARK: - 読み取りエンジン
 
-    private var aiEngineSection: some View {
+    private var ocrEngineSection: some View {
         Section {
-            // 層1: Apple Intelligence
+            // Apple Intelligence
             if #available(iOS 18.0, *) {
                 LabeledContent {
                     appleIntelligenceStatusText
@@ -47,10 +47,10 @@ struct SettingsView: View {
                 }
             }
 
-            // 層2: ローカルLLM
+            // オンデバイスAI（Qwen2.5）
             if llm.isDownloading {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Qwen2.5（ダウンロード中…）", systemImage: "arrow.down.circle")
+                    Label("AIをダウンロード中…", systemImage: "arrow.down.circle")
                     ProgressView(value: llm.downloadProgress)
                         .tint(.accentColor)
                     Text("\(Int(llm.downloadProgress * 100))%")
@@ -59,7 +59,7 @@ struct SettingsView: View {
                 }
             } else if llm.isModelAvailable {
                 HStack {
-                    Label("Qwen2.5", systemImage: "checkmark.circle.fill")
+                    Label("オンデバイスAI", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green, .primary)
                     Spacer()
                     if let size = llm.modelFileSize {
@@ -75,7 +75,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .confirmationDialog("モデルを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+                .confirmationDialog("AIモデルを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
                     Button("削除", role: .destructive) {
                         do {
                             try llm.deleteModel()
@@ -84,14 +84,14 @@ struct SettingsView: View {
                         }
                     }
                 } message: {
-                    Text("削除するとAI解析（正規表現にフォールバック）になります。再ダウンロードは可能です。")
+                    Text("削除すると基本解析に切り替わります。再ダウンロードはいつでも可能です。")
                 }
             } else {
                 HStack {
-                    Label("Qwen2.5（未ダウンロード）", systemImage: "arrow.down.circle")
+                    Label("オンデバイスAI（未取得）", systemImage: "arrow.down.circle")
                         .foregroundStyle(.secondary, .primary)
                     Spacer()
-                    Button("ダウンロード") {
+                    Button("取得する") {
                         Task {
                             do {
                                 try await llm.downloadModel()
@@ -110,18 +110,18 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
             }
 
-            // 層3: 正規表現
+            // 基本解析
             LabeledContent {
-                Text("常に利用可能")
+                Text("常時利用可能")
                     .foregroundStyle(.secondary)
             } label: {
-                Label("正規表現", systemImage: "chevron.left.forwardslash.chevron.right")
+                Label("基本解析", systemImage: "chevron.left.forwardslash.chevron.right")
             }
 
         } header: {
-            Text("AIエンジン")
+            Text("読み取りエンジン")
         } footer: {
-            Text("名刺OCR後のフィールド分類に使用します。上位の層から順に試みます。")
+            Text("撮影した名刺のテキストを自動でフィールドに分類します。上から順に利用可能なエンジンを使用します。")
         }
     }
 
@@ -141,7 +141,7 @@ struct SettingsView: View {
         } header: {
             Text("重複チェック")
         } footer: {
-            Text("感度が低いほど曖昧な一致も検出します。高いほど厳密に一致した場合のみ検出します。（現在: \(String(format: "%.0f", settings.duplicateThreshold * 100))%）")
+            Text("「低」にするほど名前が少し違う名刺も重複として検出します。「高」にするほど厳密に一致した場合のみ検出します。（現在: \(String(format: "%.0f", settings.duplicateThreshold * 100))%）")
         }
     }
 
@@ -155,7 +155,7 @@ struct SettingsView: View {
             return Text("非対応デバイス")
                 .foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("Apple Intelligence が無効")
+            return Text("Apple Intelligenceが無効")
                 .foregroundStyle(.orange)
         case .unavailable(.modelNotReady):
             return Text("準備中")
@@ -177,13 +177,15 @@ struct SettingsView: View {
     // MARK: - エクスポート
 
     private var exportSection: some View {
-        Section("エクスポート") {
-            Toggle("CSV に BOM を付与（Excel 対応）", isOn: $settings.csvIncludesBOM)
+        Section {
+            Toggle("Excel 対応（CSV の文字化け防止）", isOn: $settings.csvIncludesBOM)
 
-            Picker("vCard バージョン", selection: $settings.vCardVersion) {
-                Text("3.0").tag("3.0")
-                Text("4.0").tag("4.0")
+            Picker("連絡先ファイルの形式", selection: $settings.vCardVersion) {
+                Text("vCard 3.0（標準）").tag("3.0")
+                Text("vCard 4.0").tag("4.0")
             }
+        } header: {
+            Text("書き出し")
         }
     }
 
