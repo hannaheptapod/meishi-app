@@ -129,13 +129,15 @@ struct CardListView: View {
             Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
                 .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
                 .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
-                .frame(width: 44, height: 44)
+                .font(.system(size: 20, weight: .medium))
+        .frame(width: 44, height: 44)
         }
     }
 
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.secondary)
             TextField("検索", text: $searchText)
                 .autocorrectionDisabled()
@@ -161,6 +163,7 @@ struct CardListView: View {
             }
         } label: {
             Image(systemName: "plus")
+                .font(.system(size: 20, weight: .medium))
                 .frame(width: 44, height: 44)
         }
     }
