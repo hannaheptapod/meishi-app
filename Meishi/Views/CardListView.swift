@@ -94,25 +94,6 @@ struct CardListView: View {
                     }
                 }
 
-                // 下部ツールバー：追加ボタン（カメラ／手動 をメニューで選択）
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Spacer()
-                    Menu {
-                        Button {
-                            isShowingCamera = true
-                        } label: {
-                            Label("カメラで撮影", systemImage: "camera")
-                        }
-                        Button {
-                            isShowingForm = true
-                        } label: {
-                            Label("手動で入力", systemImage: "square.and.pencil")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                    }
-                }
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
@@ -131,6 +112,32 @@ struct CardListView: View {
                 SettingsView()
             }
             .onAppear(perform: viewModel.fetchCards)
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Spacer()
+                    Menu {
+                        Button {
+                            isShowingCamera = true
+                        } label: {
+                            Label("カメラで撮影", systemImage: "camera")
+                        }
+                        Button {
+                            isShowingForm = true
+                        } label: {
+                            Label("手動で入力", systemImage: "square.and.pencil")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 56, height: 56)
+                            .background(Color.accentColor, in: Circle())
+                            .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 8)
+                }
+            }
         }
     }
 
