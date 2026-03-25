@@ -109,7 +109,7 @@ class LocalLLMService: ObservableObject {
         result.firstName = dict["firstName"] ?? ""
         result.company   = dict["company"]   ?? ""
         result.title     = dict["title"]     ?? ""
-        result.phone     = dict["phone"]     ?? ""
+        if let phone = dict["phone"], !phone.isEmpty { result.phones = [phone] }
         result.email     = dict["email"]     ?? ""
         result.address   = dict["address"]   ?? ""
         result.website   = dict["website"]   ?? ""

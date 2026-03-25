@@ -12,7 +12,7 @@ class CardFormViewModel: ObservableObject {
     @Published var company: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
-    @Published var phone: String = ""
+    @Published var phones: [String] = [""]
     @Published var address: String = ""
     @Published var website: String = ""
     @Published var notes: String = ""
@@ -68,7 +68,8 @@ class CardFormViewModel: ObservableObject {
         company   = card.company   ?? ""
         title     = card.title     ?? ""
         email     = card.email     ?? ""
-        phone     = card.phone     ?? ""
+        let stored = card.phoneList
+        phones    = stored.isEmpty ? [""] : stored
         address   = card.address   ?? ""
         website   = card.website   ?? ""
         notes     = card.notes     ?? ""
@@ -120,7 +121,7 @@ class CardFormViewModel: ObservableObject {
                 firstName = parsed.firstName
                 company   = parsed.company
                 title     = parsed.title
-                phone     = parsed.phone
+                phones    = parsed.phone.isEmpty ? [""] : [parsed.phone]
                 email     = parsed.email
                 address   = parsed.address
                 website   = parsed.website
@@ -147,7 +148,7 @@ class CardFormViewModel: ObservableObject {
             firstName = parsed.firstName
             company   = parsed.company
             title     = parsed.title
-            phone     = parsed.phone
+            phones    = parsed.phones.isEmpty ? [""] : parsed.phones
             email     = parsed.email
             address   = parsed.address
             website   = parsed.website
@@ -163,7 +164,7 @@ class CardFormViewModel: ObservableObject {
         firstName = parsed.firstName
         company   = parsed.company
         title     = parsed.title
-        phone     = parsed.phone
+        phones    = parsed.phones.isEmpty ? [""] : parsed.phones
         email     = parsed.email
         address   = parsed.address
         website   = parsed.website
@@ -184,7 +185,10 @@ class CardFormViewModel: ObservableObject {
         target.company   = company.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title     = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.phone     = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.phone     = phones
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
         target.address   = address.trimmingCharacters(in: .whitespacesAndNewlines)
         target.website   = website.trimmingCharacters(in: .whitespacesAndNewlines)
         target.notes     = notes.trimmingCharacters(in: .whitespacesAndNewlines)

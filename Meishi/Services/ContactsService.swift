@@ -40,11 +40,13 @@ class ContactsService {
         if let title = card.title, !title.isEmpty {
             contact.jobTitle = title
         }
-        if let phone = card.phone, !phone.isEmpty {
-            contact.phoneNumbers = [
-                CNLabeledValue(label: CNLabelPhoneNumberMain,
-                               value: CNPhoneNumber(stringValue: phone))
-            ]
+        let phoneList = card.phoneList
+        if !phoneList.isEmpty {
+            contact.phoneNumbers = phoneList.enumerated().map { index, phone in
+                let label = index == 0 ? CNLabelPhoneNumberMain : CNLabelPhoneNumberWork
+                return CNLabeledValue(label: label,
+                                     value: CNPhoneNumber(stringValue: phone))
+            }
         }
         if let email = card.email, !email.isEmpty {
             contact.emailAddresses = [
