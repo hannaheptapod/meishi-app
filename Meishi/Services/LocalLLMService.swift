@@ -1,9 +1,9 @@
 import Foundation
 import CoreML
+import Accelerate
 import Combine
 
-// オンデバイスOSSモデルによる意味分析サービス
-// Foundation Modelsが利用不可の場合のフォールバック（層2）
+// オンデバイス Qwen2.5-0.5B-Instruct（4bit量子化 CoreML）による意味分析サービス
 class LocalLLMService: ObservableObject {
 
     static let shared = LocalLLMService()
@@ -11,96 +11,357 @@ class LocalLLMService: ObservableObject {
     // MARK: - 定数
 
     let modelFileName = "Qwen2.5-0.5B-Instruct-4bit.mlmodelc"
-    private let hfBase = "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlmodelc"
-    // mlmodelc はディレクトリ構造のため、構成ファイルを個別にダウンロードする
+
+    /// CoreML モデルファイル群（mlmodelc はディレクトリ構造）
+    private let hfModelBase = "https://huggingface.co/finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/resolve/main/Qwen2.5-0.5B-Instruct-4bit.mlmodelc"
     private let modelFiles: [(path: String, approxBytes: Int64)] = [
-        ("metadata.json",           10_000),
-        ("coremldata.bin",          50_000),
-        ("analytics/coremldata.bin", 5_000),
-        ("model.mil",            5_000_000),
-        ("weights/weight.bin", 268_000_000),
+        ("metadata.json",            10_000),
+        ("coremldata.bin",           50_000),
+        ("analytics/coremldata.bin",  5_000),
+        ("model.mil",             5_000_000),
+        ("weights/weight.bin",  268_000_000),
     ]
+
+    /// tokenizer.json（Qwen/Qwen2.5-0.5B-Instruct）
+    private let tokenizerSource = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/main/tokenizer.json"
+    private let tokenizerApproxBytes: Int64 = 7_500_000
 
     // MARK: - 状態
 
-    /// モデルが取得済みかつロード可能な状態かどうか
     @Published var isModelAvailable: Bool = false
-
-    /// ダウンロード中かどうか
-    @Published var isDownloading: Bool = false
-
-    /// ダウンロード進捗（0.0〜1.0）
+    @Published var isDownloading:    Bool = false
     @Published var downloadProgress: Double = 0.0
 
     private var loadedModel: MLModel? = nil
+    private var tokenizer:   Qwen25Tokenizer? = nil
 
-    var modelFileURL: URL {
-        let dir = FileManager.default
+    /// モデルロード後に設定する CoreML の入出力フィーチャー名
+    private var inputFeatureName:        String = "inputIds"
+    private var logitsFeatureName:       String = "logits"
+    private var needsAttentionMask:      Bool   = false
+    private var attentionMaskFeatureName: String = "causal_mask"
+    /// causal_mask の次元数（モデルによって 2D または 4D）
+    private var attentionMaskRank:       Int    = 4
+    /// causal_mask のデータ型（int32: 1/0マスク、float32/float16: 0.0/-大値加算マスク）
+    private var attentionMaskDataType:   MLMultiArrayDataType = .int32
+
+    // MARK: - パス
+
+    var modelDirURL: URL {
+        FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LocalLLM", isDirectory: true)
-        return dir.appendingPathComponent(modelFileName, isDirectory: true)
+    }
+    var modelFileURL: URL {
+        modelDirURL.appendingPathComponent(modelFileName, isDirectory: true)
+    }
+    var tokenizerFileURL: URL {
+        modelDirURL.appendingPathComponent("tokenizer.json")
     }
 
     private init() {
-        // weight.bin が存在すればダウンロード完了とみなす
-        let weightURL = modelFileURL.appendingPathComponent("weights/weight.bin")
+        let weightURL    = modelFileURL.appendingPathComponent("weights/weight.bin")
+        let tokenizerURL = tokenizerFileURL
         isModelAvailable = FileManager.default.fileExists(atPath: weightURL.path)
+                        && FileManager.default.fileExists(atPath: tokenizerURL.path)
     }
 
     // MARK: - モデルロード
 
     func loadModelIfNeeded() throws {
-        guard isModelAvailable, loadedModel == nil else { return }
-        let config = MLModelConfiguration()
-        config.computeUnits = .all   // ANE / GPU / CPU を自動選択
-        loadedModel = try MLModel(contentsOf: modelFileURL, configuration: config)
+        guard isModelAvailable else { return }
+
+        if loadedModel == nil {
+            let config = MLModelConfiguration()
+            config.computeUnits = .all
+            loadedModel = try MLModel(contentsOf: modelFileURL, configuration: config)
+            introspectModel()
+        }
+        if tokenizer == nil {
+            tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
+        }
     }
 
-    // MARK: - 推論
+    /// ロード済みモデルの入出力フィーチャー名を自動検出する
+    private func introspectModel() {
+        guard let model = loadedModel else { return }
+        let desc = model.modelDescription
 
-    /// OCR行リストを受け取り、CardFieldClassifier.ParsedCard を返す
-    /// エラー時またはモデル未ロード時は nil を返す（呼び出し元はフォールバックへ進む）
+        for (name, fDesc) in desc.inputDescriptionsByName {
+            guard fDesc.type == .multiArray,
+                  let c = fDesc.multiArrayConstraint else { continue }
+
+            let lower = name.lowercased()
+
+            // マスク系フィーチャーを優先判定（名前に "mask" や "causal" を含む）
+            if lower.contains("mask") || lower.contains("causal") {
+                needsAttentionMask        = true
+                attentionMaskFeatureName  = name
+                attentionMaskDataType     = c.dataType  // float32/float16/int32 を記録
+                // 期待される次元数をシェイプ制約から取得
+                let sc = c.shapeConstraint
+                switch sc.type {
+                case .enumerated:
+                    attentionMaskRank = sc.enumeratedShapes.first?.count ?? 4
+                case .range:
+                    attentionMaskRank = sc.sizeRangeForDimension.count
+                default:
+                    attentionMaskRank = 4
+                }
+            } else if c.dataType == .int32 {
+                // マスク以外の int32 MultiArray → トークンID入力
+                inputFeatureName = name
+            }
+        }
+
+        // 出力フィーチャー: float MultiArray → ロジット
+        for (name, fDesc) in desc.outputDescriptionsByName {
+            if fDesc.type == .multiArray,
+               let c = fDesc.multiArrayConstraint,
+               (c.dataType == .float32 || c.dataType == .float16) {
+                logitsFeatureName = name
+                break
+            }
+        }
+    }
+
+    // MARK: - 推論（公開API）
+
+    /// OCR行リストを受け取り ParsedCard を返す。
+    /// モデル未ロード・推論失敗時は nil を返す（呼び出し元はフォールバックへ進む）。
     func classify(lines: [String]) async -> CardFieldClassifier.ParsedCard? {
-        guard let model = loadedModel else { return nil }
+        // アプリ再起動後に未ロードの場合はここでロードする
+        if loadedModel == nil || tokenizer == nil {
+            try? loadModelIfNeeded()
+        }
+        guard let model = loadedModel, let tok = tokenizer else { return nil }
 
-        let prompt = buildPrompt(lines: lines)
+        let prompt  = buildChatMLPrompt(lines: lines)
+        let inputIds = tok.encode(prompt)
 
-        // NOTE: CoreMLPipelines または MLModel の generate API を使用する
-        // 実装はモデルのMLPackage仕様に依存するため、
-        // ダウンロード後に以下を具体化する
-        //
-        // let input = try Qwen25Input(prompt: prompt)
-        // let output = try model.prediction(from: input)
-        // return parseJSON(output.text)
-
-        _ = model   // 未使用警告を抑制（実装プレースホルダー）
-        _ = prompt
-        return nil
+        do {
+            let output = try runGeneration(model: model, tokenizer: tok, inputIds: inputIds)
+            return parseJSON(output)
+        } catch {
+            return nil
+        }
     }
 
-    // MARK: - プロンプト構築
+    // MARK: - テキスト生成ループ
 
-    private func buildPrompt(lines: [String]) -> String {
+    private func runGeneration(model: MLModel,
+                               tokenizer: Qwen25Tokenizer,
+                               inputIds: [Int]) throws -> String {
+        let promptLen = inputIds.count
+        var generatedIds = [Int]()
+        let maxNewTokens = 256
+
+        // MLState で KV キャッシュを管理（iOS 18 stateful prediction）
+        let state = model.makeState()
+
+        // --- プリフィル: プロンプト全体を一括処理 ---
+        // causal_mask 形状: [1, 1, promptLen, promptLen]（下三角）
+        let prefillLogits = try forward(model: model, state: state,
+                                        ids: inputIds, startPos: 0)
+
+        // プリフィルの最終位置から最初の生成トークンを取得
+        guard let firstToken = argmaxLastToken(logits: prefillLogits, seqLen: promptLen) else {
+            return ""
+        }
+        if firstToken == Qwen25Tokenizer.SpecialToken.imEnd
+        || firstToken == Qwen25Tokenizer.SpecialToken.eot { return "" }
+        generatedIds.append(firstToken)
+
+        // --- デコード: 1 トークンずつ生成 ---
+        // causal_mask 形状: [1, 1, 1, promptLen + k + 1]（全 1）
+        while generatedIds.count < maxNewTokens {
+            let currentPos = promptLen + generatedIds.count - 1
+            let decLogits  = try forward(model: model, state: state,
+                                         ids: [generatedIds.last!], startPos: currentPos)
+            guard let nextToken = argmaxLastToken(logits: decLogits, seqLen: 1) else { break }
+            if nextToken == Qwen25Tokenizer.SpecialToken.imEnd
+            || nextToken == Qwen25Tokenizer.SpecialToken.eot { break }
+            generatedIds.append(nextToken)
+        }
+
+        return tokenizer.decode(generatedIds)
+    }
+
+    /// 1 ステップの forward pass（stateful KV キャッシュ使用）
+    /// - startPos: ids[0] の絶対位置（KV キャッシュ内のオフセット）
+    private func forward(model: MLModel, state: MLState,
+                         ids: [Int], startPos: Int) throws -> MLMultiArray {
+        let seqLen = ids.count
+
+        let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
+        for (i, id) in ids.enumerated() { inputArray[i] = NSNumber(value: id) }
+
+        var features: [String: Any] = [inputFeatureName: MLFeatureValue(multiArray: inputArray)]
+
+        if needsAttentionMask {
+            // totalLen = KV キャッシュ内の総トークン数（過去 + 現在バッチ）
+            let totalLen = startPos + seqLen
+            features[attentionMaskFeatureName] = MLFeatureValue(
+                multiArray: try buildCausalMask(queryLen: seqLen, keyLen: totalLen))
+        }
+
+        let provider = try MLDictionaryFeatureProvider(dictionary: features)
+        let output   = try model.prediction(from: provider, using: state)
+
+        guard let logits = output.featureValue(for: logitsFeatureName)?.multiArrayValue else {
+            throw InferenceError.noLogits
+        }
+        return logits
+    }
+
+    /// causal_mask を構築する（テスト可能なため internal）
+    /// - queryLen=1（デコード）: 全て「参照可」
+    /// - queryLen>1（プリフィル）: 下三角のみ「参照可」
+    /// データ型はモデルの制約に従って自動選択される:
+    ///   - int32  → 1=参照可, 0=マスク（multiplicative）
+    ///   - float  → 0.0=参照可, -30000.0=マスク（additive to attention score）
+    func buildCausalMask(queryLen: Int, keyLen: Int) throws -> MLMultiArray {
+        let dtype  = attentionMaskDataType
+        let isFloat = (dtype == .float32 || dtype == .float16)
+        let allowVal:  NSNumber = isFloat ? 0.0      : 1
+        let blockVal:  NSNumber = isFloat ? -30000.0 : 0
+
+        let shape: [NSNumber] = attentionMaskRank == 4
+            ? [1, 1, NSNumber(value: queryLen), NSNumber(value: keyLen)]
+            : [1, NSNumber(value: queryLen)]
+        let mask = try MLMultiArray(shape: shape, dataType: dtype)
+
+        if attentionMaskRank == 4 {
+            for i in 0 ..< queryLen {
+                let absI = keyLen - queryLen + i
+                for j in 0 ..< keyLen {
+                    mask[i * keyLen + j] = (j <= absI) ? allowVal : blockVal
+                }
+            }
+        } else {
+            for i in 0 ..< queryLen { mask[i] = allowVal }
+        }
+        return mask
+    }
+
+    private enum InferenceError: Error { case noLogits }
+
+    /// ロジット配列の最後のトークン位置で argmax を取り、最大値のインデックスを返す
+    private func argmaxLastToken(logits: MLMultiArray, seqLen: Int) -> Int? {
+        let shape   = logits.shape.map { $0.intValue }
+        let strides = logits.strides.map { $0.intValue }
+
+        // ロジットの次元数に応じてボキャブラリサイズとオフセットを決定
+        // 想定される形状:
+        //   [vocabSize]           (1次元: 最後のトークンのみ)
+        //   [1, vocabSize]        (2次元: バッチ × vocab)
+        //   [1, seqLen, vocabSize] (3次元: バッチ × シーケンス × vocab)
+        let vocabSize: Int
+        let baseOffset: Int
+        switch shape.count {
+        case 1:
+            vocabSize  = shape[0]
+            baseOffset = 0
+        case 2:
+            vocabSize  = shape[1]
+            let lastRow = max(0, shape[0] - 1)
+            baseOffset  = lastRow * strides[0]
+        case 3:
+            vocabSize   = shape[2]
+            let lastPos = max(0, shape[1] - 1)
+            baseOffset  = lastPos * strides[1]
+        default:
+            return nil
+        }
+
+        let vocabStride = strides.last ?? 1
+        var maxVal: Float = -.infinity
+        var argmax = 0
+
+        switch logits.dataType {
+        case .float32:
+            // dataPointer を直接参照して高速に argmax を計算
+            let ptr = logits.dataPointer.assumingMemoryBound(to: Float32.self)
+            for v in 0 ..< vocabSize {
+                let val = ptr[baseOffset + v * vocabStride]
+                if val > maxVal { maxVal = val; argmax = v }
+            }
+        case .float16:
+            // float16 → float32 変換して argmax
+            let ptr = logits.dataPointer.assumingMemoryBound(to: UInt16.self)
+            for v in 0 ..< vocabSize {
+                let bits = ptr[baseOffset + v * vocabStride]
+                let val  = float16ToFloat32(bits)
+                if val > maxVal { maxVal = val; argmax = v }
+            }
+        default:
+            // その他の型は NSNumber 経由（低速だが安全）
+            for v in 0 ..< vocabSize {
+                let val = logits[baseOffset + v * vocabStride].floatValue
+                if val > maxVal { maxVal = val; argmax = v }
+            }
+        }
+
+        return argmax
+    }
+
+    /// IEEE 754 half-precision（float16）を float32 に変換
+    private func float16ToFloat32(_ bits: UInt16) -> Float {
+        let sign     = UInt32(bits >> 15) << 31
+        let exp16    = Int((bits >> 10) & 0x1F)
+        let mantissa = UInt32(bits & 0x3FF)
+        let f32bits: UInt32
+        if exp16 == 0 {
+            if mantissa == 0 {
+                f32bits = sign
+            } else {
+                // 非正規化数
+                var m = mantissa
+                var e = Int32(-14)
+                while (m & 0x400) == 0 { m <<= 1; e -= 1 }
+                m &= 0x3FF
+                f32bits = sign | (UInt32(e + 127) << 23) | (m << 13)
+            }
+        } else if exp16 == 31 {
+            f32bits = sign | 0x7F800000 | (mantissa << 13)  // inf または NaN
+        } else {
+            f32bits = sign | (UInt32(exp16 - 15 + 127) << 23) | (mantissa << 13)
+        }
+        return Float(bitPattern: f32bits)
+    }
+
+    // MARK: - プロンプト構築（ChatML 形式）
+
+    func buildChatMLPrompt(lines: [String]) -> String {
         let rawText = lines.joined(separator: "\n")
         return """
+            <|im_start|>system
+            あなたは名刺解析の専門家です。指示通りのJSONのみを出力してください。説明は不要です。<|im_end|>
+            <|im_start|>user
             以下は名刺から読み取ったテキストです。各フィールドをJSON形式で出力してください。
             キー名は必ず lastName / firstName / company / title / phone / email / address / website を使用してください。
-            値が不明な場合は空文字列にしてください。JSONのみ出力し、説明は不要です。
+            値が不明な場合は空文字列にしてください。JSONのみ出力し、説明や ```json フェンスは不要です。
 
-            \(rawText)
+            \(rawText)<|im_end|>
+            <|im_start|>assistant
             """
     }
 
-    // MARK: - JSONパース
+    // MARK: - JSON パース
 
-    private func parseJSON(_ text: String) -> CardFieldClassifier.ParsedCard? {
-        // モデル出力から ```json ``` フェンスを除去してパース
+    func parseJSON(_ text: String) -> CardFieldClassifier.ParsedCard? {
+        // モデル出力から ```json ``` フェンスや前後の空白を除去
         let cleaned = text
             .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
+            .replacingOccurrences(of: "```",     with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let data = cleaned.data(using: .utf8),
+        // JSONオブジェクトの開始位置を探す（前置き文章があっても対応）
+        guard let start = cleaned.firstIndex(of: "{"),
+              let end   = cleaned.lastIndex(of: "}") else { return nil }
+        let jsonStr = String(cleaned[start...end])
+
+        guard let data = jsonStr.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
         else { return nil }
 
@@ -118,62 +379,71 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - ダウンロード
 
-    /// ユーザーの同意を得たあとに呼び出す。@Published プロパティで進捗を通知する
+    /// ユーザーの同意後に呼び出す。@Published プロパティで進捗を通知する。
     func downloadModel() async throws {
         await MainActor.run {
-            isDownloading = true
+            isDownloading    = true
             downloadProgress = 0.0
         }
-        defer {
-            Task { @MainActor in isDownloading = false }
-        }
+        defer { Task { @MainActor in self.isDownloading = false } }
 
-        let dir = modelFileURL.deletingLastPathComponent()
+        let dir = modelDirURL
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        // URLSession の delegate で進捗を追跡
-        let totalBytes = modelFiles.reduce(0) { $0 + $1.approxBytes }
+        let totalBytes = modelFiles.reduce(0) { $0 + $1.approxBytes } + tokenizerApproxBytes
         var downloadedBytes: Int64 = 0
 
         let session = URLSession(configuration: .default)
 
+        // モデルファイルをダウンロード
+        let modelDir = modelFileURL
+        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
         for (relativePath, approxBytes) in modelFiles {
-            let fileURL = modelFileURL.appendingPathComponent(relativePath)
+            let fileURL   = modelFileURL.appendingPathComponent(relativePath)
             let parentDir = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-            let remoteURL = URL(string: "\(hfBase)/\(relativePath)")!
+            let remoteURL = URL(string: "\(hfModelBase)/\(relativePath)")!
             let (tempURL, _) = try await session.download(from: remoteURL)
             try? FileManager.default.removeItem(at: fileURL)
             try FileManager.default.moveItem(at: tempURL, to: fileURL)
 
             downloadedBytes += approxBytes
-            let progress = min(Double(downloadedBytes) / Double(totalBytes), 1.0)
-            await MainActor.run { self.downloadProgress = progress }
+            let p = min(Double(downloadedBytes) / Double(totalBytes), 1.0)
+            await MainActor.run { self.downloadProgress = p }
         }
 
-        try loadModelIfNeeded()
+        // tokenizer.json をダウンロード
+        let tokURL = URL(string: tokenizerSource)!
+        let (tokTemp, _) = try await session.download(from: tokURL)
+        try? FileManager.default.removeItem(at: tokenizerFileURL)
+        try FileManager.default.moveItem(at: tokTemp, to: tokenizerFileURL)
 
-        await MainActor.run { isModelAvailable = true }
+        downloadedBytes += tokenizerApproxBytes
+        await MainActor.run { self.downloadProgress = 1.0 }
+
+        // ロード確認
+        try loadModelIfNeeded()
+        await MainActor.run { self.isModelAvailable = true }
     }
 
     // MARK: - 削除
 
-    /// ダウンロード済みモデルディレクトリを削除する
     func deleteModel() throws {
         guard isModelAvailable else { return }
-        try FileManager.default.removeItem(at: modelFileURL)
-        loadedModel = nil
+        try FileManager.default.removeItem(at: modelDirURL)
+        loadedModel      = nil
+        tokenizer        = nil
         isModelAvailable = false
     }
 
-    // MARK: - モデルファイルサイズ
+    // MARK: - ファイルサイズ
 
-    /// ダウンロード済みモデルのファイルサイズ合計（バイト）
     var modelFileSize: Int64? {
         guard isModelAvailable else { return nil }
         let enumerator = FileManager.default.enumerator(
-            at: modelFileURL,
+            at: modelDirURL,
             includingPropertiesForKeys: [.fileSizeKey],
             options: [.skipsHiddenFiles]
         )
@@ -185,4 +455,3 @@ class LocalLLMService: ObservableObject {
         return total > 0 ? total : nil
     }
 }
-
