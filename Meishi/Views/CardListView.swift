@@ -94,6 +94,23 @@ struct CardListView: View {
                     }
                 }
 
+                // 右：追加ボタン（ellipsis と同スタイル）
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button {
+                            isShowingCamera = true
+                        } label: {
+                            Label("カメラで撮影", systemImage: "camera")
+                        }
+                        Button {
+                            isShowingForm = true
+                        } label: {
+                            Label("手動で入力", systemImage: "square.and.pencil")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle")
+                    }
+                }
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
@@ -112,33 +129,6 @@ struct CardListView: View {
                 SettingsView()
             }
             .onAppear(perform: viewModel.fetchCards)
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    Spacer()
-                    Menu {
-                        Button {
-                            isShowingCamera = true
-                        } label: {
-                            Label("カメラで撮影", systemImage: "camera")
-                        }
-                        Button {
-                            isShowingForm = true
-                        } label: {
-                            Label("手動で入力", systemImage: "square.and.pencil")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 56, height: 56)
-                            .background(.regularMaterial, in: Circle())
-                            .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 8)
-                }
-            }
         }
     }
 
