@@ -6,6 +6,7 @@ struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
     @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
     @State private var isShowingForm = false
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
@@ -104,9 +105,6 @@ struct CardListView: View {
             } label: {
                 Label("並び替え", systemImage: "arrow.up.arrow.down")
             }
-            Button { isShowingSettings = true } label: {
-                Label("設定", systemImage: "gearshape")
-            }
             if !viewModel.cards.isEmpty {
                 Divider()
                 NavigationLink {
@@ -125,6 +123,10 @@ struct CardListView: View {
                     Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                 }
             }
+            Divider()
+            Button { isShowingSettings = true } label: {
+                Label("設定", systemImage: "gearshape")
+            }
         } label: {
             Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
                 .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
@@ -142,6 +144,7 @@ struct CardListView: View {
             TextField("検索", text: $searchText)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                .focused($isSearchFocused)
             if !searchText.isEmpty {
                 Button { searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -155,10 +158,11 @@ struct CardListView: View {
 
     @ViewBuilder
     private var addMenu: some View {
-        if !searchText.isEmpty {
-            // 検索中は × ボタンで検索を閉じる
+        if !searchText.isEmpty || isSearchFocused {
+            // 検索中は × ボタンで検索を閉じる（テキストクリア＋キーボード閉じる）
             Button {
                 searchText = ""
+                isSearchFocused = false
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 20, weight: .medium))
@@ -189,6 +193,7 @@ struct CardListView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.immediately)
     }
 
     private var emptyState: some View {
