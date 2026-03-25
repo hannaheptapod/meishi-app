@@ -16,17 +16,41 @@ struct CardDetailView: View {
 
     var body: some View {
         List {
-            // 名刺画像
+            // ── プロフィールヘッダー ──
+            Section {
+                HStack(spacing: 14) {
+                    avatarView
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                            .font(.title3.bold())
+                        if let company = card.company, !company.isEmpty {
+                            Text(company)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let title = card.title, !title.isEmpty {
+                            Text(title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            // ── 名刺画像 ──
             if let data = card.imageData, let image = UIImage(data: data) {
                 Section {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
-                        .cornerRadius(8)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
 
-            if !card.fullName.isEmpty {
+            // ── 氏名（姓・名を個別確認できる行） ──
+            let hasName = !(card.lastName ?? "").isEmpty || !(card.firstName ?? "").isEmpty
+            if hasName {
                 Section("氏名") {
                     if let lastName = card.lastName, !lastName.isEmpty {
                         LabeledContent("姓", value: lastName)
@@ -36,66 +60,89 @@ struct CardDetailView: View {
                     }
                 }
             }
-            if let company = card.company, !company.isEmpty {
-                Section("会社名") { Text(company) }
-            }
-            if let title = card.title, !title.isEmpty {
-                Section("役職") { Text(title) }
-            }
+
+            // ── 連絡先（電話 + メール） ──
             let phoneList = card.phoneList
-            if !phoneList.isEmpty {
-                Section("電話番号") {
+            let hasEmail  = !(card.email ?? "").isEmpty
+            if !phoneList.isEmpty || hasEmail {
+                Section("連絡先") {
                     ForEach(phoneList, id: \.self) { phone in
                         let digits = phone.filter { $0.isNumber || $0 == "+" }
                         if let url = URL(string: "tel:\(digits)") {
-                            Link(phone, destination: url)
+                            Label {
+                                Link(phone, destination: url)
+                            } icon: {
+                                Image(systemName: "phone.fill")
+                                    .foregroundStyle(.green)
+                            }
                         } else {
-                            Text(phone)
+                            Label(phone, systemImage: "phone.fill")
+                        }
+                    }
+                    if let email = card.email, !email.isEmpty {
+                        if let url = URL(string: "mailto:\(email)") {
+                            Label {
+                                Link(email, destination: url)
+                            } icon: {
+                                Image(systemName: "envelope.fill")
+                                    .foregroundStyle(.blue)
+                            }
+                        } else {
+                            Label(email, systemImage: "envelope.fill")
                         }
                     }
                 }
             }
-            if let email = card.email, !email.isEmpty {
-                Section("メール") {
-                    if let url = URL(string: "mailto:\(email)") {
-                        Link(email, destination: url)
-                    } else {
-                        Text(email)
+
+            // ── その他（住所・Web・メモ） ──
+            let hasAddress = !(card.address ?? "").isEmpty
+            let hasWebsite = !(card.website ?? "").isEmpty
+            let hasNotes   = !(card.notes   ?? "").isEmpty
+            if hasAddress || hasWebsite || hasNotes {
+                Section("その他") {
+                    if let address = card.address, !address.isEmpty {
+                        Label(address, systemImage: "map.fill")
+                            .foregroundStyle(.primary, .orange)
                     }
-                }
-            }
-            if let address = card.address, !address.isEmpty {
-                Section("住所") { Text(address) }
-            }
-            if let website = card.website, !website.isEmpty {
-                Section("Webサイト") {
-                    if let url = URL(string: website) {
-                        Link(website, destination: url)
-                    } else {
-                        Text(website)
+                    if let website = card.website, !website.isEmpty {
+                        if let url = URL(string: website) {
+                            Label {
+                                Link(website, destination: url)
+                            } icon: {
+                                Image(systemName: "globe")
+                                    .foregroundStyle(.indigo)
+                            }
+                        } else {
+                            Label(website, systemImage: "globe")
+                        }
                     }
-                }
-            }
-            if let notes = card.notes, !notes.isEmpty {
-                Section("メモ") { Text(notes) }
-            }
-            if let createdAt = card.createdAt {
-                Section("登録日時") {
-                    Text(createdAt.formatted(date: .abbreviated, time: .shortened))
-                        .foregroundColor(.secondary)
+                    if let notes = card.notes, !notes.isEmpty {
+                        Label(notes, systemImage: "note.text")
+                    }
                 }
             }
 
-            // アクションセクション
+            // ── 登録日時 ──
+            if let createdAt = card.createdAt {
+                Section {
+                    Label(
+                        createdAt.formatted(date: .abbreviated, time: .shortened),
+                        systemImage: "calendar"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                } header: {
+                    Text("登録日時")
+                }
+            }
+
+            // ── アクション ──
             Section {
-                // 連絡先に保存
                 Button {
                     Task { await exportToContacts() }
                 } label: {
                     Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
                 }
-
-                // vCard として共有
                 Button {
                     shareVCard()
                 } label: {
@@ -104,7 +151,7 @@ struct CardDetailView: View {
             }
         }
         .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("編集") { isShowingEditForm = true }
@@ -121,6 +168,29 @@ struct CardDetailView: View {
         } message: { msg in
             Text(msg)
         }
+    }
+
+    // MARK: - アバター
+
+    @ViewBuilder
+    private var avatarView: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.accentColor.opacity(0.12))
+                .frame(width: 58, height: 58)
+            Text(cardInitials)
+                .font(.title3.bold())
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+
+    private var cardInitials: String {
+        let last  = card.lastName?.prefix(1)  ?? ""
+        let first = card.firstName?.prefix(1) ?? ""
+        if last.isEmpty && first.isEmpty {
+            return String(card.company?.prefix(1).uppercased() ?? "?")
+        }
+        return "\(last)\(first)"
     }
 
     // MARK: - アクション

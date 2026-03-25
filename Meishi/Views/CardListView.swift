@@ -170,22 +170,43 @@ private struct CardRowView: View {
     let card: BusinessCard
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            let fullName = card.fullName
-            Text(fullName.isEmpty ? "（名前なし）" : fullName)
-                .font(.headline)
-            if let company = card.company, !company.isEmpty {
-                Text(company)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+        HStack(spacing: 12) {
+            // イニシャルアバター
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 44, height: 44)
+                Text(initials)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(Color.accentColor)
             }
-            if let title = card.title, !title.isEmpty {
-                Text(title)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                let fullName = card.fullName
+                Text(fullName.isEmpty ? "（名前なし）" : fullName)
+                    .font(.headline)
+                if let company = card.company, !company.isEmpty {
+                    Text(company)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                if let title = card.title, !title.isEmpty {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+    }
+
+    private var initials: String {
+        let last  = card.lastName?.prefix(1)  ?? ""
+        let first = card.firstName?.prefix(1) ?? ""
+        if last.isEmpty && first.isEmpty {
+            return String(card.company?.prefix(1).uppercased() ?? "?")
+        }
+        return "\(last)\(first)"
     }
 }
 
