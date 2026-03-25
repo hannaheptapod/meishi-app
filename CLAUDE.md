@@ -197,6 +197,7 @@ Meishi/
 - 例：`feature/basic-crud`、`feature/camera-ocr`、`feature/contacts-export`、`feature/duplicate-check`、`feature/qwen-inference`
 - フェーズ完了後は main にマージしてから次のブランチを切る
 - **main への直接 push は絶対禁止。** 必ず feature ブランチを切り、PR を通してマージすること
+- main にマージ後は作業ブランチをローカル・リモートともに削除すること
 
 ---
 
