@@ -157,6 +157,7 @@ struct CardListView: View {
                 viewModel.deleteCards(offsets.map { displayedCards[$0] })
             }
         }
+        .listStyle(.plain)
     }
 
     private var emptyState: some View {
