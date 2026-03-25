@@ -33,13 +33,12 @@ struct DuplicateMergeView: View {
         }
     }
 
-    // MARK: - ヘッダー
+    // MARK: - ヘッダー（類似度 + 両カードのサマリー）
 
     private var headerSection: some View {
         Section {
             HStack(spacing: 12) {
                 cardHeader(pair.cardA, side: .a)
-                // 類似度バッジ
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.left.arrow.right")
                         .foregroundStyle(.secondary)
@@ -54,7 +53,7 @@ struct DuplicateMergeView: View {
             }
             .padding(.vertical, 4)
         } header: {
-            Text("残したい値をタップして選択してください")
+            Text("残したい値の行をタップしてください")
         }
     }
 
@@ -79,75 +78,69 @@ struct DuplicateMergeView: View {
         .frame(maxWidth: .infinity, alignment: side == .a ? .leading : .trailing)
     }
 
-    // MARK: - フィールド行
+    // MARK: - フィールド行（縦並び・選択しやすい設計）
 
     private var fieldRows: some View {
         Group {
-            mergeRow(label: "姓",     a: pair.cardA.lastName,  b: pair.cardB.lastName,  binding: $selections.lastName)
-            mergeRow(label: "名",     a: pair.cardA.firstName, b: pair.cardB.firstName, binding: $selections.firstName)
-            mergeRow(label: "会社名", a: pair.cardA.company,   b: pair.cardB.company,   binding: $selections.company)
-            mergeRow(label: "役職",   a: pair.cardA.title,     b: pair.cardB.title,     binding: $selections.title)
+            mergeRow(label: "名前",   aVal: pair.cardA.fullName,   bVal: pair.cardB.fullName,   binding: $selections.name)
+            mergeRow(label: "会社名", aVal: pair.cardA.company,    bVal: pair.cardB.company,    binding: $selections.company)
+            mergeRow(label: "役職",   aVal: pair.cardA.title,      bVal: pair.cardB.title,      binding: $selections.title)
             mergeRow(
                 label: "電話",
-                a: pair.cardA.phoneList.isEmpty ? nil : pair.cardA.phoneList.joined(separator: "\n"),
-                b: pair.cardB.phoneList.isEmpty ? nil : pair.cardB.phoneList.joined(separator: "\n"),
+                aVal: pair.cardA.phoneList.isEmpty ? nil : pair.cardA.phoneList.joined(separator: "\n"),
+                bVal: pair.cardB.phoneList.isEmpty ? nil : pair.cardB.phoneList.joined(separator: "\n"),
                 binding: $selections.phone
             )
-            mergeRow(label: "メール", a: pair.cardA.email,   b: pair.cardB.email,   binding: $selections.email)
-            mergeRow(label: "住所",   a: pair.cardA.address, b: pair.cardB.address, binding: $selections.address)
-            mergeRow(label: "Web",    a: pair.cardA.website, b: pair.cardB.website, binding: $selections.website)
-            mergeRow(label: "メモ",   a: pair.cardA.notes,   b: pair.cardB.notes,   binding: $selections.notes)
+            mergeRow(label: "メール", aVal: pair.cardA.email,   bVal: pair.cardB.email,   binding: $selections.email)
+            mergeRow(label: "住所",   aVal: pair.cardA.address, bVal: pair.cardB.address, binding: $selections.address)
+            mergeRow(label: "Web",    aVal: pair.cardA.website, bVal: pair.cardB.website, binding: $selections.website)
+            mergeRow(label: "メモ",   aVal: pair.cardA.notes,   bVal: pair.cardB.notes,   binding: $selections.notes)
         }
     }
 
     @ViewBuilder
-    private func mergeRow(label: String, a: String?, b: String?, binding: Binding<Side>) -> some View {
-        let aVal = a ?? ""
-        let bVal = b ?? ""
-        if !aVal.isEmpty || !bVal.isEmpty {
+    private func mergeRow(label: String, aVal: String?, bVal: String?, binding: Binding<Side>) -> some View {
+        let a = aVal ?? ""
+        let b = bVal ?? ""
+        if !a.isEmpty || !b.isEmpty {
             Section(label) {
-                HStack(spacing: 0) {
-                    selectionCell(value: aVal, side: .a, selected: binding.wrappedValue == .a) {
-                        binding.wrappedValue = .a
-                    }
-                    Divider()
-                    selectionCell(value: bVal, side: .b, selected: binding.wrappedValue == .b) {
-                        binding.wrappedValue = .b
-                    }
+                optionRow(value: a, side: .a, selected: binding.wrappedValue == .a) {
+                    binding.wrappedValue = .a
+                }
+                optionRow(value: b, side: .b, selected: binding.wrappedValue == .b) {
+                    binding.wrappedValue = .b
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func selectionCell(value: String, side: Side, selected: Bool, onTap: @escaping () -> Void) -> some View {
+    private func optionRow(value: String, side: Side, selected: Bool, onTap: @escaping () -> Void) -> some View {
         Button(action: onTap) {
-            HStack(alignment: .top) {
-                if side == .b {
-                    Spacer()
-                }
+            HStack(spacing: 10) {
+                // サイドラベル
+                Text(side == .a ? "A" : "B")
+                    .font(.caption2.bold())
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .frame(width: 18)
+
+                // 値
                 Text(value.isEmpty ? "（なし）" : value)
                     .foregroundStyle(value.isEmpty ? .tertiary : .primary)
                     .font(.subheadline)
-                    .multilineTextAlignment(side == .a ? .leading : .trailing)
-                    .frame(maxWidth: .infinity, alignment: side == .a ? .leading : .trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // 選択チェックマーク
                 if selected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color.accentColor)
-                        .font(.body)
                 }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .background(
-            selected
-                ? Color.accentColor.opacity(0.12)
-                : (value.isEmpty ? Color.clear : Color.clear)
-        )
+        .listRowBackground(selected ? Color.accentColor.opacity(0.08) : nil)
     }
 
     // MARK: - マージ実行
@@ -156,8 +149,11 @@ struct DuplicateMergeView: View {
         let a = pair.cardA
         let b = pair.cardB
 
-        a.lastName  = selections.lastName  == .a ? (a.lastName  ?? "") : (b.lastName  ?? "")
-        a.firstName = selections.firstName == .a ? (a.firstName ?? "") : (b.firstName ?? "")
+        // 名前フィールドは名前マージ選択に従って両カードから取得
+        if selections.name == .b {
+            a.lastName  = b.lastName  ?? ""
+            a.firstName = b.firstName ?? ""
+        }
         a.company   = selections.company   == .a ? (a.company   ?? "") : (b.company   ?? "")
         a.title     = selections.title     == .a ? (a.title     ?? "") : (b.title     ?? "")
         a.phone     = selections.phone     == .a ? (a.phone     ?? "") : (b.phone     ?? "")
@@ -181,7 +177,7 @@ struct DuplicateMergeView: View {
     }
 
     private func scoreColor(_ score: Double) -> Color {
-        score >= 0.9 ? .red : score >= 0.8 ? .orange : .yellow
+        score >= 0.9 ? .red : score >= 0.8 ? .orange : .mint
     }
 }
 
@@ -190,13 +186,12 @@ struct DuplicateMergeView: View {
 private enum Side { case a, b }
 
 private struct FieldSelections {
-    var lastName:  Side = .a
-    var firstName: Side = .a
-    var company:   Side = .a
-    var title:     Side = .a
-    var phone:     Side = .a
-    var email:     Side = .a
-    var address:   Side = .a
-    var website:   Side = .a
-    var notes:     Side = .a
+    var name:    Side = .a
+    var company: Side = .a
+    var title:   Side = .a
+    var phone:   Side = .a
+    var email:   Side = .a
+    var address: Side = .a
+    var website: Side = .a
+    var notes:   Side = .a
 }

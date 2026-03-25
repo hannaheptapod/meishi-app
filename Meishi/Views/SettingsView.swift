@@ -8,7 +8,7 @@ struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var llm = LocalLLMService.shared
 
-    @State private var showDeleteAllConfirm = false
+    @State private var showDeleteAllConfirm  = false
     @State private var showDeleteModelConfirm = false
     @State private var deleteAllError: String? = nil
     @State private var modelError: String? = nil
@@ -16,7 +16,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                ocrEngineSection
+                readingSection
                 duplicateCheckSection
                 exportSection
                 dataSection
@@ -27,10 +27,24 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 読み取りエンジン
+    // MARK: - 名刺の読み取り
 
-    private var ocrEngineSection: some View {
+    private var readingSection: some View {
         Section {
+            // 読み取り方法の選択
+            Picker(selection: $settings.readingMethod) {
+                ForEach(ReadingMethod.allCases) { method in
+                    Text(method.displayName).tag(method)
+                }
+            } label: {
+                Label("読み取り方法", systemImage: "doc.text.magnifyingglass")
+            }
+
+            // 選択中の方法の説明
+            Text(settings.readingMethod.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             // Apple Intelligence
             if #available(iOS 18.0, *) {
                 LabeledContent {
@@ -39,15 +53,10 @@ struct SettingsView: View {
                     Label("Apple Intelligence", systemImage: "apple.intelligence")
                 }
             } else {
-                LabeledContent {
-                    Text("非対応")
-                        .foregroundStyle(.secondary)
-                } label: {
-                    Label("Apple Intelligence", systemImage: "apple.intelligence")
-                }
+                LabeledContent("Apple Intelligence", value: "非対応のデバイスです")
             }
 
-            // オンデバイスAI（Qwen2.5）
+            // AIアシスト（オンデバイスモデル）
             if llm.isDownloading {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("AIをダウンロード中…", systemImage: "arrow.down.circle")
@@ -59,8 +68,8 @@ struct SettingsView: View {
                 }
             } else if llm.isModelAvailable {
                 HStack {
-                    Label("オンデバイスAI", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green, .primary)
+                    Label("AIアシスト", systemImage: "sparkles")
+                        .foregroundStyle(.primary)
                     Spacer()
                     if let size = llm.modelFileSize {
                         Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
@@ -75,7 +84,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .confirmationDialog("AIモデルを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+                .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
                     Button("削除", role: .destructive) {
                         do {
                             try llm.deleteModel()
@@ -84,12 +93,12 @@ struct SettingsView: View {
                         }
                     }
                 } message: {
-                    Text("削除すると基本解析に切り替わります。再ダウンロードはいつでも可能です。")
+                    Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
                 }
             } else {
                 HStack {
-                    Label("オンデバイスAI（未取得）", systemImage: "arrow.down.circle")
-                        .foregroundStyle(.secondary, .primary)
+                    Label("AIアシスト（未取得）", systemImage: "sparkles")
+                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("取得する") {
                         Task {
@@ -105,23 +114,20 @@ struct SettingsView: View {
                 }
             }
             if let err = modelError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Text(err).font(.caption).foregroundStyle(.red)
             }
 
-            // 基本解析
+            // 標準読み取り
             LabeledContent {
-                Text("常時利用可能")
-                    .foregroundStyle(.secondary)
+                Text("常時利用可能").foregroundStyle(.secondary)
             } label: {
-                Label("基本解析", systemImage: "chevron.left.forwardslash.chevron.right")
+                Label("標準読み取り", systemImage: "text.magnifyingglass")
             }
 
         } header: {
-            Text("読み取りエンジン")
+            Text("名刺の読み取り")
         } footer: {
-            Text("撮影した名刺のテキストを自動でフィールドに分類します。上から順に利用可能なエンジンを使用します。")
+            Text("撮影した名刺の文字を自動でフィールドに振り分けます。上から順に利用できるものを使用します。")
         }
     }
 
@@ -133,15 +139,14 @@ struct SettingsView: View {
                 HStack {
                     Text("検出感度")
                     Spacer()
-                    Text(thresholdLabel)
-                        .foregroundStyle(.secondary)
+                    Text(thresholdLabel).foregroundStyle(.secondary)
                 }
                 Slider(value: $settings.duplicateThreshold, in: 0.5...1.0, step: 0.05)
             }
         } header: {
             Text("重複チェック")
         } footer: {
-            Text("「低」にするほど名前が少し違う名刺も重複として検出します。「高」にするほど厳密に一致した場合のみ検出します。（現在: \(String(format: "%.0f", settings.duplicateThreshold * 100))%）")
+            Text("「低」にするほど名前が少し違っていても重複として検出します。「高」にするほど完全一致に近い場合のみ検出します。")
         }
     }
 
@@ -149,20 +154,15 @@ struct SettingsView: View {
     private var appleIntelligenceStatusText: some View {
         switch SystemLanguageModel.default.availability {
         case .available:
-            return Text("利用可能")
-                .foregroundStyle(.green)
+            return Text("利用可能").foregroundStyle(.green)
         case .unavailable(.deviceNotEligible):
-            return Text("非対応デバイス")
-                .foregroundStyle(.secondary)
+            return Text("非対応デバイス").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("Apple Intelligenceが無効")
-                .foregroundStyle(.orange)
+            return Text("設定でオフになっています").foregroundStyle(.orange)
         case .unavailable(.modelNotReady):
-            return Text("準備中")
-                .foregroundStyle(.secondary)
+            return Text("準備中").foregroundStyle(.secondary)
         default:
-            return Text("利用不可")
-                .foregroundStyle(.secondary)
+            return Text("利用不可").foregroundStyle(.secondary)
         }
     }
 
@@ -174,12 +174,11 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - エクスポート
+    // MARK: - 書き出し
 
     private var exportSection: some View {
         Section {
-            Toggle("Excel 対応（CSV の文字化け防止）", isOn: $settings.csvIncludesBOM)
-
+            Toggle("Excelで開けるCSV形式にする", isOn: $settings.csvIncludesBOM)
             Picker("連絡先ファイルの形式", selection: $settings.vCardVersion) {
                 Text("vCard 3.0（標準）").tag("3.0")
                 Text("vCard 4.0").tag("4.0")
@@ -199,17 +198,12 @@ struct SettingsView: View {
                 Label("すべての名刺を削除", systemImage: "trash")
             }
             .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-                Button("すべて削除", role: .destructive) {
-                    deleteAllCards()
-                }
+                Button("すべて削除", role: .destructive) { deleteAllCards() }
             } message: {
                 Text("この操作は取り消せません。")
             }
-
             if let err = deleteAllError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Text(err).font(.caption).foregroundStyle(.red)
             }
         }
     }
@@ -226,12 +220,9 @@ struct SettingsView: View {
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
-
     private var buildNumber: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
-
-    // MARK: - データ削除
 
     private func deleteAllCards() {
         let context = PersistenceController.shared.container.viewContext

@@ -14,7 +14,6 @@ struct CardListView: View {
 
     private let exportService = ExportService()
 
-    // 検索・ソート済み名刺リスト
     private var displayedCards: [BusinessCard] {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return viewModel.cards }
@@ -36,64 +35,8 @@ struct CardListView: View {
                 }
             }
             .navigationTitle("名刺")
-            .toolbar {
-                // 左：エクスポート・重複チェックメニュー（名刺がある場合のみ）
-                if !viewModel.cards.isEmpty {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Menu {
-                            NavigationLink {
-                                DuplicateListView(
-                                    pairs: viewModel.duplicatePairs,
-                                    onMerge: viewModel.fetchCards
-                                )
-                            } label: {
-                                Label(
-                                    viewModel.duplicatePairs.isEmpty
-                                        ? "重複チェック"
-                                        : "重複チェック（\(viewModel.duplicatePairs.count)件）",
-                                    systemImage: "person.2.slash"
-                                )
-                            }
-                            Divider()
-                            Button { exportAllCSV() } label: {
-                                Label("CSV としてエクスポート", systemImage: "tablecells")
-                            }
-                            Button { exportAllVCard() } label: {
-                                Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
-                            }
-                        } label: {
-                            if viewModel.duplicatePairs.isEmpty {
-                                Image(systemName: "ellipsis.circle")
-                            } else {
-                                Image(systemName: "ellipsis.circle.fill")
-                                    .symbolRenderingMode(.palette)
-                                    .foregroundStyle(.red, .primary)
-                            }
-                        }
-                    }
-                }
-                // 右：ソート・設定・カメラ・追加
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    // ソートメニュー
-                    Menu {
-                        Picker("並び替え", selection: $viewModel.sortOrder) {
-                            ForEach(CardSortOrder.allCases) { order in
-                                Label(order.rawValue, systemImage: order.systemImage).tag(order)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.arrow.down")
-                    }
-                    Button { isShowingSettings = true } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    Button { isShowingCamera = true } label: {
-                        Image(systemName: "camera")
-                    }
-                    Button { isShowingForm = true } label: {
-                        Image(systemName: "plus")
-                    }
-                }
+            .safeAreaInset(edge: .bottom) {
+                bottomBar
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
@@ -115,6 +58,116 @@ struct CardListView: View {
         }
     }
 
+    // MARK: - 下部バー
+
+    @ViewBuilder
+    private var bottomBar: some View {
+        if #available(iOS 26.0, *) {
+            // Liquid Glass
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    ellipsisMenu
+                        .glassEffect(in: .capsule)
+
+                    searchField
+                        .glassEffect(in: .capsule)
+
+                    addMenu
+                        .glassEffect(in: .capsule)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        } else {
+            HStack(spacing: 8) {
+                ellipsisMenu
+                searchField
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.quaternary, in: Capsule())
+                addMenu
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
+    }
+
+    private var ellipsisMenu: some View {
+        Menu {
+            Menu {
+                Picker("並び替え", selection: $viewModel.sortOrder) {
+                    ForEach(CardSortOrder.allCases) { order in
+                        Label(order.rawValue, systemImage: order.systemImage).tag(order)
+                    }
+                }
+            } label: {
+                Label("並び替え", systemImage: "arrow.up.arrow.down")
+            }
+            Button { isShowingSettings = true } label: {
+                Label("設定", systemImage: "gearshape")
+            }
+            if !viewModel.cards.isEmpty {
+                Divider()
+                NavigationLink {
+                    DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
+                } label: {
+                    Label(
+                        viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
+                        systemImage: "person.2.slash"
+                    )
+                }
+                Divider()
+                Button { exportAllCSV() } label: {
+                    Label("CSV としてエクスポート", systemImage: "tablecells")
+                }
+                Button { exportAllVCard() } label: {
+                    Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
+                }
+            }
+        } label: {
+            Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
+                .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
+                .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
+                .font(.system(size: 20, weight: .medium))
+        .frame(width: 44, height: 44)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField("検索", text: $searchText)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+    }
+
+    private var addMenu: some View {
+        Menu {
+            Button { isShowingCamera = true } label: {
+                Label("カメラで撮影", systemImage: "camera")
+            }
+            Button { isShowingForm = true } label: {
+                Label("手動で入力", systemImage: "square.and.pencil")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 44, height: 44)
+        }
+    }
+
     // MARK: - サブビュー
 
     private var cardList: some View {
@@ -130,7 +183,7 @@ struct CardListView: View {
                 viewModel.deleteCards(offsets.map { displayedCards[$0] })
             }
         }
-        .searchable(text: $searchText, prompt: "名前・会社名・メールで検索")
+        .listStyle(.plain)
     }
 
     private var emptyState: some View {
@@ -142,16 +195,11 @@ struct CardListView: View {
                 .font(.title3)
                 .foregroundColor(.secondary)
             HStack(spacing: 12) {
-                Button {
-                    isShowingCamera = true
-                } label: {
+                Button { isShowingCamera = true } label: {
                     Label("カメラで撮影", systemImage: "camera")
                 }
                 .buttonStyle(.borderedProminent)
-
-                Button {
-                    isShowingForm = true
-                } label: {
+                Button { isShowingForm = true } label: {
                     Label("手動で追加", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
@@ -188,7 +236,6 @@ private struct CardRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // イニシャルアバター
             ZStack {
                 Circle()
                     .fill(Color.accentColor.opacity(0.12))
@@ -199,32 +246,30 @@ private struct CardRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                let fullName = card.fullName
-                Text(fullName.isEmpty ? "（名前なし）" : fullName)
+                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
                     .font(.headline)
+                    .lineLimit(1)
                 if let company = card.company, !company.isEmpty {
                     Text(company)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                // 電話・メールをコンパクトに表示
                 let phones = card.phoneList
                 let email  = card.email ?? ""
                 if !phones.isEmpty || !email.isEmpty {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         if let phone = phones.first {
                             Label(phone, systemImage: "phone")
-                                .foregroundStyle(.secondary)
-                                .labelStyle(.titleAndIcon)
+                                .lineLimit(1)
                         }
-                        if !email.isEmpty {
+                        if !email.isEmpty && phones.isEmpty {
                             Label(email, systemImage: "envelope")
-                                .foregroundStyle(.secondary)
-                                .labelStyle(.titleAndIcon)
                                 .lineLimit(1)
                         }
                     }
                     .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
         }
@@ -253,13 +298,11 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// sheet(item:) 用の Identifiable ラッパー
 struct ExportItem: Identifiable {
     let id = UUID()
     let url: URL
 }
 
-// UIImage を sheet(item:) で使えるように Identifiable に準拠させる拡張
 extension UIImage: @retroactive Identifiable {
     public var id: ObjectIdentifier { ObjectIdentifier(self) }
 }
