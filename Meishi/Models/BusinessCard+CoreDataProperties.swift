@@ -15,6 +15,7 @@ extension BusinessCard {
     @NSManaged public var lastName: String?
     @NSManaged public var firstName: String?
     @NSManaged public var company: String?
+    @NSManaged public var department: String?
     @NSManaged public var title: String?
     @NSManaged public var email: String?
     @NSManaged public var phone: String?

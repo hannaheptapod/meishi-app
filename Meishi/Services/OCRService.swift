@@ -3,6 +3,15 @@ import Vision
 import UIKit
 import CoreImage
 
+// OCR で認識した1行分のデータ（テキスト・位置・信頼度）
+struct RecognizedLine {
+    let text: String
+    /// Vision 座標系（正規化済み。原点は画像左下、x/y は 0.0〜1.0）
+    let boundingBox: CGRect
+    /// Vision の認識信頼度（0.0〜1.0）
+    let confidence: Float
+}
+
 // Vision Framework を使って名刺画像からテキストを抽出するサービス
 class OCRService {
 
@@ -83,8 +92,9 @@ class OCRService {
 
     // MARK: - テキスト認識
 
-    // 画像からテキスト行の配列を返す（精度優先・言語補正あり）
-    func recognizeText(from image: UIImage) async throws -> [String] {
+    // 画像から RecognizedLine の配列を返す（精度優先・言語補正あり）
+    // 各行のテキスト・Vision 正規化座標での位置・認識信頼度を同時に返す
+    func recognizeText(from image: UIImage) async throws -> [RecognizedLine] {
         guard let cgImage = image.cgImage else {
             throw OCRError.invalidImage
         }
@@ -96,8 +106,15 @@ class OCRService {
                     return
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                // 各Observationから最上位の候補テキストを取得
-                let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                // 各Observationから最上位候補のテキスト・信頼度・boundingBox を取得
+                let lines: [RecognizedLine] = observations.compactMap { obs in
+                    guard let candidate = obs.topCandidates(1).first else { return nil }
+                    return RecognizedLine(
+                        text: candidate.string,
+                        boundingBox: obs.boundingBox,
+                        confidence: candidate.confidence
+                    )
+                }
                 continuation.resume(returning: lines)
             }
 

@@ -7,7 +7,7 @@ class ExportService {
 
     /// 複数の BusinessCard を CSV 形式の文字列に変換する
     func csvString(from cards: [BusinessCard]) -> String {
-        let header = "姓,名,会社名,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時"
+        let header = "姓,名,会社名,部署,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時"
         let rows = cards.map { csvRow(from: $0) }
         return ([header] + rows).joined(separator: "\n")
     }
@@ -28,6 +28,7 @@ class ExportService {
             card.lastName,
             card.firstName,
             card.company,
+            card.department,
             card.title,
             card.phoneList.isEmpty ? nil : card.phoneList.joined(separator: " / "),
             card.email,
@@ -74,8 +75,11 @@ class ExportService {
         lines.append("N:\(vcEscape(last));\(vcEscape(first));;;")
         lines.append("FN:\(vcEscape(card.fullName))")
 
-        if let company = card.company, !company.isEmpty {
-            lines.append("ORG:\(vcEscape(company))")
+        // ORG: 会社名;部署（RFC 2426 のセミコロン区切り階層形式）
+        let company    = card.company    ?? ""
+        let department = card.department ?? ""
+        if !company.isEmpty || !department.isEmpty {
+            lines.append("ORG:\(vcEscape(company));\(vcEscape(department))")
         }
         if let title = card.title, !title.isEmpty {
             lines.append("TITLE:\(vcEscape(title))")

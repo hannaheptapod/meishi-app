@@ -10,6 +10,7 @@ class CardFormViewModel: ObservableObject {
     @Published var lastName: String = ""
     @Published var firstName: String = ""
     @Published var company: String = ""
+    @Published var department: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
     @Published var phones: [String] = [""]
@@ -19,6 +20,7 @@ class CardFormViewModel: ObservableObject {
 
     // OCR処理中フラグ・エラーメッセージ
     @Published var isProcessingOCR: Bool = false
+    @Published var ocrStage: String = "名刺を読み取り中..."
     @Published var ocrErrorMessage: String? = nil
 
     // モデル未取得時にダウンロード同意アラートを表示するフラグ
@@ -48,7 +50,9 @@ class CardFormViewModel: ObservableObject {
         self.context = context
         // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
-        Task {
+        // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
+        self.isProcessingOCR = true
+        Task { @MainActor in
             // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
             let cardImage = await ocrService.detectAndCropCard(from: image)
             // 補正済み画像で保存データを上書き
@@ -63,10 +67,11 @@ class CardFormViewModel: ObservableObject {
          context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.card = card
         self.context = context
-        lastName  = card.lastName  ?? ""
-        firstName = card.firstName ?? ""
-        company   = card.company   ?? ""
-        title     = card.title     ?? ""
+        lastName   = card.lastName   ?? ""
+        firstName  = card.firstName  ?? ""
+        company    = card.company    ?? ""
+        department = card.department ?? ""
+        title      = card.title      ?? ""
         email     = card.email     ?? ""
         let stored = card.phoneList
         phones    = stored.isEmpty ? [""] : stored
@@ -80,6 +85,7 @@ class CardFormViewModel: ObservableObject {
     @MainActor
     func populateFromOCR(image: UIImage) async {
         isProcessingOCR = true
+        ocrStage = "文字を認識中..."
         ocrErrorMessage = nil
 
         do {
@@ -90,12 +96,14 @@ class CardFormViewModel: ObservableObject {
                 return
             }
 
+            ocrStage = "フィールドを分析中..."
+
             switch SettingsStore.shared.readingMethod {
             case .automatic:
                 if #available(iOS 18.0, *) {
                     await populateWithFoundationModels(lines: lines)
                 } else {
-                    await populateWithLocalLLMOrClassifier(lines: lines)
+                    populateWithClassifier(lines: lines)
                 }
             case .appleIntelligence:
                 if #available(iOS 18.0, *) {
@@ -105,6 +113,7 @@ class CardFormViewModel: ObservableObject {
                     populateWithClassifier(lines: lines)
                 }
             case .localLLM:
+                ocrStage = "AIモデルで分析中..."
                 await populateWithLocalLLMOnly(lines: lines)
             case .classifier:
                 populateWithClassifier(lines: lines)
@@ -116,24 +125,24 @@ class CardFormViewModel: ObservableObject {
         isProcessingOCR = false
     }
 
-    // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
+    // 自動モード: Foundation Models → Classifier の順にフォールバック
     @available(iOS 18.0, *)
-    private func populateWithFoundationModels(lines: [String]) async {
+    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
         switch SystemLanguageModel.default.availability {
         case .available:
             do {
                 try await runFoundationModels(lines: lines)
             } catch {
-                await populateWithLocalLLMOrClassifier(lines: lines)
+                populateWithClassifier(lines: lines)
             }
         default:
-            await populateWithLocalLLMOrClassifier(lines: lines)
+            populateWithClassifier(lines: lines)
         }
     }
 
     // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
     @available(iOS 18.0, *)
-    private func populateWithFoundationModelsOnly(lines: [String]) async {
+    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
         switch SystemLanguageModel.default.availability {
         case .available:
             do {
@@ -149,8 +158,9 @@ class CardFormViewModel: ObservableObject {
     }
 
     @available(iOS 18.0, *)
-    private func runFoundationModels(lines: [String]) async throws {
-        let rawText = lines.joined(separator: "\n")
+    private func runFoundationModels(lines: [RecognizedLine]) async throws {
+        // Foundation Models にはテキストのみ渡す
+        let rawText = lines.map { $0.text }.joined(separator: "\n")
         let session = LanguageModelSession()
         let prompt = """
             以下は名刺から読み取ったテキストです。各フィールドに分類してください。
@@ -159,32 +169,35 @@ class CardFormViewModel: ObservableObject {
             """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         let parsed = response.content
-        lastName  = parsed.lastName
-        firstName = parsed.firstName
-        company   = parsed.company
-        title     = parsed.title
-        phones    = parsed.phone.isEmpty ? [""] : [parsed.phone]
-        email     = parsed.email
-        address   = parsed.address
-        website   = parsed.website
+        lastName   = parsed.lastName
+        firstName  = parsed.firstName
+        company    = parsed.company
+        department = parsed.department
+        title      = parsed.title
+        phones     = parsed.phone.isEmpty ? [""] : [parsed.phone]
+        email      = parsed.email
+        address    = parsed.address
+        website    = parsed.website
     }
 
     // 明示指定モード: AIアシストのみ（未取得・失敗時はエラー表示 + Classifier）
-    private func populateWithLocalLLMOnly(lines: [String]) async {
+    private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
         guard LocalLLMService.shared.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
             populateWithClassifier(lines: lines)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
-            lastName  = parsed.lastName
-            firstName = parsed.firstName
-            company   = parsed.company
-            title     = parsed.title
-            phones    = parsed.phones.isEmpty ? [""] : parsed.phones
-            email     = parsed.email
-            address   = parsed.address
-            website   = parsed.website
+        // LocalLLM にはテキストのみ渡す
+        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+            lastName   = parsed.lastName
+            firstName  = parsed.firstName
+            company    = parsed.company
+            department = parsed.department
+            title      = parsed.title
+            phones     = parsed.phones.isEmpty ? [""] : parsed.phones
+            email      = parsed.email
+            address    = parsed.address
+            website    = parsed.website
         } else {
             ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
             populateWithClassifier(lines: lines)
@@ -192,37 +205,39 @@ class CardFormViewModel: ObservableObject {
     }
 
     // 自動モード: LocalLLM → Classifier のフォールバック
-    private func populateWithLocalLLMOrClassifier(lines: [String]) async {
+    private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
         if !LocalLLMService.shared.isModelAvailable {
             shouldPromptLLMDownload = true
             populateWithClassifier(lines: lines)
             return
         }
-
-        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
-            lastName  = parsed.lastName
-            firstName = parsed.firstName
-            company   = parsed.company
-            title     = parsed.title
-            phones    = parsed.phones.isEmpty ? [""] : parsed.phones
-            email     = parsed.email
-            address   = parsed.address
-            website   = parsed.website
+        // LocalLLM にはテキストのみ渡す
+        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+            lastName   = parsed.lastName
+            firstName  = parsed.firstName
+            company    = parsed.company
+            department = parsed.department
+            title      = parsed.title
+            phones     = parsed.phones.isEmpty ? [""] : parsed.phones
+            email      = parsed.email
+            address    = parsed.address
+            website    = parsed.website
         } else {
             populateWithClassifier(lines: lines)
         }
     }
 
-    private func populateWithClassifier(lines: [String]) {
+    private func populateWithClassifier(lines: [RecognizedLine]) {
         let parsed = classifier.classify(lines: lines)
-        lastName  = parsed.lastName
-        firstName = parsed.firstName
-        company   = parsed.company
-        title     = parsed.title
-        phones    = parsed.phones.isEmpty ? [""] : parsed.phones
-        email     = parsed.email
-        address   = parsed.address
-        website   = parsed.website
+        lastName   = parsed.lastName
+        firstName  = parsed.firstName
+        company    = parsed.company
+        department = parsed.department
+        title      = parsed.title
+        phones     = parsed.phones.isEmpty ? [""] : parsed.phones
+        email      = parsed.email
+        address    = parsed.address
+        website    = parsed.website
     }
 
     // MARK: - 保存
@@ -235,10 +250,11 @@ class CardFormViewModel: ObservableObject {
             return newCard
         }()
 
-        target.lastName  = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstName = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.company   = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.title     = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.lastName   = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.firstName  = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.company    = company.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
         target.phone     = phones
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -262,12 +278,13 @@ class CardFormViewModel: ObservableObject {
 
 @Generable
 struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）")  var lastName: String
-    @Guide(description: "名（ファーストネーム）")  var firstName: String
-    @Guide(description: "会社名")                  var company: String
-    @Guide(description: "役職")                    var title: String
-    @Guide(description: "電話番号")                var phone: String
-    @Guide(description: "メールアドレス")          var email: String
-    @Guide(description: "住所")                    var address: String
-    @Guide(description: "WebサイトURL")            var website: String
+    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
+    @Guide(description: "名（ファーストネーム）")          var firstName: String
+    @Guide(description: "会社名")                          var company: String
+    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
+    @Guide(description: "役職（部長・Directorなど）")      var title: String
+    @Guide(description: "電話番号")                        var phone: String
+    @Guide(description: "メールアドレス")                  var email: String
+    @Guide(description: "住所")                            var address: String
+    @Guide(description: "WebサイトURL")                   var website: String
 }

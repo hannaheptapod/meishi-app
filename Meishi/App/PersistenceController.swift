@@ -33,6 +33,13 @@ struct PersistenceController {
             // テスト・プレビュー用：ディスクに書き込まない
             container.persistentStoreDescriptions.first?.url = URL(fileURLWithPath: "/dev/null")
         }
+        // 軽量マイグレーションを有効化（新しいオプショナル属性の追加などを自動処理）
+        if let description = container.persistentStoreDescriptions.first {
+            description.setOption(true as NSNumber,
+                                  forKey: NSMigratePersistentStoresAutomaticallyOption)
+            description.setOption(true as NSNumber,
+                                  forKey: NSInferMappingModelAutomaticallyOption)
+        }
         container.loadPersistentStores { _, error in
             if let error = error as NSError? {
                 fatalError("CoreData の読み込みに失敗しました: \(error), \(error.userInfo)")

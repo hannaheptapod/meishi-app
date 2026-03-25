@@ -31,6 +31,7 @@ class LocalLLMService: ObservableObject {
     @Published var isModelAvailable: Bool = false
     @Published var isDownloading:    Bool = false
     @Published var downloadProgress: Double = 0.0
+    @Published var isInferencing:    Bool = false
 
     private var loadedModel: MLModel? = nil
     private var tokenizer:   Qwen25Tokenizer? = nil
@@ -132,11 +133,18 @@ class LocalLLMService: ObservableObject {
     func classify(lines: [String]) async -> CardFieldClassifier.ParsedCard? {
         // アプリ再起動後に未ロードの場合はここでロードする
         if loadedModel == nil || tokenizer == nil {
+            await MainActor.run { isInferencing = true }
             try? loadModelIfNeeded()
         }
-        guard let model = loadedModel, let tok = tokenizer else { return nil }
+        guard let model = loadedModel, let tok = tokenizer else {
+            await MainActor.run { isInferencing = false }
+            return nil
+        }
 
-        let prompt  = buildChatMLPrompt(lines: lines)
+        await MainActor.run { isInferencing = true }
+        defer { Task { @MainActor in self.isInferencing = false } }
+
+        let prompt   = buildChatMLPrompt(lines: lines)
         let inputIds = tok.encode(prompt)
 
         do {
@@ -152,19 +160,20 @@ class LocalLLMService: ObservableObject {
     private func runGeneration(model: MLModel,
                                tokenizer: Qwen25Tokenizer,
                                inputIds: [Int]) throws -> String {
-        let promptLen = inputIds.count
+        let promptLen    = inputIds.count
         var generatedIds = [Int]()
-        let maxNewTokens = 256
+        let maxNewTokens = 200
+        // JSONの { } をカウントして完了次第即終了（不要なトークン生成を防ぐ）
+        var openBraces   = 0
+        var jsonStarted  = false
 
         // MLState で KV キャッシュを管理（iOS 18 stateful prediction）
         let state = model.makeState()
 
         // --- プリフィル: プロンプト全体を一括処理 ---
-        // causal_mask 形状: [1, 1, promptLen, promptLen]（下三角）
         let prefillLogits = try forward(model: model, state: state,
                                         ids: inputIds, startPos: 0)
 
-        // プリフィルの最終位置から最初の生成トークンを取得
         guard let firstToken = argmaxLastToken(logits: prefillLogits, seqLen: promptLen) else {
             return ""
         }
@@ -172,8 +181,16 @@ class LocalLLMService: ObservableObject {
         || firstToken == Qwen25Tokenizer.SpecialToken.eot { return "" }
         generatedIds.append(firstToken)
 
+        // 最初のトークンでブレース追跡開始
+        for ch in tokenizer.decode([firstToken]) {
+            if ch == "{" { openBraces += 1; jsonStarted = true }
+            else if ch == "}" && jsonStarted { openBraces -= 1 }
+        }
+        if jsonStarted && openBraces <= 0 {
+            return tokenizer.decode(generatedIds)
+        }
+
         // --- デコード: 1 トークンずつ生成 ---
-        // causal_mask 形状: [1, 1, 1, promptLen + k + 1]（全 1）
         while generatedIds.count < maxNewTokens {
             let currentPos = promptLen + generatedIds.count - 1
             let decLogits  = try forward(model: model, state: state,
@@ -182,6 +199,13 @@ class LocalLLMService: ObservableObject {
             if nextToken == Qwen25Tokenizer.SpecialToken.imEnd
             || nextToken == Qwen25Tokenizer.SpecialToken.eot { break }
             generatedIds.append(nextToken)
+
+            // { } をカウントしてJSONが閉じたら即終了
+            for ch in tokenizer.decode([nextToken]) {
+                if ch == "{" { openBraces += 1; jsonStarted = true }
+                else if ch == "}" && jsonStarted { openBraces -= 1 }
+            }
+            if jsonStarted && openBraces <= 0 { break }
         }
 
         return tokenizer.decode(generatedIds)
@@ -356,10 +380,16 @@ class LocalLLMService: ObservableObject {
             .replacingOccurrences(of: "```",     with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // JSONオブジェクトの開始位置を探す（前置き文章があっても対応）
-        guard let start = cleaned.firstIndex(of: "{"),
-              let end   = cleaned.lastIndex(of: "}") else { return nil }
-        let jsonStr = String(cleaned[start...end])
+        guard let start = cleaned.firstIndex(of: "{") else { return nil }
+        let fromBrace = String(cleaned[start...])
+
+        // 閉じ括弧がない（途中打ち切り）場合は補完して試みる
+        let jsonStr: String
+        if let end = fromBrace.lastIndex(of: "}") {
+            jsonStr = String(fromBrace[fromBrace.startIndex...end])
+        } else {
+            jsonStr = fromBrace + "}"
+        }
 
         guard let data = jsonStr.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
