@@ -154,14 +154,7 @@ struct CardListView: View {
     }
 
     private var addMenu: some View {
-        Menu {
-            Button { isShowingCamera = true } label: {
-                Label("カメラで撮影", systemImage: "camera")
-            }
-            Button { isShowingForm = true } label: {
-                Label("手動で入力", systemImage: "square.and.pencil")
-            }
-        } label: {
+        Button { isShowingCamera = true } label: {
             Image(systemName: "plus")
                 .font(.system(size: 20, weight: .medium))
                 .frame(width: 44, height: 44)
