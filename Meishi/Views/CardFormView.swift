@@ -60,7 +60,7 @@ struct CardFormView: View {
                 }
 
                 Section("氏名") {
-                    TextField("姓 *", text: $viewModel.lastName)
+                    TextField("姓", text: $viewModel.lastName)
                         .textContentType(.familyName)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .lastName)

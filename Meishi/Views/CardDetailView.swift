@@ -38,26 +38,15 @@ struct CardDetailView: View {
                 .padding(.vertical, 4)
             }
 
-            // ── 名刺画像 ──
+            // ── 名刺画像（高さ上限あり） ──
             if let data = card.imageData, let image = UIImage(data: data) {
                 Section {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
+                        .frame(maxHeight: 220)
+                        .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-
-            // ── 氏名（姓・名を個別確認できる行） ──
-            let hasName = !(card.lastName ?? "").isEmpty || !(card.firstName ?? "").isEmpty
-            if hasName {
-                Section("氏名") {
-                    if let lastName = card.lastName, !lastName.isEmpty {
-                        LabeledContent("姓", value: lastName)
-                    }
-                    if let firstName = card.firstName, !firstName.isEmpty {
-                        LabeledContent("名", value: firstName)
-                    }
                 }
             }
 
@@ -135,26 +124,26 @@ struct CardDetailView: View {
                     Text("登録日時")
                 }
             }
-
-            // ── アクション ──
-            Section {
-                Button {
-                    Task { await exportToContacts() }
-                } label: {
-                    Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
-                }
-                Button {
-                    shareVCard()
-                } label: {
-                    Label("vCard として共有", systemImage: "square.and.arrow.up")
-                }
-            }
         }
         .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button("編集") { isShowingEditForm = true }
+            }
+            // アクションを底部ツールバーに配置
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button {
+                    Task { await exportToContacts() }
+                } label: {
+                    Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
+                }
+                Spacer()
+                Button {
+                    shareVCard()
+                } label: {
+                    Label("vCard として共有", systemImage: "square.and.arrow.up")
+                }
             }
         }
         .sheet(isPresented: $isShowingEditForm, onDismiss: onUpdate) {
@@ -170,12 +159,12 @@ struct CardDetailView: View {
         }
     }
 
-    // MARK: - アバター
+    // MARK: - アバター（一覧と統一して Circle）
 
     @ViewBuilder
     private var avatarView: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
+            Circle()
                 .fill(Color.accentColor.opacity(0.12))
                 .frame(width: 58, height: 58)
             Text(cardInitials)
