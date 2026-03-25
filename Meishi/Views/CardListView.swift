@@ -36,25 +36,7 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
-                // 上部 trailing：追加（primary action）
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button {
-                            isShowingCamera = true
-                        } label: {
-                            Label("カメラで撮影", systemImage: "camera")
-                        }
-                        Button {
-                            isShowingForm = true
-                        } label: {
-                            Label("手動で入力", systemImage: "square.and.pencil")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-
-                // 下部ツールバー：ソート・設定・重複チェック・エクスポート
+                // 下部ツールバー：左に ellipsis、右に追加（連絡先アプリと同パターン）
                 ToolbarItemGroup(placement: .bottomBar) {
                     Menu {
                         Menu {
@@ -110,6 +92,21 @@ struct CardListView: View {
                     }
 
                     Spacer()
+
+                    Menu {
+                        Button {
+                            isShowingCamera = true
+                        } label: {
+                            Label("カメラで撮影", systemImage: "camera")
+                        }
+                        Button {
+                            isShowingForm = true
+                        } label: {
+                            Label("手動で入力", systemImage: "square.and.pencil")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
