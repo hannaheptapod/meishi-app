@@ -94,8 +94,9 @@ struct CardListView: View {
                     }
                 }
 
-                // 右：追加ボタン1つ（カメラ／手動 をメニューで選択）
-                ToolbarItem(placement: .navigationBarTrailing) {
+                // 下部ツールバー：追加ボタン（カメラ／手動 をメニューで選択）
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Spacer()
                     Menu {
                         Button {
                             isShowingCamera = true
@@ -108,7 +109,8 @@ struct CardListView: View {
                             Label("手動で入力", systemImage: "square.and.pencil")
                         }
                     } label: {
-                        Image(systemName: "plus")
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
                     }
                 }
             }
