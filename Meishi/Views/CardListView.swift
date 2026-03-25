@@ -36,10 +36,27 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .toolbar {
-                // 左：設定・ソート・重複チェック・エクスポートをまとめた ellipsis メニュー
-                ToolbarItem(placement: .navigationBarLeading) {
+                // 上部 trailing：追加（primary action）
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        // ソート
+                        Button {
+                            isShowingCamera = true
+                        } label: {
+                            Label("カメラで撮影", systemImage: "camera")
+                        }
+                        Button {
+                            isShowingForm = true
+                        } label: {
+                            Label("手動で入力", systemImage: "square.and.pencil")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+
+                // 下部ツールバー：ソート・設定・重複チェック・エクスポート
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Menu {
                         Menu {
                             Picker("並び替え", selection: $viewModel.sortOrder) {
                                 ForEach(CardSortOrder.allCases) { order in
@@ -50,15 +67,9 @@ struct CardListView: View {
                             Label("並び替え", systemImage: "arrow.up.arrow.down")
                         }
 
-                        // 設定
-                        Button { isShowingSettings = true } label: {
-                            Label("設定", systemImage: "gearshape")
-                        }
+                        Divider()
 
                         if !viewModel.cards.isEmpty {
-                            Divider()
-
-                            // 重複チェック
                             NavigationLink {
                                 DuplicateListView(
                                     pairs: viewModel.duplicatePairs,
@@ -81,9 +92,14 @@ struct CardListView: View {
                             Button { exportAllVCard() } label: {
                                 Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                             }
+
+                            Divider()
+                        }
+
+                        Button { isShowingSettings = true } label: {
+                            Label("設定", systemImage: "gearshape")
                         }
                     } label: {
-                        // 重複がある場合は赤バッジ
                         if !viewModel.duplicatePairs.isEmpty {
                             Image(systemName: "ellipsis.circle.fill")
                                 .symbolRenderingMode(.palette)
@@ -92,24 +108,8 @@ struct CardListView: View {
                             Image(systemName: "ellipsis.circle")
                         }
                     }
-                }
 
-                // 右：追加ボタン（ellipsis と同スタイル）
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button {
-                            isShowingCamera = true
-                        } label: {
-                            Label("カメラで撮影", systemImage: "camera")
-                        }
-                        Button {
-                            isShowingForm = true
-                        } label: {
-                            Label("手動で入力", systemImage: "square.and.pencil")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle")
-                    }
+                    Spacer()
                 }
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
