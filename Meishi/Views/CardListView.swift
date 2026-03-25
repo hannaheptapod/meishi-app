@@ -129,11 +129,12 @@ struct CardListView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                             .frame(width: 56, height: 56)
-                            .background(Color.accentColor, in: Circle())
-                            .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
                     }
+                    .buttonStyle(.plain)
                     .padding(.trailing, 20)
                     .padding(.bottom, 8)
                 }
