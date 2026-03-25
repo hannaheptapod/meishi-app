@@ -153,11 +153,23 @@ struct CardListView: View {
         .frame(height: 44)
     }
 
+    @ViewBuilder
     private var addMenu: some View {
-        Button { isShowingCamera = true } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 20, weight: .medium))
-                .frame(width: 44, height: 44)
+        if !searchText.isEmpty {
+            // 検索中は × ボタンで検索を閉じる
+            Button {
+                searchText = ""
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
+        } else {
+            Button { isShowingCamera = true } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
         }
     }
 

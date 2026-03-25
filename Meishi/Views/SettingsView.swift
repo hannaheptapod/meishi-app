@@ -8,6 +8,8 @@ struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var llm = LocalLLMService.shared
 
+    @Environment(\.dismiss) private var dismiss
+
     @State private var showDeleteAllConfirm  = false
     @State private var showDeleteModelConfirm = false
     @State private var deleteAllError: String? = nil
@@ -24,6 +26,15 @@ struct SettingsView: View {
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                }
+            }
         }
     }
 
