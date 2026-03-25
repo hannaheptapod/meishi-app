@@ -13,7 +13,7 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .newestFirst:      return "clock.arrow.counterclockwise"
+        case .newestFirst:      return "arrow.down.circle"
         case .oldestFirst:      return "clock"
         case .nameAscending:    return "person.text.rectangle"
         case .companyAscending: return "building.2"
