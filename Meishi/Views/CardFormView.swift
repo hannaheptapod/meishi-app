@@ -11,7 +11,7 @@ struct CardFormView: View {
     @FocusState private var focusedField: FormField?
 
     private enum FormField: Hashable {
-        case lastName, firstName, company, title, email, address, website, notes
+        case lastName, firstName, company, department, title, email, address, website, notes
     }
 
     // MARK: - 初期化（手動入力・新規作成）
@@ -43,8 +43,15 @@ struct CardFormView: View {
                     Section {
                         HStack(spacing: 12) {
                             ProgressView()
-                            Text("名刺を読み取り中...")
-                                .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(viewModel.ocrStage)
+                                    .foregroundColor(.secondary)
+                                if viewModel.ocrStage == "AIモデルで分析中..." {
+                                    Text("初回はモデルのロードに時間がかかります")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -79,6 +86,11 @@ struct CardFormView: View {
                         .textContentType(.organizationName)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .company)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .department }
+                    TextField("部署", text: $viewModel.department)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .department)
                         .submitLabel(.next)
                         .onSubmit { focusedField = .title }
                     TextField("役職", text: $viewModel.title)

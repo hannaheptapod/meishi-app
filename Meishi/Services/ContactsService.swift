@@ -37,6 +37,9 @@ class ContactsService {
         if let company = card.company, !company.isEmpty {
             contact.organizationName = company
         }
+        if let department = card.department, !department.isEmpty {
+            contact.departmentName = department
+        }
         if let title = card.title, !title.isEmpty {
             contact.jobTitle = title
         }
@@ -92,6 +95,7 @@ class ContactsService {
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactFamilyNameKey as CNKeyDescriptor,
             CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactDepartmentNameKey as CNKeyDescriptor,
             CNContactJobTitleKey as CNKeyDescriptor,
             CNContactPhoneNumbersKey as CNKeyDescriptor,
             CNContactEmailAddressesKey as CNKeyDescriptor,
@@ -140,6 +144,7 @@ struct ImportedContact {
     let lastName: String
     let firstName: String
     let company: String
+    let department: String
     let title: String
     let phone: String
     let email: String
@@ -149,10 +154,11 @@ struct ImportedContact {
     let imageData: Data?
 
     init(cnContact c: CNContact) {
-        lastName  = c.familyName
-        firstName = c.givenName
-        company   = c.organizationName
-        title     = c.jobTitle
+        lastName   = c.familyName
+        firstName  = c.givenName
+        company    = c.organizationName
+        department = c.departmentName
+        title      = c.jobTitle
         phone     = c.phoneNumbers.first?.value.stringValue ?? ""
         email     = c.emailAddresses.first?.value as String? ?? ""
         address   = c.postalAddresses.first.map {

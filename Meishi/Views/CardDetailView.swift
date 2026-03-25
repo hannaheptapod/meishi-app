@@ -28,6 +28,11 @@ struct CardDetailView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
+                        if let department = card.department, !department.isEmpty {
+                            Text(department)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         if let title = card.title, !title.isEmpty {
                             Text(title)
                                 .font(.caption)

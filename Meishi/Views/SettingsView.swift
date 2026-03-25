@@ -42,7 +42,6 @@ struct SettingsView: View {
 
     private var readingSection: some View {
         Section {
-            // 読み取り方法の選択
             Picker(selection: $settings.readingMethod) {
                 ForEach(ReadingMethod.allCases) { method in
                     Text(method.displayName).tag(method)
@@ -51,12 +50,10 @@ struct SettingsView: View {
                 Label("読み取り方法", systemImage: "doc.text.magnifyingglass")
             }
 
-            // 選択中の方法の説明
             Text(settings.readingMethod.description)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            // Apple Intelligence
             if #available(iOS 18.0, *) {
                 LabeledContent {
                     appleIntelligenceStatusText
@@ -67,7 +64,6 @@ struct SettingsView: View {
                 LabeledContent("Apple Intelligence", value: "非対応のデバイスです")
             }
 
-            // AIアシスト（オンデバイスモデル）
             if llm.isDownloading {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("AIをダウンロード中…", systemImage: "arrow.down.circle")
@@ -128,7 +124,6 @@ struct SettingsView: View {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
 
-            // 標準読み取り
             LabeledContent {
                 Text("常時利用可能").foregroundStyle(.secondary)
             } label: {
