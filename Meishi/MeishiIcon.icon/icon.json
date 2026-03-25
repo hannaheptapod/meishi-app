@@ -1,0 +1,84 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000",
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "extended-gray:0.00000,1.00000"
+          },
+          "image-name" : "layer_4_person_text.svg",
+          "name" : "layer_4_person_text",
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              0,
+              44
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "layer_3_card_main.svg",
+          "name" : "layer_3_card_main",
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              0,
+              44
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "layer_2_card_2nd.svg",
+          "name" : "layer_2_card_2nd",
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              0,
+              44
+            ]
+          }
+        },
+        {
+          "image-name" : "layer_1_card_3rd.svg",
+          "name" : "layer_1_card_3rd",
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              0,
+              44
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
