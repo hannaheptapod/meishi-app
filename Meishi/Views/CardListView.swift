@@ -37,6 +37,7 @@ struct CardListView: View {
             .navigationTitle("名刺")
             .toolbar {
                 ToolbarItemGroup(placement: .bottomBar) {
+                    // 左：操作メニュー
                     Menu {
                         Menu {
                             Picker("並び替え", selection: $viewModel.sortOrder) {
@@ -90,8 +91,25 @@ struct CardListView: View {
                         }
                     }
 
-                    Spacer()
+                    // 中央：検索バー
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("検索", text: $searchText)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        if !searchText.isEmpty {
+                            Button { searchText = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
 
+                    // 右：追加ボタン
                     Menu {
                         Button { isShowingCamera = true } label: {
                             Label("カメラで撮影", systemImage: "camera")
@@ -139,7 +157,6 @@ struct CardListView: View {
                 viewModel.deleteCards(offsets.map { displayedCards[$0] })
             }
         }
-        .searchable(text: $searchText, prompt: "名前・会社名・メールで検索")
     }
 
     private var emptyState: some View {
@@ -196,7 +213,6 @@ private struct CardRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // イニシャルアバター（Circle）
             ZStack {
                 Circle()
                     .fill(Color.accentColor.opacity(0.12))
@@ -225,7 +241,6 @@ private struct CardRowView: View {
                                 .lineLimit(1)
                         }
                         if !email.isEmpty && phones.isEmpty {
-                            // 電話がない場合のみメールを表示（行が長くなりすぎるのを防ぐ）
                             Label(email, systemImage: "envelope")
                                 .lineLimit(1)
                         }
