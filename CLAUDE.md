@@ -196,6 +196,7 @@ Meishi/
 - 機能ベースで命名する：`feature/<機能名>`
 - 例：`feature/basic-crud`、`feature/camera-ocr`、`feature/contacts-export`、`feature/duplicate-check`、`feature/qwen-inference`
 - フェーズ完了後は main にマージしてから次のブランチを切る
+- **main への直接 push は絶対禁止。** 必ず feature ブランチを切り、PR を通してマージすること
 
 ---
 
