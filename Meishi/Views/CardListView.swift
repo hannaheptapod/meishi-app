@@ -128,7 +128,7 @@ struct CardListView: View {
         } label: {
             Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
                 .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
-                .foregroundStyle(viewModel.duplicatePairs.isEmpty ? .primary : .red)
+                .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
                 .frame(width: 44, height: 36)
         }
     }
@@ -147,8 +147,8 @@ struct CardListView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .frame(height: 36)
     }
 
     private var addMenu: some View {
