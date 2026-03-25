@@ -129,7 +129,7 @@ struct CardListView: View {
             Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
                 .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
                 .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
-                .frame(width: 44, height: 36)
+                .frame(width: 36, height: 36)
         }
     }
 
@@ -161,7 +161,7 @@ struct CardListView: View {
             }
         } label: {
             Image(systemName: "plus")
-                .frame(width: 44, height: 36)
+                .frame(width: 36, height: 36)
         }
     }
 
