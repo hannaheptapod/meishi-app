@@ -16,9 +16,25 @@
     {
       "layers" : [
         {
-          "fill" : {
-            "solid" : "extended-gray:0.00000,1.00000"
-          },
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "extended-gray:0.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.00000,1.00000"
+              }
+            }
+          ],
           "image-name" : "layer_4_person_text.svg",
           "name" : "layer_4_person_text",
           "position" : {
@@ -42,7 +58,7 @@
           }
         },
         {
-          "fill" : "none",
+          "fill" : "automatic",
           "image-name" : "layer_2_card_2nd.svg",
           "name" : "layer_2_card_2nd",
           "position" : {
