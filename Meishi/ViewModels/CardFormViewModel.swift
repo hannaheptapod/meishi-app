@@ -90,10 +90,24 @@ class CardFormViewModel: ObservableObject {
                 return
             }
 
-            if #available(iOS 18.0, *) {
-                await populateWithFoundationModels(lines: lines)
-            } else {
-                await populateWithLocalLLMOrClassifier(lines: lines)
+            switch SettingsStore.shared.readingMethod {
+            case .automatic:
+                if #available(iOS 18.0, *) {
+                    await populateWithFoundationModels(lines: lines)
+                } else {
+                    await populateWithLocalLLMOrClassifier(lines: lines)
+                }
+            case .appleIntelligence:
+                if #available(iOS 18.0, *) {
+                    await populateWithFoundationModelsOnly(lines: lines)
+                } else {
+                    ocrErrorMessage = "Apple Intelligence はこのデバイスでは利用できません。標準読み取りで処理しました。"
+                    populateWithClassifier(lines: lines)
+                }
+            case .localLLM:
+                await populateWithLocalLLMOnly(lines: lines)
+            case .classifier:
+                populateWithClassifier(lines: lines)
             }
         } catch {
             ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
@@ -102,29 +116,13 @@ class CardFormViewModel: ObservableObject {
         isProcessingOCR = false
     }
 
-    // Foundation Models（Apple Intelligence）による構造化
+    // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
     @available(iOS 18.0, *)
     private func populateWithFoundationModels(lines: [String]) async {
         switch SystemLanguageModel.default.availability {
         case .available:
             do {
-                let rawText = lines.joined(separator: "\n")
-                let session = LanguageModelSession()
-                let prompt = """
-                    以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-                    姓と名は必ず分けてください。
-                    \(rawText)
-                    """
-                let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-                let parsed = response.content
-                lastName  = parsed.lastName
-                firstName = parsed.firstName
-                company   = parsed.company
-                title     = parsed.title
-                phones    = parsed.phone.isEmpty ? [""] : [parsed.phone]
-                email     = parsed.email
-                address   = parsed.address
-                website   = parsed.website
+                try await runFoundationModels(lines: lines)
             } catch {
                 await populateWithLocalLLMOrClassifier(lines: lines)
             }
@@ -133,17 +131,52 @@ class CardFormViewModel: ObservableObject {
         }
     }
 
-    // 層2: Core ML OSSモデル → 層3: 正規表現フォールバック
-    private func populateWithLocalLLMOrClassifier(lines: [String]) async {
-        if !LocalLLMService.shared.isModelAvailable {
-            // モデル未取得 → ダウンロード同意アラートを表示してから正規表現にフォールバック
-            shouldPromptLLMDownload = true
+    // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
+    @available(iOS 18.0, *)
+    private func populateWithFoundationModelsOnly(lines: [String]) async {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            do {
+                try await runFoundationModels(lines: lines)
+            } catch {
+                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
+                populateWithClassifier(lines: lines)
+            }
+        default:
+            ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
+            populateWithClassifier(lines: lines)
+        }
+    }
+
+    @available(iOS 18.0, *)
+    private func runFoundationModels(lines: [String]) async throws {
+        let rawText = lines.joined(separator: "\n")
+        let session = LanguageModelSession()
+        let prompt = """
+            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
+            姓と名は必ず分けてください。
+            \(rawText)
+            """
+        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
+        let parsed = response.content
+        lastName  = parsed.lastName
+        firstName = parsed.firstName
+        company   = parsed.company
+        title     = parsed.title
+        phones    = parsed.phone.isEmpty ? [""] : [parsed.phone]
+        email     = parsed.email
+        address   = parsed.address
+        website   = parsed.website
+    }
+
+    // 明示指定モード: AIアシストのみ（未取得・失敗時はエラー表示 + Classifier）
+    private func populateWithLocalLLMOnly(lines: [String]) async {
+        guard LocalLLMService.shared.isModelAvailable else {
+            ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
             populateWithClassifier(lines: lines)
             return
         }
-
         if let parsed = await LocalLLMService.shared.classify(lines: lines) {
-            // 層2: Core ML OSSモデルで構造化成功
             lastName  = parsed.lastName
             firstName = parsed.firstName
             company   = parsed.company
@@ -153,7 +186,29 @@ class CardFormViewModel: ObservableObject {
             address   = parsed.address
             website   = parsed.website
         } else {
-            // 層3: 正規表現フォールバック（既存）
+            ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
+            populateWithClassifier(lines: lines)
+        }
+    }
+
+    // 自動モード: LocalLLM → Classifier のフォールバック
+    private func populateWithLocalLLMOrClassifier(lines: [String]) async {
+        if !LocalLLMService.shared.isModelAvailable {
+            shouldPromptLLMDownload = true
+            populateWithClassifier(lines: lines)
+            return
+        }
+
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
+            lastName  = parsed.lastName
+            firstName = parsed.firstName
+            company   = parsed.company
+            title     = parsed.title
+            phones    = parsed.phones.isEmpty ? [""] : parsed.phones
+            email     = parsed.email
+            address   = parsed.address
+            website   = parsed.website
+        } else {
             populateWithClassifier(lines: lines)
         }
     }

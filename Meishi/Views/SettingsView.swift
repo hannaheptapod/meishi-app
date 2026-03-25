@@ -31,6 +31,20 @@ struct SettingsView: View {
 
     private var readingSection: some View {
         Section {
+            // 読み取り方法の選択
+            Picker(selection: $settings.readingMethod) {
+                ForEach(ReadingMethod.allCases) { method in
+                    Text(method.displayName).tag(method)
+                }
+            } label: {
+                Label("読み取り方法", systemImage: "doc.text.magnifyingglass")
+            }
+
+            // 選択中の方法の説明
+            Text(settings.readingMethod.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             // Apple Intelligence
             if #available(iOS 18.0, *) {
                 LabeledContent {

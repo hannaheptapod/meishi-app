@@ -1,10 +1,48 @@
 import Foundation
 import Combine
 
+// 読み取り方法の選択肢
+enum ReadingMethod: String, CaseIterable, Identifiable {
+    case automatic          = "automatic"
+    case appleIntelligence  = "appleIntelligence"
+    case localLLM           = "localLLM"
+    case classifier         = "classifier"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .automatic:         return "自動（推奨）"
+        case .appleIntelligence: return "Apple Intelligence"
+        case .localLLM:          return "AIアシスト"
+        case .classifier:        return "標準読み取り"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .automatic:
+            return "利用できる最高精度のエンジンを自動で選択します"
+        case .appleIntelligence:
+            return "Apple Intelligence を使用します（iPhone 15 Pro 以降・要 Apple Intelligence 有効）"
+        case .localLLM:
+            return "ダウンロード済みのAIモデルを使用します（要ダウンロード）"
+        case .classifier:
+            return "ルールベースの解析を使用します。常時利用可能です"
+        }
+    }
+}
+
 // アプリ設定の永続化管理（UserDefaults）
 class SettingsStore: ObservableObject {
 
     static let shared = SettingsStore()
+
+    // MARK: - 読み取り方法
+
+    @Published var readingMethod: ReadingMethod {
+        didSet { UserDefaults.standard.set(readingMethod.rawValue, forKey: Keys.readingMethod) }
+    }
 
     // MARK: - 重複チェック設定
 
@@ -30,13 +68,15 @@ class SettingsStore: ObservableObject {
     private init() {
         let ud = UserDefaults.standard
 
-        // 初回起動時のデフォルト値を登録
         ud.register(defaults: [
+            Keys.readingMethod:     ReadingMethod.automatic.rawValue,
             Keys.duplicateThreshold: 0.75,
-            Keys.csvIncludesBOM: true,
-            Keys.vCardVersion: "3.0"
+            Keys.csvIncludesBOM:    true,
+            Keys.vCardVersion:      "3.0"
         ])
 
+        let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
+        readingMethod  = ReadingMethod(rawValue: methodRaw) ?? .automatic
         duplicateThreshold = ud.double(forKey: Keys.duplicateThreshold)
         csvIncludesBOM     = ud.bool(forKey: Keys.csvIncludesBOM)
         vCardVersion       = ud.string(forKey: Keys.vCardVersion) ?? "3.0"
@@ -45,6 +85,7 @@ class SettingsStore: ObservableObject {
     // MARK: - UserDefaults キー
 
     private enum Keys {
+        static let readingMethod      = "readingMethod"
         static let duplicateThreshold = "duplicateThreshold"
         static let csvIncludesBOM     = "csvIncludesBOM"
         static let vCardVersion       = "vCardVersion"
