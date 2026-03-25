@@ -63,8 +63,27 @@ struct CardFormView: View {
                     TextField("役職", text: $viewModel.title)
                 }
                 Section("連絡先") {
-                    TextField("電話番号", text: $viewModel.phone)
-                        .keyboardType(.phonePad)
+                    ForEach(viewModel.phones.indices, id: \.self) { i in
+                        HStack {
+                            TextField("電話番号", text: $viewModel.phones[i])
+                                .keyboardType(.phonePad)
+                            if viewModel.phones.count > 1 {
+                                Button {
+                                    viewModel.phones.remove(at: i)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                    Button {
+                        viewModel.phones.append("")
+                    } label: {
+                        Label("電話番号を追加", systemImage: "plus.circle")
+                            .font(.subheadline)
+                    }
                     TextField("メールアドレス", text: $viewModel.email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)

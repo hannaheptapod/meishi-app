@@ -11,7 +11,7 @@ struct CardFieldClassifier {
         var firstName: String = ""
         var company: String = ""
         var title: String = ""
-        var phone: String = ""
+        var phones: [String] = []
         var email: String = ""
         var address: String = ""
         var website: String = ""
@@ -29,8 +29,8 @@ struct CardFieldClassifier {
 
             if result.email.isEmpty, let email = extractEmail(from: trimmed) {
                 result.email = email
-            } else if result.phone.isEmpty, let phone = extractPhone(from: trimmed) {
-                result.phone = phone
+            } else if let phone = extractPhone(from: trimmed) {
+                result.phones.append(phone)
             } else if result.website.isEmpty, let url = extractURL(from: trimmed) {
                 result.website = url
             } else if result.address.isEmpty, isAddress(trimmed) {

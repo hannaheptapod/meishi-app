@@ -27,6 +27,14 @@ extension BusinessCard {
 
     // MARK: - 計算プロパティ
 
+    /// phone フィールドを改行区切りで分割した電話番号リスト
+    public var phoneList: [String] {
+        guard let phone = phone, !phone.isEmpty else { return [] }
+        return phone.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     /// 「姓 名」形式のフルネームを返す
     public var fullName: String {
         let last  = lastName?.trimmingCharacters(in: .whitespaces) ?? ""

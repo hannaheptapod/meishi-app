@@ -29,7 +29,7 @@ class ExportService {
             card.firstName,
             card.company,
             card.title,
-            card.phone,
+            card.phoneList.isEmpty ? nil : card.phoneList.joined(separator: " / "),
             card.email,
             card.address,
             card.website,
@@ -80,7 +80,7 @@ class ExportService {
         if let title = card.title, !title.isEmpty {
             lines.append("TITLE:\(vcEscape(title))")
         }
-        if let phone = card.phone, !phone.isEmpty {
+        for phone in card.phoneList {
             lines.append("TEL;TYPE=WORK:\(phone)")
         }
         if let email = card.email, !email.isEmpty {

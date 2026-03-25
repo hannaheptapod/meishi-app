@@ -42,13 +42,16 @@ struct CardDetailView: View {
             if let title = card.title, !title.isEmpty {
                 Section("役職") { Text(title) }
             }
-            if let phone = card.phone, !phone.isEmpty {
+            let phoneList = card.phoneList
+            if !phoneList.isEmpty {
                 Section("電話番号") {
-                    let digits = phone.filter { $0.isNumber || $0 == "+" }
-                    if let url = URL(string: "tel:\(digits)") {
-                        Link(phone, destination: url)
-                    } else {
-                        Text(phone)
+                    ForEach(phoneList, id: \.self) { phone in
+                        let digits = phone.filter { $0.isNumber || $0 == "+" }
+                        if let url = URL(string: "tel:\(digits)") {
+                            Link(phone, destination: url)
+                        } else {
+                            Text(phone)
+                        }
                     }
                 }
             }
