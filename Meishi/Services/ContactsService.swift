@@ -17,7 +17,7 @@ class ContactsService {
         case .notDetermined:
             let granted = try await store.requestAccess(for: .contacts)
             if !granted { throw ContactsError.accessDenied }
-        case .denied, .restricted:
+        case .denied, .restricted, .limited:
             throw ContactsError.accessDenied
         @unknown default:
             throw ContactsError.accessDenied
