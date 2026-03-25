@@ -43,7 +43,7 @@ class ContactsService {
         let phoneList = card.phoneList
         if !phoneList.isEmpty {
             contact.phoneNumbers = phoneList.enumerated().map { index, phone in
-                let label = index == 0 ? CNLabelPhoneNumberMain : CNLabelPhoneNumberWork
+                let label = index == 0 ? CNLabelPhoneNumberMain : CNLabelWork
                 return CNLabeledValue(label: label,
                                      value: CNPhoneNumber(stringValue: phone))
             }
