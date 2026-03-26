@@ -129,7 +129,7 @@ meishi-app/
 | firstName | String | 名 |
 | firstNameReading | String | **名ふりがな（v3で追加）** |
 | company | String | 会社名 |
-| companyReading | String | **会社名ふりがな（v3で追加）** |
+| companyReading | String | **会社名ふりがな（v3で追加）・法人格を含まない** |
 | department | String | **部署（v2で追加）** |
 | title | String | 役職 |
 | email | String | メールアドレス |

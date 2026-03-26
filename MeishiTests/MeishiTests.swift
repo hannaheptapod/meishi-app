@@ -196,8 +196,8 @@ struct DuplicateCheckerFindTests {
     }
 
     @Test func identicalCardDetected() {
-        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ")
-        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすと")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすと")
         let pairs = checker.findDuplicates(in: [a, b])
         #expect(!pairs.isEmpty)
         #expect(pairs[0].score >= 0.75)
@@ -281,7 +281,7 @@ struct ExportServiceCSVTests {
         // 姓,名,会社名,部署,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時
         let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ",
                             firstName: "太郎", firstNameReading: "たろう",
-                            company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ",
+                            company: "テスト株式会社", companyReading: "てすと",
                             title: "部長", email: "yamada@test.co.jp")
         let row = service.csvString(from: [card]).components(separatedBy: "\n")[1]
         #expect(row.hasPrefix("山田,太郎,テスト株式会社,,部長,,yamada@test.co.jp"))
@@ -326,7 +326,7 @@ struct ExportServiceCSVTests {
     }
 
     @Test func departmentIncludedInRow() {
-        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ", department: "営業部")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと", department: "営業部")
         let row = service.csvString(from: [card]).components(separatedBy: "\n")[1]
         // 3列目=会社名, 4列目=部署
         let fields = row.components(separatedBy: ",")
@@ -363,13 +363,13 @@ struct ExportServiceVCardTests {
     }
 
     @Test func orgWithDepartment() {
-        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ", department: "営業部")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと", department: "営業部")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("ORG:テスト株式会社;営業部"))
     }
 
     @Test func orgWithoutDepartment() {
-        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすとかぶしきがいしゃ")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("ORG:テスト株式会社;"))
     }
