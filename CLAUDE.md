@@ -64,9 +64,10 @@ Tier 3: CardFieldClassifier（正規表現・常時利用可能）
 ```
 
 - `automatic`（デフォルト）/ `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
-- **Tier 1**：`@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。FoundationModels framework 未リンクのためコメントアウト中（`CardFormViewModel.populateFromOCR` 内）。リンク後 `import FoundationModels` を追加して有効化
-- **Tier 2**：ChatML プロンプト → JSON パース。`isInferencing` フラグで二重実行を防止。JSON括弧カウントによる早期終了・途中打ち切り時の補完を実装。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
-- **Tier 3**：2パス方式（パス1：メール・電話・URL・住所・会社名・役職を正規表現抽出。パス2：残り行から氏名推定・姓名分割）
+- **全Tier共通の前段処理（ハイブリッド方式）**：`CardFieldClassifier.classifyStructuredFields` で Pass1（正規表現：email・phone・URL・住所・会社・部署・役職を抽出）+ Pass2（OCR座標情報を使った名前スコアリング：フリガナ近接・フォントサイズ・位置情報で確信度判定、>0.4 で名前確定）を実行。未分類行のみを各Tierの LLM に送り、結果をマージする。ルールベース確定結果を常に優先
+- **Tier 1**：ハイブリッド前段処理 → 未分類行のみ `@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。既知フィールドをプロンプトコンテキストとして渡し幻覚を防止。email/phone/address/website はルールベース結果を常に優先
+- **Tier 2**：ハイブリッド前段処理 → 未分類行のみ ChatML プロンプトで LLM に名前・役職・部署を問う → 結果マージ。10秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=80`。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
+- **Tier 3**：`classify(lines:)` による全フィールド分類（Pass1 + Pass2 + 残り行から会社・役職補完）。LLM不使用・常時利用可能
 
 ---
 
@@ -145,8 +146,8 @@ meishi-app/
 ## 実装済み機能
 
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
-- カメラ撮影 → OCR → AI意味分析（3段階カスケード）によるフィールド自動分類
-- Qwen2.5-0.5B CoreML 推論（stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
+- カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
+- Qwen2.5-0.5B CoreML 推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM名前・役職判定・10秒タイムアウト・stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）
 - iPhoneの連絡先へのエクスポート（CNContactStore）
 - 連絡先からインポート（`ellipsisMenu` 経由・確認ダイアログ付き・空エントリスキップ）
@@ -157,7 +158,7 @@ meishi-app/
 
 ## 未完了 / 保留中
 
-- **Foundation Models 統合（Tier 1）：** `CardFormViewModel.populateFromOCR` にコメントアウトで残存。FoundationModels framework をリンクすれば有効化可能
+- **Foundation Models 統合（Tier 1）：** ハイブリッド方式で実装済み（`runFoundationModels`）。FoundationModels framework リンク済み。実機 iPhone 15 Pro 以降 + Apple Intelligence 有効が必要
 - **テスト：** `MeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`MeishiUITests.swift` / `MeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
 
 ---

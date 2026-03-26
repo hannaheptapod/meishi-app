@@ -128,9 +128,10 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - 推論（公開API）
 
-    /// OCR行リストを受け取り ParsedCard を返す。
+    /// ハイブリッド分類: ルールベース（空間情報活用）で確実なフィールドを先に抽出し、
+    /// 未分類行のみLLMに送って名前・役職・部署を判定する。
     /// モデル未ロード・推論失敗時は nil を返す（呼び出し元はフォールバックへ進む）。
-    func classify(lines: [String]) async -> CardFieldClassifier.ParsedCard? {
+    func classify(lines: [RecognizedLine]) async -> CardFieldClassifier.ParsedCard? {
         // アプリ再起動後に未ロードの場合はここでロードする
         if loadedModel == nil || tokenizer == nil {
             await MainActor.run { isInferencing = true }
@@ -144,25 +145,79 @@ class LocalLLMService: ObservableObject {
         await MainActor.run { isInferencing = true }
         defer { Task { @MainActor in self.isInferencing = false } }
 
-        let prompt   = buildChatMLPrompt(lines: lines)
+        // --- Step 1: ルールベース（座標情報含む）で確実なフィールドを先に抽出 ---
+        let ruleResult = CardFieldClassifier().classifyStructuredFields(lines: lines)
+        let baseParsed = ruleResult.parsed
+
+        // 未分類行が空ならLLM不要（全フィールドがルールで解決済み）
+        guard !ruleResult.unclassifiedLines.isEmpty else {
+            return baseParsed
+        }
+
+        // --- Step 2: 未分類行のみをLLMに送る ---
+        let prompt   = buildChatMLPrompt(
+            unclassifiedLines: ruleResult.unclassifiedLines,
+            knownCompany: baseParsed.company
+        )
         let inputIds = tok.encode(prompt)
 
         do {
-            let output = try runGeneration(model: model, tokenizer: tok, inputIds: inputIds)
-            return parseJSON(output)
+            let output = try await runGenerationWithTimeout(
+                model: model, tokenizer: tok, inputIds: inputIds, timeoutSeconds: 10
+            )
+            guard let llmResult = parseJSON(output) else { return baseParsed }
+
+            // --- Step 3: ルールベース結果とLLM結果をマージ ---
+            return mergeResults(base: baseParsed, llm: llmResult)
         } catch {
-            return nil
+            // LLMが失敗してもルールベース結果は返す
+            return baseParsed
         }
     }
 
+    /// ルールベース結果にLLM結果を上書きマージする。
+    /// LLMは名前・役職・部署のみ返すので、それ以外はルールベース結果を維持。
+    private func mergeResults(base: CardFieldClassifier.ParsedCard,
+                              llm: CardFieldClassifier.ParsedCard) -> CardFieldClassifier.ParsedCard {
+        var merged = base
+        // LLMが返した名前・役職・部署で上書き（空でない場合のみ）
+        if !llm.lastName.isEmpty  { merged.lastName  = llm.lastName }
+        if !llm.firstName.isEmpty { merged.firstName = llm.firstName }
+        if !llm.title.isEmpty     { merged.title     = llm.title }
+        if !llm.department.isEmpty { merged.department = llm.department }
+        // LLMがルールベースで未取得だった会社名を補完した場合
+        if merged.company.isEmpty && !llm.company.isEmpty { merged.company = llm.company }
+        return merged
+    }
+
     // MARK: - テキスト生成ループ
+
+    /// タイムアウト付きの生成ラッパー
+    private func runGenerationWithTimeout(model: MLModel,
+                                          tokenizer: Qwen25Tokenizer,
+                                          inputIds: [Int],
+                                          timeoutSeconds: TimeInterval) async throws -> String {
+        try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask {
+                try self.runGeneration(model: model, tokenizer: tokenizer, inputIds: inputIds)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                throw InferenceError.timeout
+            }
+            // 先に完了したタスクの結果を採用
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
 
     private func runGeneration(model: MLModel,
                                tokenizer: Qwen25Tokenizer,
                                inputIds: [Int]) throws -> String {
         let promptLen    = inputIds.count
         var generatedIds = [Int]()
-        let maxNewTokens = 200
+        let maxNewTokens = 80
         // JSONの { } をカウントして完了次第即終了（不要なトークン生成を防ぐ）
         var openBraces   = 0
         var jsonStarted  = false
@@ -192,6 +247,9 @@ class LocalLLMService: ObservableObject {
 
         // --- デコード: 1 トークンずつ生成 ---
         while generatedIds.count < maxNewTokens {
+            // タスクキャンセルのチェック
+            if Task.isCancelled { break }
+
             let currentPos = promptLen + generatedIds.count - 1
             let decLogits  = try forward(model: model, state: state,
                                          ids: [generatedIds.last!], startPos: currentPos)
@@ -270,7 +328,7 @@ class LocalLLMService: ObservableObject {
         return mask
     }
 
-    private enum InferenceError: Error { case noLogits }
+    private enum InferenceError: Error { case noLogits, timeout }
 
     // MARK: - Argmax・float16変換
 
@@ -360,19 +418,17 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - プロンプト構築（ChatML 形式）
 
+    /// ハイブリッド方式用: 未分類行のみを対象に名前・役職・部署を問う簡潔なプロンプト
+    func buildChatMLPrompt(unclassifiedLines: [String], knownCompany: String) -> String {
+        let rawText = unclassifiedLines.joined(separator: "\n")
+        let companyHint = knownCompany.isEmpty ? "" : "\n会社名「\(knownCompany)」は判明済みです。"
+        return "<|im_start|>system\nJSONのみ出力。説明不要。<|im_end|>\n<|im_start|>user\n以下は名刺の未分類テキストです。\(companyHint)\nlastName,firstName,company,department,titleをJSONで出力。不明は空文字。\n\n\(rawText)<|im_end|>\n<|im_start|>assistant\n"
+    }
+
+    /// 旧API互換: 全行を渡すプロンプト（テスト用に残す）
     func buildChatMLPrompt(lines: [String]) -> String {
         let rawText = lines.joined(separator: "\n")
-        return """
-            <|im_start|>system
-            あなたは名刺解析の専門家です。指示通りのJSONのみを出力してください。説明は不要です。<|im_end|>
-            <|im_start|>user
-            以下は名刺から読み取ったテキストです。各フィールドをJSON形式で出力してください。
-            キー名は必ず lastName / firstName / company / title / phone / email / address / website を使用してください。
-            値が不明な場合は空文字列にしてください。JSONのみ出力し、説明や ```json フェンスは不要です。
-
-            \(rawText)<|im_end|>
-            <|im_start|>assistant
-            """
+        return "<|im_start|>system\nJSONのみ出力。説明不要。<|im_end|>\n<|im_start|>user\n以下は名刺のテキストです。lastName,firstName,company,department,title,phone,email,address,websiteをJSONで出力。不明は空文字。\n\n\(rawText)<|im_end|>\n<|im_start|>assistant\n"
     }
 
     // MARK: - JSON パース
@@ -400,14 +456,15 @@ class LocalLLMService: ObservableObject {
         else { return nil }
 
         var result = CardFieldClassifier.ParsedCard()
-        result.lastName  = dict["lastName"]  ?? ""
-        result.firstName = dict["firstName"] ?? ""
-        result.company   = dict["company"]   ?? ""
-        result.title     = dict["title"]     ?? ""
+        result.lastName   = dict["lastName"]   ?? ""
+        result.firstName  = dict["firstName"]  ?? ""
+        result.company    = dict["company"]    ?? ""
+        result.department = dict["department"] ?? ""
+        result.title      = dict["title"]      ?? ""
         if let phone = dict["phone"], !phone.isEmpty { result.phones = [phone] }
-        result.email     = dict["email"]     ?? ""
-        result.address   = dict["address"]   ?? ""
-        result.website   = dict["website"]   ?? ""
+        result.email      = dict["email"]      ?? ""
+        result.address    = dict["address"]    ?? ""
+        result.website    = dict["website"]    ?? ""
         return result
     }
 

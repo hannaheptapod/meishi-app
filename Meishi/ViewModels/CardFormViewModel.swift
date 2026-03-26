@@ -159,29 +159,58 @@ class CardFormViewModel: ObservableObject {
 
     @available(iOS 18.0, *)
     private func runFoundationModels(lines: [RecognizedLine]) async throws {
-        let rawText = lines.map { $0.text }.joined(separator: "\n")
+        // --- ルールベース（座標情報活用）で確実なフィールドを先に抽出 ---
+        let ruleResult = classifier.classifyStructuredFields(lines: lines)
+        var base = ruleResult.parsed
+
+        if ruleResult.unclassifiedLines.isEmpty {
+            // 全フィールドがルールで解決済み → LLM不要
+            apply(base)
+            return
+        }
+
+        // --- 未分類行 + 既知フィールドのコンテキストを Foundation Models に送る ---
+        let unclassifiedText = ruleResult.unclassifiedLines.joined(separator: "\n")
+        var knownFields: [String] = []
+        if !base.company.isEmpty    { knownFields.append("会社名: \(base.company)") }
+        if !base.department.isEmpty { knownFields.append("部署: \(base.department)") }
+        if !base.title.isEmpty      { knownFields.append("役職: \(base.title)") }
+        if !base.email.isEmpty      { knownFields.append("メール: \(base.email)") }
+        if !base.phones.isEmpty     { knownFields.append("電話: \(base.phones.joined(separator: ", "))") }
+        if !base.address.isEmpty    { knownFields.append("住所: \(base.address)") }
+        if !base.website.isEmpty    { knownFields.append("Web: \(base.website)") }
+        let knownContext = knownFields.isEmpty ? "" : "\n以下は既に判明済みのフィールドです（変更不要）:\n\(knownFields.joined(separator: "\n"))\n"
+
         let session = LanguageModelSession()
         let prompt = """
-            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-            姓と名は必ず分けてください。
-            \(rawText)
-            """
+        以下は名刺から読み取ったテキストのうち、まだ分類されていない行です。\(knownContext)
+        未分類テキストから姓・名・会社名・部署・役職を特定してください。姓と名は必ず分けてください。判明済みのフィールドはそのまま返してください。
+
+        未分類テキスト:
+        \(unclassifiedText)
+        """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         let p = response.content
-        apply(lastName: p.lastName, firstName: p.firstName, company: p.company,
-              department: p.department, title: p.title,
-              phones: p.phone.isEmpty ? [] : [p.phone],
-              email: p.email, address: p.address, website: p.website)
+
+        // --- マージ: ルールベースの確定結果を優先、LLMで未確定フィールドを補完 ---
+        if !p.lastName.isEmpty  { base.lastName  = p.lastName }
+        if !p.firstName.isEmpty { base.firstName = p.firstName }
+        if base.company.isEmpty && !p.company.isEmpty       { base.company    = p.company }
+        if base.department.isEmpty && !p.department.isEmpty  { base.department = p.department }
+        if base.title.isEmpty && !p.title.isEmpty            { base.title      = p.title }
+        // email, phone, address, website はルールベースの結果を常に優先
+        apply(base)
     }
 
-    // 明示指定モード: AIアシストのみ（未取得・失敗時はエラー表示 + Classifier）
+    // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
+    // LLMが失敗してもルールベース結果が返るため、完全な失敗は「モデル未ロード」のみ
     private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
         guard LocalLLMService.shared.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
             populateWithClassifier(lines: lines)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
             apply(parsed)
         } else {
             ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
@@ -189,14 +218,14 @@ class CardFormViewModel: ObservableObject {
         }
     }
 
-    // 自動モード: LocalLLM → Classifier のフォールバック
+    // 自動モード: LocalLLM（ハイブリッド） → Classifier のフォールバック
     private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
         if !LocalLLMService.shared.isModelAvailable {
             shouldPromptLLMDownload = true
             populateWithClassifier(lines: lines)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
             apply(parsed)
         } else {
             populateWithClassifier(lines: lines)
