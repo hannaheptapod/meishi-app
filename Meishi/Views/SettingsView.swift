@@ -11,8 +11,11 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showDeleteAllConfirm   = false
+    @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
+#if DEBUG
+    @State private var showSeedConfirm = false
+#endif
 
     var body: some View {
         NavigationStack {
@@ -21,6 +24,9 @@ struct SettingsView: View {
                 duplicateCheckSection
                 exportSection
                 dataSection
+#if DEBUG
+                debugSection
+#endif
                 appInfoSection
             }
             .navigationTitle("設定")
@@ -240,6 +246,29 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: - 開発者向け（デバッグビルドのみ）
+
+#if DEBUG
+    private var debugSection: some View {
+        Section("開発者向け") {
+            Button {
+                showSeedConfirm = true
+            } label: {
+                Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
+            }
+            .confirmationDialog(
+                "サンプル名刺を50件追加しますか？",
+                isPresented: $showSeedConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("挿入") { listViewModel.seedSampleData() }
+            } message: {
+                Text("既存のデータは削除されません。")
+            }
+        }
+    }
+#endif
 
     // MARK: - アプリ情報
 
