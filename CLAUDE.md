@@ -1,4 +1,4 @@
-# CLAUDE.md — 名刺管理アプリ（Meishi）
+# CLAUDE.md — 名刺管理アプリ（eMeishi）
 
 ## ⚠️ 作業開始前チェックリスト（必須）
 
@@ -165,7 +165,7 @@ meishi-app/
 ## 未完了 / 保留中
 
 - **Foundation Models 統合（Tier 1）：** ハイブリッド方式で実装済み（`runFoundationModels`）。FoundationModels framework リンク済み。実機 iPhone 15 Pro 以降 + Apple Intelligence 有効が必要
-- **テスト：** `MeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`MeishiUITests.swift` / `MeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
+- **テスト：** `eMeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`eMeishiUITests.swift` / `eMeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
 
 ---
 
