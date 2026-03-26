@@ -1,4 +1,4 @@
-# CLAUDE.md — 名刺管理アプリ（Meishi）
+# CLAUDE.md — 名刺管理アプリ（eMeishi）
 
 ## ⚠️ 作業開始前チェックリスト（必須）
 
@@ -76,15 +76,15 @@ Tier 3: CardFieldClassifier（正規表現・常時利用可能）
 ```
 meishi-app/
 ├── CLAUDE.md
-├── Meishi/
+├── eMeishi/
 │   ├── App/
-│   │   ├── MeishiApp.swift
+│   │   ├── eMeishiApp.swift
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   └── BusinessCard+CoreDataProperties.swift
+│   ├── ContentView.swift                        # ルートレベルに配置
 │   ├── Views/
-│   │   ├── ContentView.swift
 │   │   ├── CardListView.swift
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
@@ -107,12 +107,13 @@ meishi-app/
 │   │   └── CardFieldClassifier.swift
 │   ├── Resources/
 │   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）の3バージョン
-│   └── Assets.xcassets                         # アプリアイコン・アクセントカラー含む
-├── MeishiTests/
-│   └── MeishiTests.swift                       # プレースホルダーのみ
-└── MeishiUITests/
-    ├── MeishiUITests.swift
-    └── MeishiUITestsLaunchTests.swift
+│   ├── AppIcon.icon/                           # アプリアイコン
+│   └── Assets.xcassets                         # アクセントカラー
+├── eMeishiTests/
+│   └── eMeishiTests.swift                      # 機能テスト網羅的に実装済み
+└── eMeishiUITests/
+    ├── eMeishiUITests.swift
+    └── eMeishiUITestsLaunchTests.swift
 ```
 
 ---
@@ -164,7 +165,7 @@ meishi-app/
 ## 未完了 / 保留中
 
 - **Foundation Models 統合（Tier 1）：** ハイブリッド方式で実装済み（`runFoundationModels`）。FoundationModels framework リンク済み。実機 iPhone 15 Pro 以降 + Apple Intelligence 有効が必要
-- **テスト：** `MeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`MeishiUITests.swift` / `MeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
+- **テスト：** `eMeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`eMeishiUITests.swift` / `eMeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
 
 ---
 
@@ -200,4 +201,3 @@ meishi-app/
 - CSV は Excel での文字化けを防ぐため UTF-8 BOM を付与（設定で無効化可能）
 - vCard は 3.0 形式（設定で 4.0 に変更可能）
 - 重複判定は名前70%・会社名30%の重み付きスコア
-- `Item.swift` は Xcode テンプレートの残骸（未使用）
