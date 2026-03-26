@@ -172,6 +172,13 @@ struct CardListView: View {
                                 } label: {
                                     CardRowView(card: card)
                                 }
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 20))
+                                .alignmentGuide(.listRowSeparatorLeading) { d in
+                                    d[.leading]
+                                }
+                                .alignmentGuide(.listRowSeparatorTrailing) { d in
+                                    d[.trailing]
+                                }
                             }
                             .onDelete { offsets in
                                 viewModel.deleteCards(offsets.map { section.cards[$0] })
@@ -188,6 +195,7 @@ struct CardListView: View {
                 }
             }
             .listStyle(.plain)
+            .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
             .overlay {
                 if let char = sectionIndexChar {
@@ -202,11 +210,10 @@ struct CardListView: View {
                 if showIndex {
                     SectionIndexView(
                         sections: viewModel.groupedCards,
-                        dragChar: $sectionIndexChar
-                    ) { sectionId in
-                        proxy.scrollTo(sectionId, anchor: .top)
-                    }
-                    .padding(.trailing, 4)
+                        dragChar: $sectionIndexChar,
+                        proxy: proxy
+                    )
+                    .padding(.trailing, 0)
                 }
             }
         }
@@ -274,7 +281,7 @@ private struct SectionIndexView: View {
 
     let sections: [CardSection]
     @Binding var dragChar: String?
-    let onSelect: (String) -> Void
+    let proxy: ScrollViewProxy
 
     // あかさたなはまやらわ → A-Z → # （かなをアルファベットより上に配置）
     private static let allItems: [(char: String, sectionId: String)] = {
@@ -305,33 +312,51 @@ private struct SectionIndexView: View {
         return nil
     }
 
+    private static let itemHeight: CGFloat = 16
+
+    /// 利用可能な高さに収まるよう等間隔に間引いた表示用アイテムを返す
+    private static func visibleItems(for height: CGFloat) -> [(char: String, sectionId: String)] {
+        let all = allItems
+        let maxCount = max(2, Int(height / itemHeight))
+        if all.count <= maxCount { return all }
+        var result: [(String, String)] = [all.first!]
+        let step = Double(all.count - 1) / Double(maxCount - 1)
+        for i in 1..<(maxCount - 1) {
+            let idx = Int((Double(i) * step).rounded())
+            result.append(all[idx])
+        }
+        result.append(all.last!)
+        return result
+    }
+
     var body: some View {
         GeometryReader { geo in
-            let items = Self.allItems
-            let itemH = geo.size.height / CGFloat(items.count)
+            let visible = Self.visibleItems(for: geo.size.height)
+            let itemH = geo.size.height / CGFloat(visible.count)
             VStack(spacing: 0) {
-                ForEach(items, id: \.char) { item in
+                ForEach(visible, id: \.char) { item in
                     Text(item.char)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(
                             existingIds.contains(item.sectionId)
                                 ? Color.accentColor
                                 : Color.secondary.opacity(0.3)
                         )
-                        .frame(width: 14, height: itemH)
+                        .frame(width: 16, height: itemH)
                 }
             }
+            .padding(.leading, 12)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let idx = max(0, min(Int(value.location.y / itemH), items.count - 1))
-                        let item = items[idx]
+                        let idx = max(0, min(Int(value.location.y / itemH), visible.count - 1))
+                        let item = visible[idx]
                         if dragChar != item.char {
                             dragChar = item.char
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             if let id = nearestId(for: item.sectionId) {
-                                onSelect(id)
+                                proxy.scrollTo(id, anchor: .top)
                             }
                         }
                     }
@@ -340,7 +365,7 @@ private struct SectionIndexView: View {
                     }
             )
         }
-        .frame(width: 14)
+        .frame(width: 28)
     }
 }
 
