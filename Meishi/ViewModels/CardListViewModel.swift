@@ -96,7 +96,28 @@ class CardListViewModel: ObservableObject {
             request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.updatedAt, ascending: asc)]
         }
         do {
-            cards = try context.fetch(request)
+            var fetched = try context.fetch(request)
+            // 名前順・会社名順はふりがな / companySortKey 優先で Swift 側ソート
+            if sortKey == .name {
+                fetched.sort {
+                    let lhs = ($0.lastNameReading?.isEmpty == false ? $0.lastNameReading! : $0.lastName ?? "")
+                           + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
+                    let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
+                           + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
+                    return asc
+                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
+                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
+                }
+            } else if sortKey == .company {
+                fetched.sort {
+                    let lhs = $0.companySortKey + ($0.lastNameReading ?? $0.lastName ?? "")
+                    let rhs = $1.companySortKey + ($1.lastNameReading ?? $1.lastName ?? "")
+                    return asc
+                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
+                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
+                }
+            }
+            cards = fetched
             detectDuplicates()
             updateFilteredCards()
         } catch {
@@ -107,15 +128,24 @@ class CardListViewModel: ObservableObject {
     // MARK: - 検索フィルタ
 
     private func updateFilteredCards() {
-        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         if q.isEmpty {
             filteredCards = cards
         } else {
             filteredCards = cards.filter { card in
-                card.fullName.lowercased().contains(q)
-                || (card.company?.lowercased().contains(q) ?? false)
-                || (card.title?.lowercased().contains(q) ?? false)
-                || (card.email?.lowercased().contains(q) ?? false)
+                func match(_ s: String?) -> Bool {
+                    s?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                        .contains(q) ?? false
+                }
+                return match(card.fullName)
+                    || match(card.fullNameReading)
+                    || match(card.company)
+                    || match(card.companyReading)
+                    || match(card.title)
+                    || match(card.email)
+                    || match(card.phone)
+                    || match(card.address)
             }
         }
         updateGroupedCards()

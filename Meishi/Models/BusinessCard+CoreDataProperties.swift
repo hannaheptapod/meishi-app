@@ -13,8 +13,11 @@ extension BusinessCard {
 
     @NSManaged public var id: UUID?
     @NSManaged public var lastName: String?
+    @NSManaged public var lastNameReading: String?
     @NSManaged public var firstName: String?
+    @NSManaged public var firstNameReading: String?
     @NSManaged public var company: String?
+    @NSManaged public var companyReading: String?
     @NSManaged public var department: String?
     @NSManaged public var title: String?
     @NSManaged public var email: String?
@@ -44,6 +47,63 @@ extension BusinessCard {
             return String(company?.prefix(1).uppercased() ?? "?")
         }
         return "\(last)\(first)"
+    }
+
+    /// 会社名ソート用キー：読みがあればそこから、なければ漢字名から法人格を除去して返す
+    public var companySortKey: String {
+        let base = companyReading?.trimmingCharacters(in: .whitespaces) ?? ""
+        if !base.isEmpty {
+            return BusinessCard.stripLegalEntityReading(from: base)
+        }
+        return BusinessCard.stripLegalEntityKanji(from: company ?? "")
+    }
+
+    // 法人格（ひらがな表記）をソートキーから除去（前後どちらも対応）
+    static func stripLegalEntityReading(from text: String) -> String {
+        let terms = [
+            "かぶしきがいしゃ", "ごうどうがいしゃ", "ゆうげんがいしゃ",
+            "ごうめいがいしゃ", "ごうしがいしゃ",
+            "いっぱんしゃだんほうじん", "こうえきしゃだんほうじん",
+            "いっぱんざいだんほうじん", "こうえきざいだんほうじん",
+            "いりょうほうじん", "がっこうほうじん", "しゃかいふくしほうじん",
+            "べんごしほうじん", "ぜいりしほうじん", "どくりつぎょうせいほうじん",
+            "とくていひえいりかつどうほうじん",
+        ]
+        var s = text
+        for t in terms {
+            if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }
+            if s.hasSuffix(t) { s = String(s.dropLast(t.count)); break }
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    // 法人格（漢字表記）をソートキーから除去（companyReading 未設定時のフォールバック用）
+    static func stripLegalEntityKanji(from text: String) -> String {
+        let terms = [
+            "株式会社", "合同会社", "有限会社", "合名会社", "合資会社",
+            "一般社団法人", "公益社団法人", "一般財団法人", "公益財団法人",
+            "医療法人", "学校法人", "社会福祉法人", "弁護士法人", "税理士法人",
+            "独立行政法人", "特定非営利活動法人",
+            "Inc.", "LLC", "Ltd.", "Corp.", "Co., Ltd.", "GmbH",
+        ]
+        var s = text
+        for t in terms {
+            if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }
+            if s.hasSuffix(t) { s = String(s.dropLast(t.count)); break }
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// 「姓読み 名読み」形式の読み仮名を返す
+    public var fullNameReading: String {
+        let last  = lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+        let first = firstNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+        switch (last.isEmpty, first.isEmpty) {
+        case (false, false): return "\(last) \(first)"
+        case (false, true):  return last
+        case (true, false):  return first
+        default:             return ""
+        }
     }
 
     /// 「姓 名」形式のフルネームを返す
