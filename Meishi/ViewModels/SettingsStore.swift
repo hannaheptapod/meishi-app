@@ -51,6 +51,16 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(duplicateThreshold, forKey: Keys.duplicateThreshold) }
     }
 
+    // MARK: - ソート設定
+
+    @Published var sortKey: String {
+        didSet { UserDefaults.standard.set(sortKey, forKey: Keys.sortKey) }
+    }
+
+    @Published var sortAscending: Bool {
+        didSet { UserDefaults.standard.set(sortAscending, forKey: Keys.sortAscending) }
+    }
+
     // MARK: - エクスポート設定
 
     /// CSV に BOM（UTF-8 BOM）を付与するか（デフォルト: true）
@@ -72,7 +82,9 @@ class SettingsStore: ObservableObject {
             Keys.readingMethod:     ReadingMethod.automatic.rawValue,
             Keys.duplicateThreshold: 0.75,
             Keys.csvIncludesBOM:    true,
-            Keys.vCardVersion:      "3.0"
+            Keys.vCardVersion:      "3.0",
+            Keys.sortKey:           CardSortKey.createdAt.rawValue,
+            Keys.sortAscending:     false
         ])
 
         let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
@@ -80,6 +92,9 @@ class SettingsStore: ObservableObject {
         duplicateThreshold = ud.double(forKey: Keys.duplicateThreshold)
         csvIncludesBOM     = ud.bool(forKey: Keys.csvIncludesBOM)
         vCardVersion       = ud.string(forKey: Keys.vCardVersion) ?? "3.0"
+        let sortKeyRaw = ud.string(forKey: Keys.sortKey) ?? CardSortKey.createdAt.rawValue
+        sortKey        = CardSortKey(rawValue: sortKeyRaw)?.rawValue ?? CardSortKey.createdAt.rawValue
+        sortAscending  = ud.bool(forKey: Keys.sortAscending)
     }
 
     // MARK: - UserDefaults キー
@@ -89,5 +104,7 @@ class SettingsStore: ObservableObject {
         static let duplicateThreshold = "duplicateThreshold"
         static let csvIncludesBOM     = "csvIncludesBOM"
         static let vCardVersion       = "vCardVersion"
+        static let sortKey            = "sortKey"
+        static let sortAscending      = "sortAscending"
     }
 }
