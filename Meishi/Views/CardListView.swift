@@ -209,45 +209,58 @@ struct CardListView: View {
     // MARK: - サブビュー
 
     private var cardList: some View {
-        List {
-            if viewModel.isSearchActive {
-                // 検索中はフラット表示
-                ForEach(viewModel.filteredCards) { card in
-                    NavigationLink {
-                        CardDetailView(card: card)
-                    } label: {
-                        CardRowView(card: card)
+        let showIndex = !viewModel.isSearchActive &&
+            (viewModel.sortKey == .name || viewModel.sortKey == .company)
+        return ScrollViewReader { proxy in
+            List {
+                if viewModel.isSearchActive {
+                    // 検索中はフラット表示
+                    ForEach(viewModel.filteredCards) { card in
+                        NavigationLink {
+                            CardDetailView(card: card)
+                        } label: {
+                            CardRowView(card: card)
+                        }
                     }
-                }
-                .onDelete { offsets in
-                    viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
-                }
-            } else {
-                // ソート順に応じたセクション表示
-                ForEach(viewModel.groupedCards) { section in
-                    Section {
-                        ForEach(section.cards) { card in
-                            NavigationLink {
-                                CardDetailView(card: card)
-                            } label: {
-                                CardRowView(card: card)
+                    .onDelete { offsets in
+                        viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
+                    }
+                } else {
+                    // ソート順に応じたセクション表示
+                    ForEach(viewModel.groupedCards) { section in
+                        Section {
+                            ForEach(section.cards) { card in
+                                NavigationLink {
+                                    CardDetailView(card: card)
+                                } label: {
+                                    CardRowView(card: card)
+                                }
                             }
+                            .onDelete { offsets in
+                                viewModel.deleteCards(offsets.map { section.cards[$0] })
+                            }
+                        } header: {
+                            Text(section.title)
+                                .font(.footnote)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                                .textCase(nil)
                         }
-                        .onDelete { offsets in
-                            viewModel.deleteCards(offsets.map { section.cards[$0] })
-                        }
-                    } header: {
-                        Text(section.title)
-                            .font(.footnote)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-                            .textCase(nil)
+                        .id(section.id)
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollDismissesKeyboard(.immediately)
+            .overlay(alignment: .trailing) {
+                if showIndex {
+                    SectionIndexView(sections: viewModel.groupedCards) { sectionId in
+                        proxy.scrollTo(sectionId, anchor: .top)
+                    }
+                    .padding(.trailing, 4)
+                }
+            }
         }
-        .listStyle(.plain)
-        .scrollDismissesKeyboard(.immediately)
     }
 
     private var emptyState: some View {
@@ -313,6 +326,60 @@ private struct CardRowView: View {
         .padding(.vertical, 4)
     }
 
+}
+
+// MARK: - セクションインデックス
+
+private struct SectionIndexView: View {
+
+    let sections: [CardSection]
+    let onSelect: (String) -> Void
+
+    // かな行の代表文字 → セクションID マッピング
+    private static let kanaRows: [(char: String, sectionId: String)] = [
+        ("あ", "あ行"), ("か", "か行"), ("さ", "さ行"), ("た", "た行"), ("な", "な行"),
+        ("は", "は行"), ("ま", "ま行"), ("や", "や行"), ("ら", "ら行"), ("わ", "わ行")
+    ]
+
+    private var items: [(char: String, sectionId: String)] {
+        let existing = Set(sections.map(\.id))
+        var result: [(String, String)] = []
+        for row in Self.kanaRows where existing.contains(row.sectionId) {
+            result.append((row.char, row.sectionId))
+        }
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+            let s = String(c)
+            if existing.contains(s) { result.append((s, s)) }
+        }
+        if existing.contains("その他") { result.append(("#", "その他")) }
+        return result
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let list = items
+            if !list.isEmpty {
+                let itemH = geo.size.height / CGFloat(list.count)
+                VStack(spacing: 0) {
+                    ForEach(list, id: \.char) { item in
+                        Text(item.char)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 16, height: itemH)
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let idx = max(0, min(Int(value.location.y / itemH), list.count - 1))
+                            onSelect(list[idx].sectionId)
+                        }
+                )
+                .contentShape(Rectangle())
+            }
+        }
+        .frame(width: 16)
+    }
 }
 
 // MARK: - 共有シート
