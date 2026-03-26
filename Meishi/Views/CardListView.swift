@@ -23,10 +23,11 @@ struct CardListView: View {
             }
             .navigationTitle("名刺")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $viewModel.searchText, prompt: "検索")
+            .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
+            .searchToolbarBehavior(.minimize)
             .toolbar {
-                // CardDetailView と同一パターンの bottomBar
-                ToolbarItemGroup(placement: .bottomBar) {
+                // 左: メニューボタン
+                ToolbarItem(placement: .bottomBar) {
                     Menu {
                         Menu {
                             ForEach(CardSortKey.allCases) { key in
@@ -76,9 +77,15 @@ struct CardListView: View {
                     } label: {
                         Label("メニュー", systemImage: "ellipsis")
                     }
+                }
 
-                    Spacer()
+                // 中央: 検索バー（システム提供・Liquid Glass自動適用）
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
 
+                // 右: 追加ボタン
+                ToolbarItem(placement: .bottomBar) {
                     Button {
                         isShowingCamera = true
                     } label: {
