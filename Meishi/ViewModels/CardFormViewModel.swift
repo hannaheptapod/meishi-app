@@ -182,7 +182,7 @@ class CardFormViewModel: ObservableObject {
             populateWithClassifier(lines: lines)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
             apply(parsed)
         } else {
             ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
@@ -197,7 +197,7 @@ class CardFormViewModel: ObservableObject {
             populateWithClassifier(lines: lines)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
+        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
             apply(parsed)
         } else {
             populateWithClassifier(lines: lines)

@@ -54,19 +54,21 @@ struct CardFieldClassifier {
 
     // MARK: - ルールベース前段処理（ハイブリッド方式用）
 
-    /// Pass1のみ実行: 正規表現で確実に分類できるフィールド（email, phone, URL, 住所, 会社, 部署, 役職）を抽出し、
-    /// 未分類行のテキスト配列とともに返す。LLMは未分類行から名前等を判定する。
+    /// ルールベースで可能な限り分類し、残った未分類行のテキストを返す。
+    /// Pass1（正規表現）+ Pass2（空間情報を使った名前スコアリング）まで実行するため、
+    /// LLMが担当するのは名前スコアが低く確信が持てなかったケースのみになる。
     struct StructuredFieldsResult {
         var parsed: ParsedCard
         var unclassifiedLines: [String]
     }
 
-    func classifyStructuredFields(lines: [String]) -> StructuredFieldsResult {
+    func classifyStructuredFields(lines: [RecognizedLine]) -> StructuredFieldsResult {
         var result = ParsedCard()
-        var unclassified: [String] = []
+        var unclassified: [RecognizedLine] = []
 
+        // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
             if result.email.isEmpty, let email = extractEmail(from: trimmed) {
@@ -86,11 +88,29 @@ struct CardFieldClassifier {
             } else if result.title.isEmpty, isJobTitle(trimmed) {
                 result.title = trimmed
             } else {
-                unclassified.append(trimmed)
+                unclassified.append(line)
             }
         }
 
-        return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassified)
+        // --- Pass2: 空間情報を使った名前スコアリング ---
+        // スコアが十分高い場合はここで名前を確定し、LLMに委ねない
+        if !unclassified.isEmpty {
+            let scores = unclassified.map { personNameScore(for: $0, candidates: unclassified) }
+            if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
+               scores[bestIdx] > 0.4 {
+                // 高確信度（0.4超）: ルールベースで名前を確定
+                unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
+                // フリガナ行を除去
+                unclassified.removeAll { isFuriganaLine($0) }
+            }
+            // 低確信度の場合は名前未確定のまま未分類行としてLLMに委ねる
+        }
+
+        // 未分類行からテキストのみ抽出して返す
+        let unclassifiedTexts = unclassified.map {
+            $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
     }
 
     // MARK: - 分類エントリポイント（従来API: 全フィールド分類）

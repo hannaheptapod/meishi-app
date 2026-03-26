@@ -128,10 +128,10 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - 推論（公開API）
 
-    /// ハイブリッド分類: ルールベースで確実なフィールドを先に抽出し、
+    /// ハイブリッド分類: ルールベース（空間情報活用）で確実なフィールドを先に抽出し、
     /// 未分類行のみLLMに送って名前・役職・部署を判定する。
     /// モデル未ロード・推論失敗時は nil を返す（呼び出し元はフォールバックへ進む）。
-    func classify(lines: [String]) async -> CardFieldClassifier.ParsedCard? {
+    func classify(lines: [RecognizedLine]) async -> CardFieldClassifier.ParsedCard? {
         // アプリ再起動後に未ロードの場合はここでロードする
         if loadedModel == nil || tokenizer == nil {
             await MainActor.run { isInferencing = true }
@@ -145,7 +145,7 @@ class LocalLLMService: ObservableObject {
         await MainActor.run { isInferencing = true }
         defer { Task { @MainActor in self.isInferencing = false } }
 
-        // --- Step 1: ルールベースで確実なフィールドを先に抽出 ---
+        // --- Step 1: ルールベース（座標情報含む）で確実なフィールドを先に抽出 ---
         let ruleResult = CardFieldClassifier().classifyStructuredFields(lines: lines)
         let baseParsed = ruleResult.parsed
 

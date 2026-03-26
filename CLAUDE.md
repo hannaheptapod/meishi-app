@@ -65,7 +65,7 @@ Tier 3: CardFieldClassifier（正規表現・常時利用可能）
 
 - `automatic`（デフォルト）/ `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
 - **Tier 1**：`@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。FoundationModels framework 未リンクのためコメントアウト中（`CardFormViewModel.populateFromOCR` 内）。リンク後 `import FoundationModels` を追加して有効化
-- **Tier 2**：ハイブリッド方式（`CardFieldClassifier.classifyStructuredFields` でメール・電話・URL・住所・会社・部署・役職をルール抽出 → 未分類行のみ簡潔な ChatML プロンプトで LLM に名前・役職・部署を問う → 結果マージ）。10秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=80`。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
+- **Tier 2**：ハイブリッド方式（`CardFieldClassifier.classifyStructuredFields` で Pass1 ルール抽出 + Pass2 空間情報による名前スコアリング → 高確信度なら名前確定、低確信度の未分類行のみ ChatML プロンプトで LLM に問う → 結果マージ）。10秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=80`。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
 - **Tier 3**：2パス方式（パス1：メール・電話・URL・住所・会社名・役職を正規表現抽出。パス2：残り行から氏名推定・姓名分割）
 
 ---
