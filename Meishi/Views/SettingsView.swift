@@ -87,7 +87,9 @@ struct SettingsView: View {
             Label(method.displayName, systemImage: icon)
                 .symbolRenderingMode(.monochrome)
             Spacer()
-            status()
+            if settings.readingMethod != method {
+                status()
+            }
             if settings.readingMethod == method {
                 Image(systemName: "checkmark")
                     .foregroundStyle(Color.accentColor)
@@ -109,28 +111,30 @@ struct SettingsView: View {
                 .foregroundStyle(.primary)
             Spacer()
 
-            if llm.isDownloading {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("\(Int(llm.downloadProgress * 100))%")
-                        .foregroundStyle(.secondary)
-                }
-            } else if llm.isModelAvailable {
-                Text("利用可能").foregroundStyle(.green)
-            } else {
-                HStack(spacing: 8) {
-                    Text("未取得").foregroundStyle(.secondary)
-                    Button("取得する") {
-                        Task {
-                            do {
-                                try await llm.downloadModel()
-                            } catch {
-                                modelError = error.localizedDescription
+            if settings.readingMethod != .localLLM {
+                if llm.isDownloading {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("\(Int(llm.downloadProgress * 100))%")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if llm.isModelAvailable {
+                    Text("利用可能").foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        Text("未取得").foregroundStyle(.secondary)
+                        Button("取得する") {
+                            Task {
+                                do {
+                                    try await llm.downloadModel()
+                                } catch {
+                                    modelError = error.localizedDescription
+                                }
                             }
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
 
@@ -191,7 +195,7 @@ struct SettingsView: View {
     private var appleIntelligenceStatusText: some View {
         switch SystemLanguageModel.default.availability {
         case .available:
-            return Text("利用可能").foregroundStyle(.green)
+            return Text("利用可能").foregroundStyle(.secondary)
         case .unavailable(.deviceNotEligible):
             return Text("非対応").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
