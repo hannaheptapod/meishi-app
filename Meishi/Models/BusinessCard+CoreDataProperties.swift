@@ -58,25 +58,34 @@ extension BusinessCard {
         return BusinessCard.stripLegalEntityKanji(from: company ?? "")
     }
 
-    // 法人格（ひらがな表記）をソートキーから除去
+    // 法人格（ひらがな表記）をソートキーから除去（前後どちらも対応）
     static func stripLegalEntityReading(from text: String) -> String {
-        let prefixes = ["かぶしきがいしゃ", "がっどうがいしゃ", "ごうどうがいしゃ",
-                        "ゆうげんがいしゃ", "いっぱんしゃだんほうじん", "こうえきしゃだんほうじん",
-                        "いっぱんざいだんほうじん", "こうえきざいだんほうじん",
-                        "とくていひえいりかつどうほうじん"]
+        let terms = [
+            "かぶしきがいしゃ", "ごうどうがいしゃ", "ゆうげんがいしゃ",
+            "ごうめいがいしゃ", "ごうしがいしゃ",
+            "いっぱんしゃだんほうじん", "こうえきしゃだんほうじん",
+            "いっぱんざいだんほうじん", "こうえきざいだんほうじん",
+            "いりょうほうじん", "がっこうほうじん", "しゃかいふくしほうじん",
+            "べんごしほうじん", "ぜいりしほうじん", "どくりつぎょうせいほうじん",
+            "とくていひえいりかつどうほうじん",
+        ]
         var s = text
-        for p in prefixes {
-            if s.hasPrefix(p) { s = String(s.dropFirst(p.count)); break }
-            if s.hasSuffix(p) { s = String(s.dropLast(p.count)); break }
+        for t in terms {
+            if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }
+            if s.hasSuffix(t) { s = String(s.dropLast(t.count)); break }
         }
         return s.trimmingCharacters(in: .whitespaces)
     }
 
-    // 法人格（漢字表記）を会社名から除去
+    // 法人格（漢字表記）をソートキーから除去（companyReading 未設定時のフォールバック用）
     static func stripLegalEntityKanji(from text: String) -> String {
-        let terms = ["株式会社", "合同会社", "有限会社", "一般社団法人", "公益社団法人",
-                     "一般財団法人", "公益財団法人", "特定非営利活動法人",
-                     "Inc.", "LLC", "Ltd.", "Corp.", "Co., Ltd.", "GmbH"]
+        let terms = [
+            "株式会社", "合同会社", "有限会社", "合名会社", "合資会社",
+            "一般社団法人", "公益社団法人", "一般財団法人", "公益財団法人",
+            "医療法人", "学校法人", "社会福祉法人", "弁護士法人", "税理士法人",
+            "独立行政法人", "特定非営利活動法人",
+            "Inc.", "LLC", "Ltd.", "Corp.", "Co., Ltd.", "GmbH",
+        ]
         var s = text
         for t in terms {
             if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }

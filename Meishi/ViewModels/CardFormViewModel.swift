@@ -179,7 +179,7 @@ class CardFormViewModel: ObservableObject {
               firstName: p.firstName,
               firstNameReading: Self.generateReading(from: p.firstName),
               company: p.company,
-              companyReading: Self.generateReading(from: BusinessCard.stripLegalEntityKanji(from: p.company)),
+              companyReading: Self.generateReading(from: p.company),
               department: p.department, title: p.title,
               phones: p.phone.isEmpty ? [] : [p.phone],
               email: p.email, address: p.address, website: p.website)
@@ -226,9 +226,9 @@ class CardFormViewModel: ObservableObject {
         let firstR   = parsed.firstNameReading.isEmpty
             ? Self.generateReading(from: parsed.firstName)
             : parsed.firstNameReading
-        // 会社名読みは法人格を除いたコア名から生成
+        // 会社名読みはフル社名から生成（法人格の除去はソートキー生成時のみ）
         let companyR = parsed.companyReading.isEmpty
-            ? Self.generateReading(from: BusinessCard.stripLegalEntityKanji(from: parsed.company))
+            ? Self.generateReading(from: parsed.company)
             : parsed.companyReading
         apply(lastName: parsed.lastName, lastNameReading: lastR,
               firstName: parsed.firstName, firstNameReading: firstR,
