@@ -121,14 +121,7 @@ struct CardListView: View {
                 Label("並び替え", systemImage: "arrow.up.arrow.down")
             }
             Divider()
-            Button {
-                isShowingImportConfirm = true
-            } label: {
-                Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
-            }
-            .disabled(viewModel.isImporting)
             if !viewModel.cards.isEmpty {
-                Divider()
                 NavigationLink {
                     DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
                 } label: {
@@ -137,6 +130,15 @@ struct CardListView: View {
                         systemImage: "person.2.slash"
                     )
                 }
+                Divider()
+            }
+            Button {
+                isShowingImportConfirm = true
+            } label: {
+                Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
+            }
+            .disabled(viewModel.isImporting)
+            if !viewModel.cards.isEmpty {
                 Divider()
                 Button { viewModel.exportCSV() } label: {
                     Label("CSV としてエクスポート", systemImage: "tablecells")
