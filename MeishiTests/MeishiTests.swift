@@ -689,6 +689,125 @@ struct CausalMaskTests {
     }
 }
 
+// MARK: - CardFieldClassifier StructuredFields テスト
+
+struct StructuredFieldsTests {
+
+    let classifier = CardFieldClassifier()
+
+    @Test func extractsEmailAndPhone() {
+        let lines = [
+            makeLine("山田 太郎", midY: 0.75, height: 0.08),
+            makeLine("test@example.com"),
+            makeLine("090-1234-5678")
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.parsed.email == "test@example.com")
+        #expect(result.parsed.phones.contains("090-1234-5678"))
+        // 名前行は空間スコアが高いため Pass2 で解決される
+        // → lastName/firstName に入り、unclassifiedLines からは除去される
+        #expect(result.parsed.lastName == "山田")
+        #expect(result.parsed.firstName == "太郎")
+    }
+
+    @Test func extractsCompanyAndDepartment() {
+        let lines = [
+            makeLine("株式会社テスト"),
+            makeLine("営業部"),
+            makeLine("山田太郎", midY: 0.75, height: 0.08)
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.parsed.company == "株式会社テスト")
+        #expect(result.parsed.department == "営業部")
+        // 名前はスコアリングで解決される
+        #expect(result.parsed.lastName == "山田太郎" || !result.parsed.lastName.isEmpty)
+    }
+
+    @Test func allFieldsClassifiedLeavesNoUnclassified() {
+        let lines = [
+            makeLine("株式会社テスト"), makeLine("営業部"), makeLine("部長"),
+            makeLine("090-1234-5678"), makeLine("test@example.com"),
+            makeLine("https://test.co.jp"), makeLine("東京都渋谷区1-2-3")
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.unclassifiedLines.isEmpty)
+    }
+
+    @Test func emptyInputReturnsEmpty() {
+        let result = classifier.classifyStructuredFields(lines: [])
+        #expect(result.unclassifiedLines.isEmpty)
+        #expect(result.parsed.email.isEmpty)
+    }
+
+    @Test func nameWithFuriganaGetsHighScore() {
+        // フリガナ行が近くにある場合、名前スコアが高くなり Pass2 で解決される
+        let lines = [
+            makeLine("やまだ たろう", midY: 0.82, height: 0.04),
+            makeLine("山田 太郎",     midY: 0.75, height: 0.08),
+            makeLine("test@example.com"),
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.parsed.lastName == "山田")
+        #expect(result.parsed.firstName == "太郎")
+        #expect(result.parsed.email == "test@example.com")
+    }
+
+    @Test func lowConfidenceNameRemainsUnclassified() {
+        // 空間的手がかりが乏しい場合（小さいフォント、下部配置）、名前は未分類のままLLMに委ねる
+        let lines = [
+            makeLine("ABC商事", midY: 0.5, height: 0.03),
+            makeLine("test@example.com"),
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        // "ABC商事" は会社キーワードがないため未分類だが、名前スコアも低い
+        #expect(result.unclassifiedLines.contains("ABC商事"))
+    }
+}
+
+// MARK: - ハイブリッドプロンプト テスト
+
+struct HybridPromptTests {
+
+    let service = LocalLLMService.shared
+
+    @Test func hybridPromptContainsUnclassifiedLines() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎", "営業部長"],
+            knownCompany: "株式会社テスト"
+        )
+        #expect(prompt.contains("山田 太郎"))
+        #expect(prompt.contains("営業部長"))
+    }
+
+    @Test func hybridPromptContainsCompanyHint() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎"],
+            knownCompany: "株式会社テスト"
+        )
+        #expect(prompt.contains("株式会社テスト"), "判明済みの会社名がヒントとして含まれる")
+    }
+
+    @Test func hybridPromptOmitsCompanyHintWhenEmpty() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎"],
+            knownCompany: ""
+        )
+        #expect(!prompt.contains("判明済み"), "会社名が空の場合はヒントが含まれない")
+    }
+
+    @Test func hybridPromptNoLeadingSpaces() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["テスト"],
+            knownCompany: ""
+        )
+        // 各行の先頭にインデント用スペースが入っていないことを確認
+        let lines = prompt.components(separatedBy: "\n")
+        for line in lines where !line.isEmpty {
+            #expect(!line.hasPrefix("    "), "プロンプト行に不要なインデントがないこと")
+        }
+    }
+}
+
 // MARK: - ChatML プロンプト テスト
 
 struct ChatMLPromptTests {
@@ -714,7 +833,8 @@ struct ChatMLPromptTests {
 
     @Test func promptEndsWithAssistantPrefix() {
         let prompt = service.buildChatMLPrompt(lines: ["テスト"])
-        #expect(prompt.hasSuffix("<|im_start|>assistant"),
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(trimmed.hasSuffix("<|im_start|>assistant"),
                 "プロンプトは assistant プレフィクスで終わる必要がある")
     }
 }

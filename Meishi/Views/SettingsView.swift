@@ -11,9 +11,11 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showDeleteAllConfirm   = false
-    @State private var showDeleteModelConfirm = false
+    @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
+#if DEBUG
+    @State private var showSeedConfirm = false
+#endif
 
     var body: some View {
         NavigationStack {
@@ -22,6 +24,9 @@ struct SettingsView: View {
                 duplicateCheckSection
                 exportSection
                 dataSection
+#if DEBUG
+                debugSection
+#endif
                 appInfoSection
             }
             .navigationTitle("設定")
@@ -153,22 +158,15 @@ struct SettingsView: View {
         .swipeActions(edge: .trailing) {
             if llm.isModelAvailable {
                 Button(role: .destructive) {
-                    showDeleteModelConfirm = true
+                    do {
+                        try llm.deleteModel()
+                    } catch {
+                        modelError = error.localizedDescription
+                    }
                 } label: {
                     Label("削除", systemImage: "trash")
                 }
             }
-        }
-        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                do {
-                    try llm.deleteModel()
-                } catch {
-                    modelError = error.localizedDescription
-                }
-            }
-        } message: {
-            Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
         }
     }
 
@@ -248,6 +246,29 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: - 開発者向け（デバッグビルドのみ）
+
+#if DEBUG
+    private var debugSection: some View {
+        Section("開発者向け") {
+            Button {
+                showSeedConfirm = true
+            } label: {
+                Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
+            }
+            .confirmationDialog(
+                "サンプル名刺を50件追加しますか？",
+                isPresented: $showSeedConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("挿入") { listViewModel.seedSampleData() }
+            } message: {
+                Text("既存のデータは削除されません。")
+            }
+        }
+    }
+#endif
 
     // MARK: - アプリ情報
 

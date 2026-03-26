@@ -55,7 +55,68 @@ struct CardFieldClassifier {
         "Executive", "Officer", "Head of", "VP ", "Vice President"
     ]
 
-    // MARK: - 分類エントリポイント
+    // MARK: - ルールベース前段処理（ハイブリッド方式用）
+
+    /// ルールベースで可能な限り分類し、残った未分類行のテキストを返す。
+    /// Pass1（正規表現）+ Pass2（空間情報を使った名前スコアリング）まで実行するため、
+    /// LLMが担当するのは名前スコアが低く確信が持てなかったケースのみになる。
+    struct StructuredFieldsResult {
+        var parsed: ParsedCard
+        var unclassifiedLines: [String]
+    }
+
+    func classifyStructuredFields(lines: [RecognizedLine]) -> StructuredFieldsResult {
+        var result = ParsedCard()
+        var unclassified: [RecognizedLine] = []
+
+        // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
+        for line in lines {
+            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if result.email.isEmpty, let email = extractEmail(from: trimmed) {
+                result.email = email
+            } else if let phone = extractPhone(from: trimmed) {
+                result.phones.append(phone)
+            } else if result.website.isEmpty, let url = extractURL(from: trimmed) {
+                result.website = url
+            } else if result.address.isEmpty, isAddress(trimmed) {
+                result.address = trimmed
+            } else if result.company.isEmpty, isCompany(trimmed) {
+                result.company = trimmed.trimmingCharacters(in: .whitespaces)
+            } else if isDepartment(trimmed) {
+                result.department = result.department.isEmpty
+                    ? trimmed
+                    : result.department + " " + trimmed
+            } else if result.title.isEmpty, isJobTitle(trimmed) {
+                result.title = trimmed
+            } else {
+                unclassified.append(line)
+            }
+        }
+
+        // --- Pass2: 空間情報を使った名前スコアリング ---
+        // スコアが十分高い場合はここで名前を確定し、LLMに委ねない
+        if !unclassified.isEmpty {
+            let scores = unclassified.map { personNameScore(for: $0, candidates: unclassified) }
+            if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
+               scores[bestIdx] > 0.4 {
+                // 高確信度（0.4超）: ルールベースで名前を確定
+                unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
+                // フリガナ行を除去
+                unclassified.removeAll { isFuriganaLine($0) }
+            }
+            // 低確信度の場合は名前未確定のまま未分類行としてLLMに委ねる
+        }
+
+        // 未分類行からテキストのみ抽出して返す
+        let unclassifiedTexts = unclassified.map {
+            $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
+    }
+
+    // MARK: - 分類エントリポイント（従来API: 全フィールド分類）
 
     func classify(lines: [RecognizedLine]) -> ParsedCard {
         var result = ParsedCard()
@@ -130,7 +191,10 @@ struct CardFieldClassifier {
             let nameMidY = selectedLine.boundingBox.midY
 
             // 等間隔文字でOCRが行を分断した場合の補正：
-            // Y座標が近い（同一行とみなせる）短い漢字行を断片として収集する
+            // Y座標がほぼ同一（同一行とみなせる）かつX座標が近接する短い漢字行を断片として収集する
+            let nameBox = selectedLine.boundingBox
+            let nameMinX = nameBox.minX
+            let nameMaxX = nameBox.maxX
             let fragmentIndices = remaining.indices.filter { i -> Bool in
                 guard i != nameIndex else { return false }
                 let line = remaining[i]
@@ -139,9 +203,16 @@ struct CardFieldClassifier {
                     .replacingOccurrences(of: " ",  with: "")
                     .replacingOccurrences(of: "　", with: "")
                 let hasKanji = t.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+                let box = line.boundingBox
+                // Y座標がほぼ同一行（高さの半分以内）
+                let sameRow = abs(box.midY - nameMidY) < max(nameBox.height, box.height) * 0.6
+                // X座標が名前行の近傍にある（名前行の幅の50%以内の間隔）
+                let xGap = nameBox.width * 0.5
+                let xNearby = box.minX < nameMaxX + xGap && box.maxX > nameMinX - xGap
                 return hasKanji
                     && stripped.count <= 3
-                    && abs(line.boundingBox.midY - nameMidY) < 0.08
+                    && sameRow
+                    && xNearby
             }
 
             // 選択行＋断片を X 座標順（左→右）に並べて結合
