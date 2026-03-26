@@ -19,6 +19,15 @@ enum CardSortKey: String, CaseIterable, Identifiable {
         case .updatedAt: return "calendar.badge.clock"
         }
     }
+
+    func directionLabel(ascending: Bool) -> String {
+        switch self {
+        case .name, .company:
+            return ascending ? "あいうえお順" : "逆順"
+        case .createdAt, .updatedAt:
+            return ascending ? "古い順" : "新しい順"
+        }
+    }
 }
 
 // セクション（グループ）単位
