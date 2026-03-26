@@ -83,24 +83,22 @@ struct SettingsView: View {
         icon: String,
         @ViewBuilder status: () -> S
     ) -> some View {
-        Button {
-            settings.readingMethod = method
-        } label: {
-            HStack {
-                Label(method.displayName, systemImage: icon)
-                    .symbolRenderingMode(.monochrome)
-                Spacer()
-                status()
-                if settings.readingMethod == method {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(Color.accentColor)
-                        .fontWeight(.semibold)
-                        .padding(.leading, 4)
-                }
+        HStack {
+            Label(method.displayName, systemImage: icon)
+                .symbolRenderingMode(.monochrome)
+            Spacer()
+            status()
+            if settings.readingMethod == method {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold)
+                    .padding(.leading, 4)
             }
-            .foregroundStyle(.primary, .secondary, .tertiary)
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            settings.readingMethod = method
+        }
     }
 
     private var aiAssistRow: some View {
@@ -114,14 +112,12 @@ struct SettingsView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("\(Int(llm.downloadProgress * 100))%")
-                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else if llm.isModelAvailable {
                 HStack(spacing: 8) {
                     if let size = llm.modelFileSize {
                         Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Button(role: .destructive) {
