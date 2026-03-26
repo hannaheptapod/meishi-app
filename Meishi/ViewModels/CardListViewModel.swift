@@ -96,7 +96,26 @@ class CardListViewModel: ObservableObject {
             request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.updatedAt, ascending: asc)]
         }
         do {
-            cards = try context.fetch(request)
+            var fetched = try context.fetch(request)
+            // 名前順・会社名順はふりがな / companySortKey 優先で Swift 側ソート
+            if sortKey == .name {
+                fetched.sort {
+                    let lhs = ($0.lastNameReading?.isEmpty == false ? $0.lastNameReading! : $0.lastName ?? "")
+                           + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
+                    let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
+                           + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
+                    let cmp = lhs.localizedStandardCompare(rhs) == .orderedAscending
+                    return asc ? cmp : !cmp
+                }
+            } else if sortKey == .company {
+                fetched.sort {
+                    let lhs = $0.companySortKey + ($0.lastNameReading ?? $0.lastName ?? "")
+                    let rhs = $1.companySortKey + ($1.lastNameReading ?? $1.lastName ?? "")
+                    let cmp = lhs.localizedStandardCompare(rhs) == .orderedAscending
+                    return asc ? cmp : !cmp
+                }
+            }
+            cards = fetched
             detectDuplicates()
             updateFilteredCards()
         } catch {
@@ -118,7 +137,9 @@ class CardListViewModel: ObservableObject {
                         .contains(q) ?? false
                 }
                 return match(card.fullName)
+                    || match(card.fullNameReading)
                     || match(card.company)
+                    || match(card.companyReading)
                     || match(card.title)
                     || match(card.email)
                     || match(card.phone)
@@ -193,7 +214,11 @@ class CardListViewModel: ObservableObject {
     private func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            let name = (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
+            // ふりがながあればそちらを使ってセクション分類（ない場合は漢字）
+            let reading = card.lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+            let name = reading.isEmpty
+                ? (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
+                : reading
             let key = name.isEmpty ? "その他" : sectionKey(for: name)
             buckets[key, default: []].append(card)
         }
@@ -208,8 +233,9 @@ class CardListViewModel: ObservableObject {
         let noCompanyKey = "（会社名なし）"
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            let co = card.company ?? ""
-            let key = co.isEmpty ? noCompanyKey : sectionKey(for: co)
+            // companySortKey（法人格除去・読み優先）でセクション分類
+            let sortKey = card.companySortKey
+            let key = sortKey.isEmpty ? noCompanyKey : sectionKey(for: sortKey)
             buckets[key, default: []].append(card)
         }
         let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()

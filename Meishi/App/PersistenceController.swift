@@ -10,17 +10,41 @@ struct PersistenceController {
     static var preview: PersistenceController = {
         let controller = PersistenceController(inMemory: true)
         let context = controller.container.viewContext
-        // プレビュー用のサンプルデータを1件追加
-        let sample = BusinessCard(context: context)
-        sample.id = UUID()
-        sample.lastName = "山田"
-        sample.firstName = "太郎"
-        sample.company = "株式会社サンプル"
-        sample.title = "営業部長"
-        sample.email = "yamada@example.com"
-        sample.phone = "03-1234-5678"
-        sample.createdAt = Date()
-        sample.updatedAt = Date()
+
+        // サンプルデータ定義
+        // (lastName, lastNameReading, firstName, firstNameReading, company, companyReading, department, title, email, phone)
+        typealias SampleRow = (String, String, String, String, String, String, String, String, String, String)
+        let samples: [SampleRow] = [
+            // 「やまだ」姓 × 3人（companyReading はフル読み。ソート時のみ法人格を除去）
+            ("山田", "やまだ", "太郎", "たろう",   "株式会社テックビジョン",     "かぶしきがいしゃてっくびじょん",       "営業部",          "営業部長",         "yamada.taro@techvision.co.jp",   "03-1234-5678"),
+            ("山田", "やまだ", "花子", "はなこ",   "グローバル商事株式会社",     "ぐろーばるしょうじかぶしきがいしゃ",   "人事部",          "人事マネージャー", "yamada.h@global-shoji.co.jp",    "06-2345-6789"),
+            ("山田", "やまだ", "健一", "けんいち",  "株式会社テックビジョン",     "かぶしきがいしゃてっくびじょん",       "開発部",          "シニアエンジニア", "yamada.k@techvision.co.jp",      "03-1234-9999"),
+            // 「さとう」姓 × 2人
+            ("佐藤", "さとう", "誠",  "まこと",   "グローバル商事株式会社",     "ぐろーばるしょうじかぶしきがいしゃ",   "営業部",          "営業課長",         "sato.m@global-shoji.co.jp",      "06-2345-0001"),
+            ("佐藤", "さとう", "美咲", "みさき",   "有限会社クリエイティブラボ", "ゆうげんがいしゃくりえいてぃぶらぼ",   "デザイン室",      "デザイナー",       "sato.misaki@creative-lab.jp",    "090-3456-7890"),
+            // その他
+            ("鈴木", "すずき", "一郎", "いちろう",  "有限会社クリエイティブラボ", "ゆうげんがいしゃくりえいてぃぶらぼ",   "企画室",          "プロデューサー",   "suzuki@creative-lab.jp",         "090-9876-5432"),
+            ("田中", "たなか", "由美", "ゆみ",     "株式会社テックビジョン",     "かぶしきがいしゃてっくびじょん",       "マーケティング部", "ディレクター",     "tanaka.y@techvision.co.jp",      "03-1234-1111"),
+            ("中村", "なかむら", "剛", "つよし",   "グローバル商事株式会社",     "ぐろーばるしょうじかぶしきがいしゃ",   "経理部",          "取締役CFO",        "nakamura@global-shoji.co.jp",    "06-2345-9999"),
+        ]
+
+        for (i, s) in samples.enumerated() {
+            let card = BusinessCard(context: context)
+            card.id               = UUID()
+            card.lastName         = s.0
+            card.lastNameReading  = s.1
+            card.firstName        = s.2
+            card.firstNameReading = s.3
+            card.company          = s.4
+            card.companyReading   = s.5
+            card.department       = s.6
+            card.title            = s.7
+            card.email            = s.8
+            card.phone            = s.9
+            card.createdAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
+            card.updatedAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
+        }
+
         try? context.save()
         return controller
     }()

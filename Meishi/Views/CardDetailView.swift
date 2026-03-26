@@ -21,6 +21,11 @@ struct CardDetailView: View {
                 HStack(spacing: 14) {
                     avatarView
                     VStack(alignment: .leading, spacing: 3) {
+                        if !card.fullNameReading.isEmpty {
+                            Text(card.fullNameReading)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
                             .font(.title3.bold())
                         if let company = card.company, !company.isEmpty {

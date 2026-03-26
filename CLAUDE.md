@@ -117,7 +117,7 @@ meishi-app/
 
 ---
 
-## CoreData スキーマ（v2 現在）
+## CoreData スキーマ（v3 現在）
 
 エンティティ名：`BusinessCard`
 
@@ -125,9 +125,12 @@ meishi-app/
 |---|---|---|
 | id | UUID | 主キー |
 | lastName | String | 姓 |
+| lastNameReading | String | **姓読み（v3で追加）** |
 | firstName | String | 名 |
+| firstNameReading | String | **名読み（v3で追加）** |
 | company | String | 会社名 |
-| department | String | **部署（v2で追加）** |
+| companyReading | String | **会社名読み（v3で追加）** |
+| department | String | 部署（v2で追加） |
 | title | String | 役職 |
 | email | String | メールアドレス |
 | phone | String | 電話番号 |
@@ -138,7 +141,8 @@ meishi-app/
 | createdAt | Date | 登録日時 |
 | updatedAt | Date | 更新日時 |
 
-- スキーマは `BusinessCard 2.xcdatamodel`（v2）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 を自動対応
+- スキーマは `BusinessCard 3.xcdatamodel`（v3）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1→v2→v3 を自動対応
+- `companySortKey` 計算プロパティ：読みがあればそこから、なければ漢字名から株式会社・合同会社等を前後問わず除去してソートキーを返す
 - **スキーマを変更する場合：** `.xcdatamodeld` に新バージョンを追加し、軽量マイグレーション可能な変更（属性追加・省略可能化など）にとどめる。破壊的変更は Custom Migration が必要
 
 ---
@@ -146,6 +150,7 @@ meishi-app/
 ## 実装済み機能
 
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
+- ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
 - カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
 - Qwen2.5-0.5B CoreML 推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM名前・役職判定・10秒タイムアウト・stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）
