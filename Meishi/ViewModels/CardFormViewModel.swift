@@ -169,20 +169,36 @@ class CardFormViewModel: ObservableObject {
             return
         }
 
-        // --- 未分類行のみ Foundation Models に送る ---
+        // --- 未分類行 + 既知フィールドのコンテキストを Foundation Models に送る ---
         let unclassifiedText = ruleResult.unclassifiedLines.joined(separator: "\n")
-        let companyHint = base.company.isEmpty ? "" : "会社名「\(base.company)」は判明済みです。"
+        var knownFields: [String] = []
+        if !base.company.isEmpty    { knownFields.append("会社名: \(base.company)") }
+        if !base.department.isEmpty { knownFields.append("部署: \(base.department)") }
+        if !base.title.isEmpty      { knownFields.append("役職: \(base.title)") }
+        if !base.email.isEmpty      { knownFields.append("メール: \(base.email)") }
+        if !base.phones.isEmpty     { knownFields.append("電話: \(base.phones.joined(separator: ", "))") }
+        if !base.address.isEmpty    { knownFields.append("住所: \(base.address)") }
+        if !base.website.isEmpty    { knownFields.append("Web: \(base.website)") }
+        let knownContext = knownFields.isEmpty ? "" : "\n以下は既に判明済みのフィールドです（変更不要）:\n\(knownFields.joined(separator: "\n"))\n"
+
         let session = LanguageModelSession()
-        let prompt = "以下は名刺の未分類テキストです。\(companyHint)姓と名は必ず分けてください。\n\(unclassifiedText)"
+        let prompt = """
+        以下は名刺から読み取ったテキストのうち、まだ分類されていない行です。\(knownContext)
+        未分類テキストから姓・名・会社名・部署・役職を特定してください。姓と名は必ず分けてください。判明済みのフィールドはそのまま返してください。
+
+        未分類テキスト:
+        \(unclassifiedText)
+        """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         let p = response.content
 
-        // --- マージ: LLM結果で未確定フィールドを補完 ---
+        // --- マージ: ルールベースの確定結果を優先、LLMで未確定フィールドを補完 ---
         if !p.lastName.isEmpty  { base.lastName  = p.lastName }
         if !p.firstName.isEmpty { base.firstName = p.firstName }
-        if base.company.isEmpty && !p.company.isEmpty { base.company = p.company }
-        if !p.department.isEmpty { base.department = p.department }
-        if !p.title.isEmpty     { base.title     = p.title }
+        if base.company.isEmpty && !p.company.isEmpty       { base.company    = p.company }
+        if base.department.isEmpty && !p.department.isEmpty  { base.department = p.department }
+        if base.title.isEmpty && !p.title.isEmpty            { base.title      = p.title }
+        // email, phone, address, website はルールベースの結果を常に優先
         apply(base)
     }
 
