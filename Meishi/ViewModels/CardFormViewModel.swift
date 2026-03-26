@@ -224,9 +224,9 @@ class CardFormViewModel: ObservableObject {
         let firstR   = parsed.firstNameReading.isEmpty
             ? Self.generateReading(from: parsed.firstName)
             : parsed.firstNameReading
-        // 会社名読みはフル社名から生成（法人格の除去はソートキー生成時のみ）
+        // 会社名読みは法人格を除いた読みで保存する
         let companyR = parsed.companyReading.isEmpty
-            ? Self.generateReading(from: parsed.company)
+            ? BusinessCard.stripLegalEntityReading(from: Self.generateReading(from: parsed.company))
             : parsed.companyReading
         apply(lastName: parsed.lastName, lastNameReading: lastR,
               firstName: parsed.firstName, firstNameReading: firstR,

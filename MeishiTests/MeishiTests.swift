@@ -15,8 +15,11 @@ private func makeTestContext() -> NSManagedObjectContext {
 private func makeCard(
     context: NSManagedObjectContext,
     lastName: String? = nil,
+    lastNameReading: String? = nil,
     firstName: String? = nil,
+    firstNameReading: String? = nil,
     company: String? = nil,
+    companyReading: String? = nil,
     department: String? = nil,
     title: String? = nil,
     email: String? = nil,
@@ -26,19 +29,22 @@ private func makeCard(
     notes: String? = nil
 ) -> BusinessCard {
     let card = BusinessCard(context: context)
-    card.id         = UUID()
-    card.lastName   = lastName
-    card.firstName  = firstName
-    card.company    = company
-    card.department = department
-    card.title      = title
-    card.email      = email
-    card.phone      = phone
-    card.address    = address
-    card.website    = website
-    card.notes      = notes
-    card.createdAt  = Date()
-    card.updatedAt  = Date()
+    card.id               = UUID()
+    card.lastName         = lastName
+    card.lastNameReading  = lastNameReading
+    card.firstName        = firstName
+    card.firstNameReading = firstNameReading
+    card.company          = company
+    card.companyReading   = companyReading
+    card.department       = department
+    card.title            = title
+    card.email            = email
+    card.phone            = phone
+    card.address          = address
+    card.website          = website
+    card.notes            = notes
+    card.createdAt        = Date()
+    card.updatedAt        = Date()
     return card
 }
 
@@ -69,17 +75,17 @@ struct BusinessCardPropertiesTests {
     let context = makeTestContext()
 
     @Test func fullNameBothParts() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         #expect(card.fullName == "山田 太郎")
     }
 
     @Test func fullNameLastOnly() {
-        let card = makeCard(context: context, lastName: "山田")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ")
         #expect(card.fullName == "山田")
     }
 
     @Test func fullNameFirstOnly() {
-        let card = makeCard(context: context, firstName: "太郎")
+        let card = makeCard(context: context, firstName: "太郎", firstNameReading: "たろう")
         #expect(card.fullName == "太郎")
     }
 
@@ -89,7 +95,7 @@ struct BusinessCardPropertiesTests {
     }
 
     @Test func fullNameTrimsWhitespace() {
-        let card = makeCard(context: context, lastName: "  山田  ", firstName: "  太郎  ")
+        let card = makeCard(context: context, lastName: "  山田  ", lastNameReading: "やまだ", firstName: "  太郎  ", firstNameReading: "たろう")
         #expect(card.fullName == "山田 太郎")
     }
 
@@ -176,37 +182,37 @@ struct DuplicateCheckerFindTests {
     }
 
     @Test func singleCard() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         #expect(checker.findDuplicates(in: [card]).isEmpty)
     }
 
     @Test func identicalNamesScore1() {
         // 完全一致の名前はスコア 1.0 → 会社名が異なっても重複として検出
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "A社")
-        let b = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "B社")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "A社")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "B社")
         let pairs = checker.findDuplicates(in: [a, b])
         #expect(pairs.count == 1)
         #expect(pairs[0].score == 1.0)
     }
 
     @Test func identicalCardDetected() {
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "テスト株式会社")
-        let b = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "テスト株式会社")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすと")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト株式会社", companyReading: "てすと")
         let pairs = checker.findDuplicates(in: [a, b])
         #expect(!pairs.isEmpty)
         #expect(pairs[0].score >= 0.75)
     }
 
     @Test func lowSimilarityNotDetected() {
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
-        let b = makeCard(context: context, lastName: "佐藤", firstName: "花子")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
+        let b = makeCard(context: context, lastName: "佐藤", lastNameReading: "さとう", firstName: "花子", firstNameReading: "はなこ")
         #expect(checker.findDuplicates(in: [a, b]).isEmpty)
     }
 
     @Test func sortedByScoreDescending() {
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
-        let b = makeCard(context: context, lastName: "山田", firstName: "太郎") // a-b = 1.0
-        let c = makeCard(context: context, lastName: "山田", firstName: "次郎") // a-c, b-c < 1.0
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう") // a-b = 1.0
+        let c = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "次郎", firstNameReading: "じろう") // a-c, b-c < 1.0
         let pairs = checker.findDuplicates(in: [a, b, c])
         guard pairs.count >= 2 else { return }
         #expect(pairs[0].score >= pairs[1].score)
@@ -219,8 +225,8 @@ struct DuplicateCheckerFindTests {
     }
 
     @Test func scoreTextIsPercentage() {
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
-        let b = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let pairs = checker.findDuplicates(in: [a, b])
         #expect(!pairs.isEmpty)
         #expect(pairs[0].scoreText == "100%")
@@ -229,8 +235,8 @@ struct DuplicateCheckerFindTests {
     @Test func weightedScoreMatchesFormula() {
         // 名前類似度 0.8・会社名類似度 1.0 → score = 0.8 * 0.7 + 1.0 * 0.3 = 0.86
         let lowThreshold = DuplicateChecker(threshold: 0.5)
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "テスト")
-        let b = makeCard(context: context, lastName: "山田", firstName: "次郎", company: "テスト")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう", company: "テスト", companyReading: "てすと")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "次郎", firstNameReading: "じろう", company: "テスト", companyReading: "てすと")
         let pairs = lowThreshold.findDuplicates(in: [a, b])
         #expect(!pairs.isEmpty)
         let expectedName = lowThreshold.similarity("山田 太郎", "山田 次郎")
@@ -242,8 +248,8 @@ struct DuplicateCheckerFindTests {
     @Test func customThresholdFilters() {
         // 閾値 1.0 → 完全一致のみ検出
         let strictChecker = DuplicateChecker(threshold: 1.0)
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
-        let b = makeCard(context: context, lastName: "山田", firstName: "次郎")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
+        let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "次郎", firstNameReading: "じろう")
         #expect(strictChecker.findDuplicates(in: [a, b]).isEmpty)
     }
 }
@@ -266,16 +272,17 @@ struct ExportServiceCSVTests {
     }
 
     @Test func singleCardRowCount() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let lines = service.csvString(from: [card]).components(separatedBy: "\n")
         #expect(lines.count == 2)
     }
 
     @Test func rowFieldOrder() {
         // 姓,名,会社名,部署,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎",
-                            company: "テスト株式会社", title: "部長",
-                            email: "yamada@test.co.jp")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ",
+                            firstName: "太郎", firstNameReading: "たろう",
+                            company: "テスト株式会社", companyReading: "てすと",
+                            title: "部長", email: "yamada@test.co.jp")
         let row = service.csvString(from: [card]).components(separatedBy: "\n")[1]
         #expect(row.hasPrefix("山田,太郎,テスト株式会社,,部長,,yamada@test.co.jp"))
     }
@@ -305,21 +312,21 @@ struct ExportServiceCSVTests {
     }
 
     @Test func noEscapeForPlainText() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let csv = service.csvString(from: [card])
         #expect(csv.contains("山田,太郎"))
     }
 
     @Test func multipleCardsMultipleRows() {
-        let a = makeCard(context: context, lastName: "山田")
-        let b = makeCard(context: context, lastName: "田中")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ")
+        let b = makeCard(context: context, lastName: "田中", lastNameReading: "たなか")
         let lines = service.csvString(from: [a, b]).components(separatedBy: "\n")
         // ヘッダー + 2行
         #expect(lines.count == 3)
     }
 
     @Test func departmentIncludedInRow() {
-        let card = makeCard(context: context, company: "テスト株式会社", department: "営業部")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと", department: "営業部")
         let row = service.csvString(from: [card]).components(separatedBy: "\n")[1]
         // 3列目=会社名, 4列目=部署
         let fields = row.components(separatedBy: ",")
@@ -336,7 +343,7 @@ struct ExportServiceVCardTests {
     let context = makeTestContext()
 
     @Test func vCardStructure() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("BEGIN:VCARD"))
         #expect(vcf.contains("VERSION:3.0"))
@@ -344,31 +351,31 @@ struct ExportServiceVCardTests {
     }
 
     @Test func nField() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("N:山田;太郎;;;"))
     }
 
     @Test func fnField() {
-        let card = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("FN:山田 太郎"))
     }
 
     @Test func orgWithDepartment() {
-        let card = makeCard(context: context, company: "テスト株式会社", department: "営業部")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと", department: "営業部")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("ORG:テスト株式会社;営業部"))
     }
 
     @Test func orgWithoutDepartment() {
-        let card = makeCard(context: context, company: "テスト株式会社")
+        let card = makeCard(context: context, company: "テスト株式会社", companyReading: "てすと")
         let vcf = service.vCardString(from: [card])
         #expect(vcf.contains("ORG:テスト株式会社;"))
     }
 
     @Test func noOrgWhenBothEmpty() {
-        let card = makeCard(context: context, lastName: "山田")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ")
         let vcf = service.vCardString(from: [card])
         #expect(!vcf.contains("ORG:"))
     }
@@ -428,8 +435,8 @@ struct ExportServiceVCardTests {
     }
 
     @Test func multipleCards() {
-        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
-        let b = makeCard(context: context, lastName: "田中", firstName: "花子")
+        let a = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "太郎", firstNameReading: "たろう")
+        let b = makeCard(context: context, lastName: "田中", lastNameReading: "たなか", firstName: "花子", firstNameReading: "はなこ")
         let vcf = service.vCardString(from: [a, b])
         let count = vcf.components(separatedBy: "BEGIN:VCARD").count - 1
         #expect(count == 2)
@@ -437,7 +444,7 @@ struct ExportServiceVCardTests {
 
     @Test func omitsEmptyOptionalFields() {
         // 値が空のフィールドは vCard に含まれない
-        let card = makeCard(context: context, lastName: "山田")
+        let card = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ")
         let vcf = service.vCardString(from: [card])
         #expect(!vcf.contains("TITLE:"))
         #expect(!vcf.contains("EMAIL"))

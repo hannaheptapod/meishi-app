@@ -49,16 +49,14 @@ extension BusinessCard {
         return "\(last)\(first)"
     }
 
-    /// 会社名ソート用キー：読みがあればそこから、なければ漢字名から法人格を除去して返す
+    /// 会社名ソート用キー：読みがあればそのまま使用（法人格は読みに含まれない）、なければ漢字名から法人格を除去して返す
     public var companySortKey: String {
         let base = companyReading?.trimmingCharacters(in: .whitespaces) ?? ""
-        if !base.isEmpty {
-            return BusinessCard.stripLegalEntityReading(from: base)
-        }
+        if !base.isEmpty { return base }
         return BusinessCard.stripLegalEntityKanji(from: company ?? "")
     }
 
-    // 法人格（ひらがな表記）をソートキーから除去（前後どちらも対応）
+    // 法人格（ひらがな表記）を読みから除去する（CardFormViewModel での自動生成時に使用）
     static func stripLegalEntityReading(from text: String) -> String {
         let terms = [
             "かぶしきがいしゃ", "ごうどうがいしゃ", "ゆうげんがいしゃ",
