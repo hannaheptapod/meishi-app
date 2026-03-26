@@ -22,7 +22,7 @@ struct CardListView: View {
                     cardList
                 }
             }
-            .navigationTitle("名刺")
+            .navigationBarHidden(true)
             .safeAreaInset(edge: .bottom) {
                 bottomBar
             }
@@ -205,15 +205,40 @@ struct CardListView: View {
 
     private var cardList: some View {
         List {
-            ForEach(viewModel.filteredCards) { card in
-                NavigationLink {
-                    CardDetailView(card: card)
-                } label: {
-                    CardRowView(card: card)
+            if viewModel.isSearchActive {
+                // 検索中はフラット表示
+                ForEach(viewModel.filteredCards) { card in
+                    NavigationLink {
+                        CardDetailView(card: card)
+                    } label: {
+                        CardRowView(card: card)
+                    }
                 }
-            }
-            .onDelete { offsets in
-                viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
+                .onDelete { offsets in
+                    viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
+                }
+            } else {
+                // ソート順に応じたセクション表示
+                ForEach(viewModel.groupedCards) { section in
+                    Section {
+                        ForEach(section.cards) { card in
+                            NavigationLink {
+                                CardDetailView(card: card)
+                            } label: {
+                                CardRowView(card: card)
+                            }
+                        }
+                        .onDelete { offsets in
+                            viewModel.deleteCards(offsets.map { section.cards[$0] })
+                        }
+                    } header: {
+                        Text(section.title)
+                            .font(.footnote)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .textCase(nil)
+                    }
+                }
             }
         }
         .listStyle(.plain)
