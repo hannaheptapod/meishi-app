@@ -12,19 +12,20 @@ struct PersistenceController {
         let context = controller.container.viewContext
 
         // サンプルデータ定義
-        // (lastName, lastNameReading, firstName, firstNameReading, company, department, title, email, phone)
-        let samples: [(String, String, String, String, String, String, String, String, String)] = [
+        // (lastName, lastNameReading, firstName, firstNameReading, company, companyReading, department, title, email, phone)
+        typealias SampleRow = (String, String, String, String, String, String, String, String, String, String)
+        let samples: [SampleRow] = [
             // 「やまだ」姓 × 3人
-            ("山田", "やまだ", "太郎", "たろう",   "株式会社テックビジョン", "営業部",     "営業部長",   "yamada.taro@techvision.co.jp",   "03-1234-5678"),
-            ("山田", "やまだ", "花子", "はなこ",   "グローバル商事株式会社", "人事部",     "人事マネージャー", "yamada.h@global-shoji.co.jp", "06-2345-6789"),
-            ("山田", "やまだ", "健一", "けんいち",  "株式会社テックビジョン", "開発部",     "シニアエンジニア", "yamada.k@techvision.co.jp",   "03-1234-9999"),
+            ("山田", "やまだ", "太郎", "たろう",   "株式会社テックビジョン",   "てっくびじょん",     "営業部",          "営業部長",         "yamada.taro@techvision.co.jp",   "03-1234-5678"),
+            ("山田", "やまだ", "花子", "はなこ",   "グローバル商事株式会社",   "ぐろーばるしょうじ", "人事部",          "人事マネージャー", "yamada.h@global-shoji.co.jp",    "06-2345-6789"),
+            ("山田", "やまだ", "健一", "けんいち",  "株式会社テックビジョン",   "てっくびじょん",     "開発部",          "シニアエンジニア", "yamada.k@techvision.co.jp",      "03-1234-9999"),
             // 「さとう」姓 × 2人
-            ("佐藤", "さとう", "誠",  "まこと",   "グローバル商事株式会社", "営業部",     "営業課長",   "sato.m@global-shoji.co.jp",      "06-2345-0001"),
-            ("佐藤", "さとう", "美咲", "みさき",   "有限会社クリエイティブラボ", "デザイン室", "デザイナー", "sato.misaki@creative-lab.jp",    "090-3456-7890"),
+            ("佐藤", "さとう", "誠",  "まこと",   "グローバル商事株式会社",   "ぐろーばるしょうじ", "営業部",          "営業課長",         "sato.m@global-shoji.co.jp",      "06-2345-0001"),
+            ("佐藤", "さとう", "美咲", "みさき",   "有限会社クリエイティブラボ", "くりえいてぃぶらぼ", "デザイン室",      "デザイナー",       "sato.misaki@creative-lab.jp",    "090-3456-7890"),
             // その他
-            ("鈴木", "すずき", "一郎", "いちろう",  "有限会社クリエイティブラボ", "企画室",  "プロデューサー", "suzuki@creative-lab.jp",        "090-9876-5432"),
-            ("田中", "たなか", "由美", "ゆみ",     "株式会社テックビジョン", "マーケティング部", "ディレクター", "tanaka.y@techvision.co.jp",  "03-1234-1111"),
-            ("中村", "なかむら", "剛", "つよし",   "グローバル商事株式会社", "経理部",     "取締役CFO",  "nakamura@global-shoji.co.jp",     "06-2345-9999"),
+            ("鈴木", "すずき", "一郎", "いちろう",  "有限会社クリエイティブラボ", "くりえいてぃぶらぼ", "企画室",          "プロデューサー",   "suzuki@creative-lab.jp",         "090-9876-5432"),
+            ("田中", "たなか", "由美", "ゆみ",     "株式会社テックビジョン",   "てっくびじょん",     "マーケティング部", "ディレクター",     "tanaka.y@techvision.co.jp",      "03-1234-1111"),
+            ("中村", "なかむら", "剛", "つよし",   "グローバル商事株式会社",   "ぐろーばるしょうじ", "経理部",          "取締役CFO",        "nakamura@global-shoji.co.jp",    "06-2345-9999"),
         ]
 
         for (i, s) in samples.enumerated() {
@@ -35,10 +36,11 @@ struct PersistenceController {
             card.firstName        = s.2
             card.firstNameReading = s.3
             card.company          = s.4
-            card.department       = s.5
-            card.title            = s.6
-            card.email            = s.7
-            card.phone            = s.8
+            card.companyReading   = s.5
+            card.department       = s.6
+            card.title            = s.7
+            card.email            = s.8
+            card.phone            = s.9
             card.createdAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
             card.updatedAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
         }

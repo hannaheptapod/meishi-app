@@ -68,20 +68,27 @@ class CardListViewModel: ObservableObject {
                 NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: true)
             ]
         case .companyAscending:
+            // companySortKey（法人格除去・読み優先）は Swift 側でソート
             request.sortDescriptors = [
-                NSSortDescriptor(keyPath: \BusinessCard.company,   ascending: true),
-                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true)
+                NSSortDescriptor(keyPath: \BusinessCard.company,  ascending: true),
+                NSSortDescriptor(keyPath: \BusinessCard.lastName, ascending: true)
             ]
         }
         do {
             var fetched = try context.fetch(request)
-            // 名前順はふりがな優先でSwift側ソート
+            // 名前順・会社名順はふりがな / companySortKey 優先で Swift 側ソート
             if sortOrder == .nameAscending {
                 fetched.sort {
                     let lhs = ($0.lastNameReading?.isEmpty == false ? $0.lastNameReading! : $0.lastName ?? "")
                            + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
                     let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
                            + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
+                    return lhs.localizedStandardCompare(rhs) == .orderedAscending
+                }
+            } else if sortOrder == .companyAscending {
+                fetched.sort {
+                    let lhs = $0.companySortKey + ($0.lastNameReading ?? $0.lastName ?? "")
+                    let rhs = $1.companySortKey + ($1.lastNameReading ?? $1.lastName ?? "")
                     return lhs.localizedStandardCompare(rhs) == .orderedAscending
                 }
             }
@@ -102,6 +109,7 @@ class CardListViewModel: ObservableObject {
             card.fullName.lowercased().contains(q)
             || card.fullNameReading.lowercased().contains(q)
             || (card.company?.lowercased().contains(q) ?? false)
+            || (card.companyReading?.lowercased().contains(q) ?? false)
             || (card.title?.lowercased().contains(q) ?? false)
             || (card.email?.lowercased().contains(q) ?? false)
         }

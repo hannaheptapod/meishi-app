@@ -14,6 +14,7 @@ struct CardFieldClassifier {
         var firstName: String = ""
         var firstNameReading: String = ""
         var company: String = ""
+        var companyReading: String = ""
         var department: String = ""
         var title: String = ""
         var phones: [String] = []

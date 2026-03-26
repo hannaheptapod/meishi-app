@@ -3,6 +3,7 @@
     <entity name="BusinessCard" representedClassName="BusinessCard" syncable="YES" codeGenerationType="none">
         <attribute name="address" optional="YES" attributeType="String"/>
         <attribute name="company" optional="YES" attributeType="String"/>
+        <attribute name="companyReading" optional="YES" attributeType="String"/>
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="department" optional="YES" attributeType="String"/>
         <attribute name="email" optional="YES" attributeType="String"/>

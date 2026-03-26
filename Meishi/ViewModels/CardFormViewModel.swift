@@ -12,6 +12,7 @@ class CardFormViewModel: ObservableObject {
     @Published var firstName: String = ""
     @Published var firstNameReading: String = ""
     @Published var company: String = ""
+    @Published var companyReading: String = ""
     @Published var department: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
@@ -73,7 +74,8 @@ class CardFormViewModel: ObservableObject {
         lastNameReading = card.lastNameReading ?? ""
         firstName       = card.firstName       ?? ""
         firstNameReading = card.firstNameReading ?? ""
-        company    = card.company    ?? ""
+        company        = card.company        ?? ""
+        companyReading = card.companyReading ?? ""
         department = card.department ?? ""
         title      = card.title      ?? ""
         email     = card.email     ?? ""
@@ -176,7 +178,9 @@ class CardFormViewModel: ObservableObject {
               lastNameReading: Self.generateReading(from: p.lastName),
               firstName: p.firstName,
               firstNameReading: Self.generateReading(from: p.firstName),
-              company: p.company, department: p.department, title: p.title,
+              company: p.company,
+              companyReading: Self.generateReading(from: BusinessCard.stripLegalEntityKanji(from: p.company)),
+              department: p.department, title: p.title,
               phones: p.phone.isEmpty ? [] : [p.phone],
               email: p.email, address: p.address, website: p.website)
     }
@@ -216,29 +220,34 @@ class CardFormViewModel: ObservableObject {
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
     private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
-        // 読み仮名：ParsedCard に含まれていなければ自動生成
-        let lastR  = parsed.lastNameReading.isEmpty
+        let lastR    = parsed.lastNameReading.isEmpty
             ? Self.generateReading(from: parsed.lastName)
             : parsed.lastNameReading
-        let firstR = parsed.firstNameReading.isEmpty
+        let firstR   = parsed.firstNameReading.isEmpty
             ? Self.generateReading(from: parsed.firstName)
             : parsed.firstNameReading
+        // 会社名読みは法人格を除いたコア名から生成
+        let companyR = parsed.companyReading.isEmpty
+            ? Self.generateReading(from: BusinessCard.stripLegalEntityKanji(from: parsed.company))
+            : parsed.companyReading
         apply(lastName: parsed.lastName, lastNameReading: lastR,
               firstName: parsed.firstName, firstNameReading: firstR,
-              company: parsed.company, department: parsed.department,
-              title: parsed.title, phones: parsed.phones,
+              company: parsed.company, companyReading: companyR,
+              department: parsed.department, title: parsed.title, phones: parsed.phones,
               email: parsed.email, address: parsed.address, website: parsed.website)
     }
 
     private func apply(lastName: String, lastNameReading: String = "",
                        firstName: String, firstNameReading: String = "",
-                       company: String, department: String, title: String,
+                       company: String, companyReading: String = "",
+                       department: String, title: String,
                        phones: [String], email: String, address: String, website: String) {
-        self.lastName        = lastName
-        self.lastNameReading = lastNameReading
-        self.firstName       = firstName
+        self.lastName         = lastName
+        self.lastNameReading  = lastNameReading
+        self.firstName        = firstName
         self.firstNameReading = firstNameReading
-        self.company    = company
+        self.company          = company
+        self.companyReading   = companyReading
         self.department = department
         self.title      = title
         self.phones     = phones.isEmpty ? [""] : phones
@@ -305,7 +314,8 @@ class CardFormViewModel: ObservableObject {
         target.lastNameReading = lastNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
         target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.company    = company.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.company        = company.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.companyReading = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
         target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
