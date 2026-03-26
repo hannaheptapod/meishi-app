@@ -104,15 +104,17 @@ class CardListViewModel: ObservableObject {
                            + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
                     let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
                            + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
-                    let cmp = lhs.localizedStandardCompare(rhs) == .orderedAscending
-                    return asc ? cmp : !cmp
+                    return asc
+                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
+                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
                 }
             } else if sortKey == .company {
                 fetched.sort {
                     let lhs = $0.companySortKey + ($0.lastNameReading ?? $0.lastName ?? "")
                     let rhs = $1.companySortKey + ($1.lastNameReading ?? $1.lastName ?? "")
-                    let cmp = lhs.localizedStandardCompare(rhs) == .orderedAscending
-                    return asc ? cmp : !cmp
+                    return asc
+                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
+                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
                 }
             }
             cards = fetched

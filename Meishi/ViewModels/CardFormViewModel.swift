@@ -2,7 +2,7 @@ import Foundation
 import CoreData
 import Combine
 import UIKit
-import FoundationModels
+// import FoundationModels  // フレームワーク未リンクのためコメントアウト
 
 // 名刺の新規作成・編集フォームのViewModel
 class CardFormViewModel: ObservableObject {
@@ -106,18 +106,12 @@ class CardFormViewModel: ObservableObject {
 
             switch SettingsStore.shared.readingMethod {
             case .automatic:
-                if #available(iOS 18.0, *) {
-                    await populateWithFoundationModels(lines: lines)
-                } else {
-                    populateWithClassifier(lines: lines)
-                }
+                // FoundationModels 未リンクのため LocalLLM → Classifier にフォールバック
+                await populateWithLocalLLMOrClassifier(lines: lines)
             case .appleIntelligence:
-                if #available(iOS 18.0, *) {
-                    await populateWithFoundationModelsOnly(lines: lines)
-                } else {
-                    ocrErrorMessage = "Apple Intelligence はこのデバイスでは利用できません。標準読み取りで処理しました。"
-                    populateWithClassifier(lines: lines)
-                }
+                // FoundationModels 未リンクのため Classifier で代替
+                ocrErrorMessage = "Apple Intelligence は現在利用できません。標準読み取りで処理しました。"
+                populateWithClassifier(lines: lines)
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
                 await populateWithLocalLLMOnly(lines: lines)
@@ -132,81 +126,61 @@ class CardFormViewModel: ObservableObject {
     }
 
     // 自動モード: Foundation Models → Classifier の順にフォールバック
-    @available(iOS 18.0, *)
-    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            do {
-                try await runFoundationModels(lines: lines)
-            } catch {
-                populateWithClassifier(lines: lines)
-            }
-        default:
-            populateWithClassifier(lines: lines)
-        }
-    }
+    // FoundationModels framework 未リンクのためコメントアウト
+//    @available(iOS 18.0, *)
+//    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
+//        switch SystemLanguageModel.default.availability {
+//        case .available:
+//            do {
+//                try await runFoundationModels(lines: lines)
+//            } catch {
+//                populateWithClassifier(lines: lines)
+//            }
+//        default:
+//            populateWithClassifier(lines: lines)
+//        }
+//    }
 
     // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
-    @available(iOS 18.0, *)
-    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            do {
-                try await runFoundationModels(lines: lines)
-            } catch {
-                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
-                populateWithClassifier(lines: lines)
-            }
-        default:
-            ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
-            populateWithClassifier(lines: lines)
-        }
-    }
+    // FoundationModels framework 未リンクのためコメントアウト
+//    @available(iOS 18.0, *)
+//    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
+//        switch SystemLanguageModel.default.availability {
+//        case .available:
+//            do {
+//                try await runFoundationModels(lines: lines)
+//            } catch {
+//                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
+//                populateWithClassifier(lines: lines)
+//            }
+//        default:
+//            ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
+//            populateWithClassifier(lines: lines)
+//        }
+//    }
 
-    @available(iOS 18.0, *)
-    private func runFoundationModels(lines: [RecognizedLine]) async throws {
-        // --- ルールベース（座標情報活用）で確実なフィールドを先に抽出 ---
-        let ruleResult = classifier.classifyStructuredFields(lines: lines)
-        var base = ruleResult.parsed
-
-        if ruleResult.unclassifiedLines.isEmpty {
-            // 全フィールドがルールで解決済み → LLM不要
-            apply(base)
-            return
-        }
-
-        // --- 未分類行 + 既知フィールドのコンテキストを Foundation Models に送る ---
-        let unclassifiedText = ruleResult.unclassifiedLines.joined(separator: "\n")
-        var knownFields: [String] = []
-        if !base.company.isEmpty    { knownFields.append("会社名: \(base.company)") }
-        if !base.department.isEmpty { knownFields.append("部署: \(base.department)") }
-        if !base.title.isEmpty      { knownFields.append("役職: \(base.title)") }
-        if !base.email.isEmpty      { knownFields.append("メール: \(base.email)") }
-        if !base.phones.isEmpty     { knownFields.append("電話: \(base.phones.joined(separator: ", "))") }
-        if !base.address.isEmpty    { knownFields.append("住所: \(base.address)") }
-        if !base.website.isEmpty    { knownFields.append("Web: \(base.website)") }
-        let knownContext = knownFields.isEmpty ? "" : "\n以下は既に判明済みのフィールドです（変更不要）:\n\(knownFields.joined(separator: "\n"))\n"
-
-        let session = LanguageModelSession()
-        let prompt = """
-        以下は名刺から読み取ったテキストのうち、まだ分類されていない行です。\(knownContext)
-        未分類テキストから姓・名・会社名・部署・役職を特定してください。姓と名は必ず分けてください。判明済みのフィールドはそのまま返してください。
-
-        未分類テキスト:
-        \(unclassifiedText)
-        """
-        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-        let p = response.content
-
-        // --- マージ: ルールベースの確定結果を優先、LLMで未確定フィールドを補完 ---
-        if !p.lastName.isEmpty  { base.lastName  = p.lastName }
-        if !p.firstName.isEmpty { base.firstName = p.firstName }
-        if base.company.isEmpty && !p.company.isEmpty       { base.company    = p.company }
-        if base.department.isEmpty && !p.department.isEmpty  { base.department = p.department }
-        if base.title.isEmpty && !p.title.isEmpty            { base.title      = p.title }
-        // email, phone, address, website はルールベースの結果を常に優先
-        apply(base)
-    }
+    // FoundationModels framework 未リンクのためコメントアウト
+//    @available(iOS 18.0, *)
+//    private func runFoundationModels(lines: [RecognizedLine]) async throws {
+//        let rawText = lines.map { $0.text }.joined(separator: "\n")
+//        let session = LanguageModelSession()
+//        let prompt = """
+//            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
+//            姓と名は必ず分けてください。
+//            \(rawText)
+//            """
+//        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
+//        let p = response.content
+//        apply(lastName: p.lastName,
+//              lastNameReading: Self.generateReading(from: p.lastName),
+//              firstName: p.firstName,
+//              firstNameReading: Self.generateReading(from: p.firstName),
+//              company: p.company,
+//              companyReading: Self.generateReading(from: p.company),
+//              department: p.department, title: p.title,
+//              phones: p.phone.isEmpty ? [] : [p.phone],
+//              email: p.email, address: p.address, website: p.website)
+//    }
 
     // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
     // LLMが失敗してもルールベース結果が返るため、完全な失敗は「モデル未ロード」のみ
@@ -264,8 +238,8 @@ class CardFormViewModel: ObservableObject {
     private func apply(lastName: String, lastNameReading: String = "",
                        firstName: String, firstNameReading: String = "",
                        company: String, companyReading: String = "",
-                       department: String, title: String, phones: [String],
-                       email: String, address: String, website: String) {
+                       department: String, title: String,
+                       phones: [String], email: String, address: String, website: String) {
         self.lastName         = lastName
         self.lastNameReading  = lastNameReading
         self.firstName        = firstName
@@ -290,7 +264,7 @@ class CardFormViewModel: ObservableObject {
         // ひらがな・カタカナのみなら変換不要でそのまま返す（カタカナはひらがなへ）
         if trimmed.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) || $0.value == 0x20 || $0.value == 0x3000 }) {
             let mutable = NSMutableString(string: trimmed)
-            CFStringTransform(mutable, nil, kCFStringTransformToHiragana, false)
+            CFStringTransform(mutable, nil, kCFStringTransformHiraganaKatakana, true)
             return mutable as String
         }
 
@@ -362,16 +336,16 @@ class CardFormViewModel: ObservableObject {
 }
 
 // MARK: - ParsedCard（Foundation Models @Generable 定義）
-
-@Generable
-struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
-    @Guide(description: "名（ファーストネーム）")          var firstName: String
-    @Guide(description: "会社名")                          var company: String
-    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
-    @Guide(description: "役職（部長・Directorなど）")      var title: String
-    @Guide(description: "電話番号")                        var phone: String
-    @Guide(description: "メールアドレス")                  var email: String
-    @Guide(description: "住所")                            var address: String
-    @Guide(description: "WebサイトURL")                   var website: String
-}
+// FoundationModels framework 未リンクのためコメントアウト
+//@Generable
+//struct ParsedCard {
+//    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
+//    @Guide(description: "名（ファーストネーム）")          var firstName: String
+//    @Guide(description: "会社名")                          var company: String
+//    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
+//    @Guide(description: "役職（部長・Directorなど）")      var title: String
+//    @Guide(description: "電話番号")                        var phone: String
+//    @Guide(description: "メールアドレス")                  var email: String
+//    @Guide(description: "住所")                            var address: String
+//    @Guide(description: "WebサイトURL")                   var website: String
+//}
