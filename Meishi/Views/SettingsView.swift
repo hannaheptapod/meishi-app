@@ -95,6 +95,7 @@ struct SettingsView: View {
                     .padding(.leading, 4)
             }
         }
+        .foregroundStyle(.primary)
         .contentShape(Rectangle())
         .onTapGesture {
             settings.readingMethod = method
@@ -115,16 +116,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             } else if llm.isModelAvailable {
-                HStack(spacing: 8) {
-                    Text("利用可能").foregroundStyle(.green)
-                    Button(role: .destructive) {
-                        showDeleteModelConfirm = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.red)
-                }
+                Text("利用可能").foregroundStyle(.green)
             } else {
                 HStack(spacing: 8) {
                     Text("未取得").foregroundStyle(.secondary)
@@ -149,9 +141,19 @@ struct SettingsView: View {
                     .padding(.leading, 4)
             }
         }
+        .foregroundStyle(.primary)
         .contentShape(Rectangle())
         .onTapGesture {
             settings.readingMethod = .localLLM
+        }
+        .swipeActions(edge: .trailing) {
+            if llm.isModelAvailable {
+                Button(role: .destructive) {
+                    showDeleteModelConfirm = true
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+            }
         }
         .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
             Button("削除", role: .destructive) {
