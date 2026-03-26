@@ -174,7 +174,8 @@ class CardFormViewModel: ObservableObject {
               email: p.email, address: p.address, website: p.website)
     }
 
-    // 明示指定モード: AIアシストのみ（未取得・失敗時はエラー表示 + Classifier）
+    // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
+    // LLMが失敗してもルールベース結果が返るため、完全な失敗は「モデル未ロード」のみ
     private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
         guard LocalLLMService.shared.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
@@ -189,7 +190,7 @@ class CardFormViewModel: ObservableObject {
         }
     }
 
-    // 自動モード: LocalLLM → Classifier のフォールバック
+    // 自動モード: LocalLLM（ハイブリッド） → Classifier のフォールバック
     private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
         if !LocalLLMService.shared.isModelAvailable {
             shouldPromptLLMDownload = true

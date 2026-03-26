@@ -52,7 +52,48 @@ struct CardFieldClassifier {
         "Executive", "Officer", "Head of", "VP ", "Vice President"
     ]
 
-    // MARK: - 分類エントリポイント
+    // MARK: - ルールベース前段処理（ハイブリッド方式用）
+
+    /// Pass1のみ実行: 正規表現で確実に分類できるフィールド（email, phone, URL, 住所, 会社, 部署, 役職）を抽出し、
+    /// 未分類行のテキスト配列とともに返す。LLMは未分類行から名前等を判定する。
+    struct StructuredFieldsResult {
+        var parsed: ParsedCard
+        var unclassifiedLines: [String]
+    }
+
+    func classifyStructuredFields(lines: [String]) -> StructuredFieldsResult {
+        var result = ParsedCard()
+        var unclassified: [String] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if result.email.isEmpty, let email = extractEmail(from: trimmed) {
+                result.email = email
+            } else if let phone = extractPhone(from: trimmed) {
+                result.phones.append(phone)
+            } else if result.website.isEmpty, let url = extractURL(from: trimmed) {
+                result.website = url
+            } else if result.address.isEmpty, isAddress(trimmed) {
+                result.address = trimmed
+            } else if result.company.isEmpty, isCompany(trimmed) {
+                result.company = trimmed.trimmingCharacters(in: .whitespaces)
+            } else if isDepartment(trimmed) {
+                result.department = result.department.isEmpty
+                    ? trimmed
+                    : result.department + " " + trimmed
+            } else if result.title.isEmpty, isJobTitle(trimmed) {
+                result.title = trimmed
+            } else {
+                unclassified.append(trimmed)
+            }
+        }
+
+        return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassified)
+    }
+
+    // MARK: - 分類エントリポイント（従来API: 全フィールド分類）
 
     func classify(lines: [RecognizedLine]) -> ParsedCard {
         var result = ParsedCard()

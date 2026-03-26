@@ -65,7 +65,7 @@ Tier 3: CardFieldClassifier（正規表現・常時利用可能）
 
 - `automatic`（デフォルト）/ `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
 - **Tier 1**：`@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。FoundationModels framework 未リンクのためコメントアウト中（`CardFormViewModel.populateFromOCR` 内）。リンク後 `import FoundationModels` を追加して有効化
-- **Tier 2**：ChatML プロンプト → JSON パース。`isInferencing` フラグで二重実行を防止。JSON括弧カウントによる早期終了・途中打ち切り時の補完を実装。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
+- **Tier 2**：ハイブリッド方式（`CardFieldClassifier.classifyStructuredFields` でメール・電話・URL・住所・会社・部署・役職をルール抽出 → 未分類行のみ簡潔な ChatML プロンプトで LLM に名前・役職・部署を問う → 結果マージ）。10秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=80`。iOS 18+ は `MLState` による stateful KV キャッシュで高速化
 - **Tier 3**：2パス方式（パス1：メール・電話・URL・住所・会社名・役職を正規表現抽出。パス2：残り行から氏名推定・姓名分割）
 
 ---
@@ -146,7 +146,7 @@ meishi-app/
 
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
 - カメラ撮影 → OCR → AI意味分析（3段階カスケード）によるフィールド自動分類
-- Qwen2.5-0.5B CoreML 推論（stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
+- Qwen2.5-0.5B CoreML 推論（ハイブリッド方式: ルールベース前段抽出 + LLM名前・役職判定・10秒タイムアウト・stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）
 - iPhoneの連絡先へのエクスポート（CNContactStore）
 - 連絡先からインポート（`ellipsisMenu` 経由・確認ダイアログ付き・空エントリスキップ）

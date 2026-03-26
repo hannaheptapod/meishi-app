@@ -689,6 +689,90 @@ struct CausalMaskTests {
     }
 }
 
+// MARK: - CardFieldClassifier StructuredFields テスト
+
+struct StructuredFieldsTests {
+
+    let classifier = CardFieldClassifier()
+
+    @Test func extractsEmailAndPhone() {
+        let lines = ["山田 太郎", "test@example.com", "090-1234-5678"]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.parsed.email == "test@example.com")
+        #expect(result.parsed.phones.contains("090-1234-5678"))
+        // 名前行は未分類に残る
+        #expect(result.unclassifiedLines.contains("山田 太郎"))
+    }
+
+    @Test func extractsCompanyAndDepartment() {
+        let lines = ["株式会社テスト", "営業部", "山田太郎"]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.parsed.company == "株式会社テスト")
+        #expect(result.parsed.department == "営業部")
+        #expect(result.unclassifiedLines == ["山田太郎"])
+    }
+
+    @Test func allFieldsClassifiedLeavesNoUnclassified() {
+        let lines = [
+            "株式会社テスト", "営業部", "部長",
+            "090-1234-5678", "test@example.com",
+            "https://test.co.jp", "東京都渋谷区1-2-3"
+        ]
+        let result = classifier.classifyStructuredFields(lines: lines)
+        #expect(result.unclassifiedLines.isEmpty)
+    }
+
+    @Test func emptyInputReturnsEmpty() {
+        let result = classifier.classifyStructuredFields(lines: [])
+        #expect(result.unclassifiedLines.isEmpty)
+        #expect(result.parsed.email.isEmpty)
+    }
+}
+
+// MARK: - ハイブリッドプロンプト テスト
+
+struct HybridPromptTests {
+
+    let service = LocalLLMService.shared
+
+    @Test func hybridPromptContainsUnclassifiedLines() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎", "営業部長"],
+            knownCompany: "株式会社テスト"
+        )
+        #expect(prompt.contains("山田 太郎"))
+        #expect(prompt.contains("営業部長"))
+    }
+
+    @Test func hybridPromptContainsCompanyHint() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎"],
+            knownCompany: "株式会社テスト"
+        )
+        #expect(prompt.contains("株式会社テスト"), "判明済みの会社名がヒントとして含まれる")
+    }
+
+    @Test func hybridPromptOmitsCompanyHintWhenEmpty() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["山田 太郎"],
+            knownCompany: ""
+        )
+        #expect(!prompt.contains("判明済み"), "会社名が空の場合はヒントが含まれない")
+    }
+
+    @Test func hybridPromptNoLeadingSpaces() {
+        let prompt = service.buildChatMLPrompt(
+            unclassifiedLines: ["テスト"],
+            knownCompany: ""
+        )
+        // 各行の先頭にインデント用スペースが入っていないことを確認
+        let lines = prompt.components(separatedBy: "\n")
+        for line in lines where !line.isEmpty {
+            #expect(!line.hasPrefix("    "), "プロンプト行に不要なインデントがないこと")
+        }
+    }
+}
+
 // MARK: - ChatML プロンプト テスト
 
 struct ChatMLPromptTests {
@@ -714,7 +798,8 @@ struct ChatMLPromptTests {
 
     @Test func promptEndsWithAssistantPrefix() {
         let prompt = service.buildChatMLPrompt(lines: ["テスト"])
-        #expect(prompt.hasSuffix("<|im_start|>assistant"),
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(trimmed.hasSuffix("<|im_start|>assistant"),
                 "プロンプトは assistant プレフィクスで終わる必要がある")
     }
 }
