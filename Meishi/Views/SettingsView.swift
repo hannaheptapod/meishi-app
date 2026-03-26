@@ -63,7 +63,7 @@ struct SettingsView: View {
 
             // 標準読み取り
             readingMethodRow(.classifier, icon: "text.magnifyingglass") {
-                Text("常時利用可能").foregroundStyle(.secondary)
+                Text("利用可能").foregroundStyle(.secondary)
             }
 
             if let err = modelError {
@@ -83,24 +83,25 @@ struct SettingsView: View {
         icon: String,
         @ViewBuilder status: () -> S
     ) -> some View {
-        Button {
-            settings.readingMethod = method
-        } label: {
-            HStack {
-                Label(method.displayName, systemImage: icon)
-                    .symbolRenderingMode(.monochrome)
-                Spacer()
+        HStack {
+            Label(method.displayName, systemImage: icon)
+                .symbolRenderingMode(.monochrome)
+            Spacer()
+            if settings.readingMethod != method {
                 status()
-                if settings.readingMethod == method {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(Color.accentColor)
-                        .fontWeight(.semibold)
-                        .padding(.leading, 4)
-                }
             }
-            .foregroundStyle(.primary, .secondary, .tertiary)
+            if settings.readingMethod == method {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold)
+                    .padding(.leading, 4)
+            }
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            settings.readingMethod = method
+        }
     }
 
     private var aiAssistRow: some View {
@@ -110,40 +111,31 @@ struct SettingsView: View {
                 .foregroundStyle(.primary)
             Spacer()
 
-            if llm.isDownloading {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("\(Int(llm.downloadProgress * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if llm.isModelAvailable {
-                HStack(spacing: 8) {
-                    if let size = llm.modelFileSize {
-                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                            .font(.caption)
+            if settings.readingMethod != .localLLM {
+                if llm.isDownloading {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("\(Int(llm.downloadProgress * 100))%")
                             .foregroundStyle(.secondary)
                     }
-                    Button(role: .destructive) {
-                        showDeleteModelConfirm = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.red)
-                }
-            } else {
-                Button("取得する") {
-                    Task {
-                        do {
-                            try await llm.downloadModel()
-                        } catch {
-                            modelError = error.localizedDescription
+                } else if llm.isModelAvailable {
+                    Text("利用可能").foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        Text("未取得").foregroundStyle(.secondary)
+                        Button("取得する") {
+                            Task {
+                                do {
+                                    try await llm.downloadModel()
+                                } catch {
+                                    modelError = error.localizedDescription
+                                }
+                            }
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
 
             if settings.readingMethod == .localLLM {
@@ -153,9 +145,19 @@ struct SettingsView: View {
                     .padding(.leading, 4)
             }
         }
+        .foregroundStyle(.primary)
         .contentShape(Rectangle())
         .onTapGesture {
             settings.readingMethod = .localLLM
+        }
+        .swipeActions(edge: .trailing) {
+            if llm.isModelAvailable {
+                Button(role: .destructive) {
+                    showDeleteModelConfirm = true
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+            }
         }
         .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
             Button("削除", role: .destructive) {
@@ -193,11 +195,11 @@ struct SettingsView: View {
     private var appleIntelligenceStatusText: some View {
         switch SystemLanguageModel.default.availability {
         case .available:
-            return Text("利用可能").foregroundStyle(.green)
+            return Text("利用可能").foregroundStyle(.secondary)
         case .unavailable(.deviceNotEligible):
-            return Text("非対応デバイス").foregroundStyle(.secondary)
+            return Text("非対応").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("設定でオフになっています").foregroundStyle(.orange)
+            return Text("オフ").foregroundStyle(.orange)
         case .unavailable(.modelNotReady):
             return Text("準備中").foregroundStyle(.secondary)
         default:
