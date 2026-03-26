@@ -5,10 +5,10 @@
     </clipPath>
   </defs>
   <g clip-path="url(#card-clip)">
-    <circle cx="332" cy="427" r="46" fill="#2D8EF7"/>
-    <path d="M 258 539 A 74 55 0 0 1 406 539 L 406 545 A 10 10 0 0 1 396 555 L 268 555 A 10 10 0 0 1 258 545 Z" fill="#2D8EF7"/>
-    <rect x="518" y="381" width="266" height="12" rx="6" fill="#2D8EF7"/>
-    <rect x="518" y="462" width="266" height="12" rx="6" fill="#2D8EF7"/>
-    <rect x="518" y="543" width="164" height="12" rx="6" fill="#2D8EF7"/>
+    <circle cx="357" cy="427" r="46" fill="#2D8EF7"/>
+    <path d="M 283 539 A 74 55 0 0 1 431 539 L 431 545 A 10 10 0 0 1 421 555 L 293 555 A 10 10 0 0 1 283 545 Z" fill="#2D8EF7"/>
+    <rect x="493" y="381" width="266" height="24" rx="12" fill="#2D8EF7"/>
+    <rect x="493" y="456" width="266" height="24" rx="12" fill="#2D8EF7"/>
+    <rect x="493" y="531" width="164" height="24" rx="12" fill="#2D8EF7"/>
   </g>
 </svg>
