@@ -46,7 +46,15 @@
           }
         },
         {
-          "fill" : "none",
+          "fill-specializations" : [
+            {
+              "value" : "automatic"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "none"
+            }
+          ],
           "image-name" : "layer_3_card_main.svg",
           "name" : "layer_3_card_main",
           "position" : {
@@ -58,7 +66,15 @@
           }
         },
         {
-          "fill" : "automatic",
+          "fill-specializations" : [
+            {
+              "value" : "automatic"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "none"
+            }
+          ],
           "image-name" : "layer_2_card_2nd.svg",
           "name" : "layer_2_card_2nd",
           "position" : {
@@ -70,6 +86,12 @@
           }
         },
         {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "automatic"
+            }
+          ],
           "image-name" : "layer_1_card_3rd.svg",
           "name" : "layer_1_card_3rd",
           "position" : {
