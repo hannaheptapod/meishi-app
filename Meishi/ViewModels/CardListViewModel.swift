@@ -107,22 +107,15 @@ class CardListViewModel: ObservableObject {
     // MARK: - 検索フィルタ
 
     private func updateFilteredCards() {
-        let q = searchText.trimmingCharacters(in: .whitespaces)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         if q.isEmpty {
             filteredCards = cards
         } else {
             filteredCards = cards.filter { card in
-                func match(_ s: String?) -> Bool {
-                    s?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                        .contains(q) ?? false
-                }
-                return match(card.fullName)
-                    || match(card.company)
-                    || match(card.title)
-                    || match(card.email)
-                    || match(card.phone)
-                    || match(card.address)
+                card.fullName.lowercased().contains(q)
+                || (card.company?.lowercased().contains(q) ?? false)
+                || (card.title?.lowercased().contains(q) ?? false)
+                || (card.email?.lowercased().contains(q) ?? false)
             }
         }
         updateGroupedCards()
