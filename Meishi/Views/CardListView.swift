@@ -100,12 +100,12 @@ struct CardListView: View {
                 ellipsisMenu
                 searchField
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 4)
                     .background(.quaternary, in: Capsule())
                 addMenu
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(.bar)
         }
     }
@@ -161,8 +161,8 @@ struct CardListView: View {
             Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
                 .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
                 .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
-                .font(.system(size: 20, weight: .medium))
-        .frame(width: 44, height: 44)
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 44, height: 44)
         }
     }
 
@@ -183,7 +183,7 @@ struct CardListView: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 44)
+        .frame(height: 36)
     }
 
     @ViewBuilder
@@ -195,13 +195,13 @@ struct CardListView: View {
                 isSearchFocused = false
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.system(size: 17, weight: .medium))
                     .frame(width: 44, height: 44)
             }
         } else {
             Button { isShowingCamera = true } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.system(size: 17, weight: .medium))
                     .frame(width: 44, height: 44)
             }
         }
