@@ -115,14 +115,10 @@ struct CardListView: View {
                 ForEach(CardSortKey.allCases) { key in
                     Button { viewModel.toggleSort(key: key) } label: {
                         let isSelected = viewModel.sortKey == key
-                        let icon = isSelected
-                            ? (viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                            : key.systemImage
-                        if isSelected {
-                            Label("\(key.rawValue)（\(key.directionLabel(ascending: viewModel.sortAscending))）", systemImage: icon)
-                        } else {
-                            Label(key.rawValue, systemImage: icon)
-                        }
+                        let title = isSelected
+                            ? "\(key.rawValue)　\(viewModel.sortAscending ? "↑" : "↓")"
+                            : key.rawValue
+                        Label(title, systemImage: key.systemImage)
                     }
                     .menuActionDismissBehavior(.disabled)
                 }
