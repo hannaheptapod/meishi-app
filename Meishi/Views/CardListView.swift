@@ -271,18 +271,10 @@ private struct CardRowView: View {
                 let phones = card.phoneList
                 let email  = card.email ?? ""
                 if !phones.isEmpty || !email.isEmpty {
-                    HStack(spacing: 8) {
-                        if let phone = phones.first {
-                            Label(phone, systemImage: "phone")
-                                .lineLimit(1)
-                        }
-                        if !email.isEmpty && phones.isEmpty {
-                            Label(email, systemImage: "envelope")
-                                .lineLimit(1)
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text(phones.first ?? email)
+                        .lineLimit(1)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
