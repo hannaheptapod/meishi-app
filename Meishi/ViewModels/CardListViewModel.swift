@@ -2,21 +2,21 @@ import Foundation
 import CoreData
 import Combine
 
-// 名刺一覧のソート順
-enum CardSortOrder: String, CaseIterable, Identifiable {
-    case newestFirst      = "登録が新しい順"
-    case oldestFirst      = "登録が古い順"
-    case nameAscending    = "名前順"
-    case companyAscending = "会社名順"
+// ソートキー（4種）
+enum CardSortKey: String, CaseIterable, Identifiable {
+    case name      = "名前"
+    case company   = "会社名"
+    case createdAt = "登録日時"
+    case updatedAt = "更新日時"
 
     var id: String { rawValue }
 
     var systemImage: String {
         switch self {
-        case .newestFirst:      return "arrow.down.circle"
-        case .oldestFirst:      return "clock"
-        case .nameAscending:    return "person.text.rectangle"
-        case .companyAscending: return "building.2"
+        case .name:      return "person.text.rectangle"
+        case .company:   return "building.2"
+        case .createdAt: return "calendar.badge.plus"
+        case .updatedAt: return "calendar.badge.clock"
         }
     }
 }
@@ -42,12 +42,23 @@ class CardListViewModel: ObservableObject {
     }
     @Published var filteredCards: [BusinessCard] = []
     @Published var groupedCards: [CardSection] = []
-    @Published var sortOrder: CardSortOrder = .newestFirst {
-        didSet { fetchCards() }
-    }
+    @Published var sortKey: CardSortKey = .createdAt
+    @Published var sortAscending: Bool = false  // 登録日時は降順（新しい順）がデフォルト
 
     // 検索中かどうか（セクション表示 vs フラット表示の切替に使用）
     var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    // タップでキー選択 or 昇降順トグル
+    func toggleSort(key: CardSortKey) {
+        if sortKey == key {
+            sortAscending.toggle()
+        } else {
+            sortKey = key
+            // デフォルト方向：名前・会社 → 昇順、日時系 → 降順（新しい順）
+            sortAscending = (key == .name || key == .company)
+        }
+        fetchCards()
+    }
 
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
@@ -67,21 +78,22 @@ class CardListViewModel: ObservableObject {
 
     func fetchCards() {
         let request = BusinessCard.fetchRequest()
-        switch sortOrder {
-        case .newestFirst:
-            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: false)]
-        case .oldestFirst:
-            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: true)]
-        case .nameAscending:
+        let asc = sortAscending
+        switch sortKey {
+        case .name:
             request.sortDescriptors = [
-                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true),
-                NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: true)
+                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: asc),
+                NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: asc)
             ]
-        case .companyAscending:
+        case .company:
             request.sortDescriptors = [
-                NSSortDescriptor(keyPath: \BusinessCard.company,   ascending: true),
-                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true)
+                NSSortDescriptor(keyPath: \BusinessCard.company,   ascending: asc),
+                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: asc)
             ]
+        case .createdAt:
+            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: asc)]
+        case .updatedAt:
+            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.updatedAt, ascending: asc)]
         }
         do {
             cards = try context.fetch(request)
@@ -116,13 +128,15 @@ class CardListViewModel: ObservableObject {
             groupedCards = []
             return
         }
-        switch sortOrder {
-        case .nameAscending:
-            groupedCards = groupByName(cards)
-        case .companyAscending:
-            groupedCards = groupByCompany(cards)
-        case .newestFirst, .oldestFirst:
-            groupedCards = groupByDate(cards)
+        switch sortKey {
+        case .name:
+            groupedCards = groupByName(cards, ascending: sortAscending)
+        case .company:
+            groupedCards = groupByCompany(cards, ascending: sortAscending)
+        case .createdAt:
+            groupedCards = groupByDate(cards, dateOf: { $0.createdAt }, ascending: sortAscending)
+        case .updatedAt:
+            groupedCards = groupByDate(cards, dateOf: { $0.updatedAt }, ascending: sortAscending)
         }
     }
 
@@ -168,21 +182,22 @@ class CardListViewModel: ObservableObject {
         return "その他"
     }
 
-    // 名前順グループ化
-    private func groupByName(_ cards: [BusinessCard]) -> [CardSection] {
+    // 名前順グループ化（ascending で昇降順を切り替え）
+    private func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
             let name = (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
             let key = name.isEmpty ? "その他" : sectionKey(for: name)
             buckets[key, default: []].append(card)
         }
-        return Self.sectionOrder
+        let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()
+        return order
             .filter { buckets[$0] != nil }
             .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
     }
 
-    // 会社名順グループ化（会社名なしは末尾）
-    private func groupByCompany(_ cards: [BusinessCard]) -> [CardSection] {
+    // 会社名順グループ化（会社名なしは常に末尾）
+    private func groupByCompany(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
         let noCompanyKey = "（会社名なし）"
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
@@ -190,7 +205,8 @@ class CardListViewModel: ObservableObject {
             let key = co.isEmpty ? noCompanyKey : sectionKey(for: co)
             buckets[key, default: []].append(card)
         }
-        var sections = Self.sectionOrder
+        let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()
+        var sections = order
             .filter { buckets[$0] != nil }
             .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
         if let noCoCards = buckets[noCompanyKey] {
@@ -199,8 +215,10 @@ class CardListViewModel: ObservableObject {
         return sections
     }
 
-    // 日時順グループ化
-    private func groupByDate(_ cards: [BusinessCard]) -> [CardSection] {
+    // 日時順グループ化（dateOf で createdAt / updatedAt を切り替え、ascending で昇降）
+    private func groupByDate(_ cards: [BusinessCard],
+                             dateOf: (BusinessCard) -> Date?,
+                             ascending: Bool) -> [CardSection] {
         let cal = Calendar.current
         let now = Date()
         let startOfToday   = cal.startOfDay(for: now)
@@ -208,6 +226,7 @@ class CardListViewModel: ObservableObject {
         let startOfMonth   = cal.dateInterval(of: .month, for: now)?.start ?? startOfToday
         let threeMonthsAgo = cal.date(byAdding: .month, value: -3, to: startOfMonth) ?? startOfToday
 
+        // 降順（新しい順）で定義し、昇順時は逆順で使う
         let bucketDefs: [(key: String, predicate: (Date) -> Bool)] = [
             ("今日",      { $0 >= startOfToday }),
             ("今週",      { $0 >= startOfWeek && $0 < startOfToday }),
@@ -218,12 +237,12 @@ class CardListViewModel: ObservableObject {
 
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            let date = card.createdAt ?? .distantPast
+            let date = dateOf(card) ?? .distantPast
             let key = bucketDefs.first(where: { $0.predicate(date) })?.key ?? "それ以前"
             buckets[key, default: []].append(card)
         }
-        return bucketDefs
-            .map { $0.key }
+        let keys = ascending ? bucketDefs.map { $0.key }.reversed() : bucketDefs.map { $0.key }
+        return keys
             .filter { buckets[$0] != nil }
             .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
     }

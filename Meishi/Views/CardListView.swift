@@ -112,9 +112,13 @@ struct CardListView: View {
     private var ellipsisMenu: some View {
         Menu {
             Menu {
-                Picker("並び替え", selection: $viewModel.sortOrder) {
-                    ForEach(CardSortOrder.allCases) { order in
-                        Label(order.rawValue, systemImage: order.systemImage).tag(order)
+                ForEach(CardSortKey.allCases) { key in
+                    Button { viewModel.toggleSort(key: key) } label: {
+                        let isSelected = viewModel.sortKey == key
+                        let icon = isSelected
+                            ? (viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                            : key.systemImage
+                        Label(key.rawValue, systemImage: icon)
                     }
                 }
             } label: {
