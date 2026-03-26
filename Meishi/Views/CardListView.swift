@@ -25,9 +25,24 @@ struct CardListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
             .toolbar {
-                // 左上: 3点リーダーメニュー
-                ToolbarItem(placement: .topBarLeading) {
+                // 左: メニューボタン
+                ToolbarItem(placement: .bottomBar) {
                     Menu {
+                        Menu {
+                            ForEach(CardSortKey.allCases) { key in
+                                Button { viewModel.toggleSort(key: key) } label: {
+                                    if viewModel.sortKey == key {
+                                        Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                                    } else {
+                                        Text(key.rawValue)
+                                    }
+                                }
+                                .menuActionDismissBehavior(.disabled)
+                            }
+                        } label: {
+                            Label("並び替え", systemImage: "arrow.up.arrow.down")
+                        }
+                        Divider()
                         if !viewModel.cards.isEmpty {
                             NavigationLink {
                                 DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
@@ -60,24 +75,6 @@ struct CardListView: View {
                         }
                     } label: {
                         Label("メニュー", systemImage: "ellipsis")
-                    }
-                }
-
-                // 左: 並び替えボタン（将来フィルタも追加予定）
-                ToolbarItem(placement: .bottomBar) {
-                    Menu {
-                        ForEach(CardSortKey.allCases) { key in
-                            Button { viewModel.toggleSort(key: key) } label: {
-                                if viewModel.sortKey == key {
-                                    Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                                } else {
-                                    Text(key.rawValue)
-                                }
-                            }
-                            .menuActionDismissBehavior(.disabled)
-                        }
-                    } label: {
-                        Label("並び替え", systemImage: "arrow.up.arrow.down")
                     }
                 }
 
