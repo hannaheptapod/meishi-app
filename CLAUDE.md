@@ -158,7 +158,7 @@ meishi-app/
 
 - **Foundation Models 統合（Tier 1）：** `CardFormViewModel.populateFromOCR` にコメントアウトで残存。FoundationModels framework をリンクすれば有効化可能
 - **連絡先インポートのUI：** `ContactsService.importContacts()` は実装済みだが CardListView のメニューに未追加
-- **テスト：** `MeishiTests.swift` / `MeishiUITests.swift` はプレースホルダーのみ
+- **テスト：** `MeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`MeishiUITests.swift` / `MeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
 
 ---
 
@@ -170,6 +170,10 @@ meishi-app/
 - CoreData の操作は ViewModel に閉じ込め、View から直接操作しない
 - エラーハンドリングは `do-catch` で明示的に行う
 - 日本語コメントで処理内容を記述してよい
+- サービスクラス（`ExportService`・`ContactsService`・`LocalLLMService` など）は `static let shared` シングルトンパターンを使用
+- `CardListViewModel` は `NavigationStack` レベルで `.environmentObject(viewModel)` を注入し、子 View は `@EnvironmentObject` で受け取る
+- ViewModel のエラーは `@Published var errorMessage: String?` に集約し、View 側で Alert として表示する
+- 検索フィルタ・エクスポート・一括削除などのビジネスロジックは View ではなく ViewModel に置く
 
 ---
 
