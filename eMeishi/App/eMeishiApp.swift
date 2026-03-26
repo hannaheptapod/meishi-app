@@ -2,7 +2,7 @@ import SwiftUI
 import CoreData
 
 @main
-struct MeishiApp: App {
+struct eMeishiApp: App {
 
     // CoreData スタック
     let persistenceController = PersistenceController.shared

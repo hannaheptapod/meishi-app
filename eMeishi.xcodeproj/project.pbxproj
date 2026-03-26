@@ -16,51 +16,51 @@
 			containerPortal = 3979F8972F7275F200BC90DC /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3979F89E2F7275F200BC90DC;
-			remoteInfo = Meishi;
+			remoteInfo = eMeishi;
 		};
 		3979F8B92F7275F300BC90DC /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3979F8972F7275F200BC90DC /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 3979F89E2F7275F200BC90DC;
-			remoteInfo = Meishi;
+			remoteInfo = eMeishi;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		3979F89F2F7275F200BC90DC /* Meishi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Meishi.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		3979F8AE2F7275F300BC90DC /* MeishiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeishiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		3979F8B82F7275F300BC90DC /* MeishiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeishiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3979F89F2F7275F200BC90DC /* eMeishi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = eMeishi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3979F8AE2F7275F300BC90DC /* eMeishiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = eMeishiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3979F8B82F7275F300BC90DC /* eMeishiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = eMeishiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		39AA91BB2F734A1C007B1313 /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		39FA5EFC2F74C2B800FBA44D /* Exceptions for "Meishi" folder in "Meishi" target */ = {
+		39FA5EFC2F74C2B800FBA44D /* Exceptions for "eMeishi" folder in "eMeishi" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 3979F89E2F7275F200BC90DC /* Meishi */;
+			target = 3979F89E2F7275F200BC90DC /* eMeishi */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		3979F8A12F7275F200BC90DC /* Meishi */ = {
+		3979F8A12F7275F200BC90DC /* eMeishi */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				39FA5EFC2F74C2B800FBA44D /* Exceptions for "Meishi" folder in "Meishi" target */,
+				39FA5EFC2F74C2B800FBA44D /* Exceptions for "eMeishi" folder in "eMeishi" target */,
 			);
-			path = Meishi;
+			path = eMeishi;
 			sourceTree = "<group>";
 		};
-		3979F8B12F7275F300BC90DC /* MeishiTests */ = {
+		3979F8B12F7275F300BC90DC /* eMeishiTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MeishiTests;
+			path = eMeishiTests;
 			sourceTree = "<group>";
 		};
-		3979F8BB2F7275F300BC90DC /* MeishiUITests */ = {
+		3979F8BB2F7275F300BC90DC /* eMeishiUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MeishiUITests;
+			path = eMeishiUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -94,9 +94,9 @@
 		3979F8962F7275F200BC90DC = {
 			isa = PBXGroup;
 			children = (
-				3979F8A12F7275F200BC90DC /* Meishi */,
-				3979F8B12F7275F300BC90DC /* MeishiTests */,
-				3979F8BB2F7275F300BC90DC /* MeishiUITests */,
+				3979F8A12F7275F200BC90DC /* eMeishi */,
+				3979F8B12F7275F300BC90DC /* eMeishiTests */,
+				3979F8BB2F7275F300BC90DC /* eMeishiUITests */,
 				39AA91BA2F734A1C007B1313 /* Frameworks */,
 				3979F8A02F7275F200BC90DC /* Products */,
 			);
@@ -105,9 +105,9 @@
 		3979F8A02F7275F200BC90DC /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3979F89F2F7275F200BC90DC /* Meishi.app */,
-				3979F8AE2F7275F300BC90DC /* MeishiTests.xctest */,
-				3979F8B82F7275F300BC90DC /* MeishiUITests.xctest */,
+				3979F89F2F7275F200BC90DC /* eMeishi.app */,
+				3979F8AE2F7275F300BC90DC /* eMeishiTests.xctest */,
+				3979F8B82F7275F300BC90DC /* eMeishiUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,9 +123,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3979F89E2F7275F200BC90DC /* Meishi */ = {
+		3979F89E2F7275F200BC90DC /* eMeishi */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3979F8C22F7275F300BC90DC /* Build configuration list for PBXNativeTarget "Meishi" */;
+			buildConfigurationList = 3979F8C22F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishi" */;
 			buildPhases = (
 				3979F89B2F7275F200BC90DC /* Sources */,
 				3979F89C2F7275F200BC90DC /* Frameworks */,
@@ -136,18 +136,18 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				3979F8A12F7275F200BC90DC /* Meishi */,
+				3979F8A12F7275F200BC90DC /* eMeishi */,
 			);
-			name = Meishi;
+			name = eMeishi;
 			packageProductDependencies = (
 			);
-			productName = Meishi;
-			productReference = 3979F89F2F7275F200BC90DC /* Meishi.app */;
+			productName = eMeishi;
+			productReference = 3979F89F2F7275F200BC90DC /* eMeishi.app */;
 			productType = "com.apple.product-type.application";
 		};
-		3979F8AD2F7275F300BC90DC /* MeishiTests */ = {
+		3979F8AD2F7275F300BC90DC /* eMeishiTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3979F8C52F7275F300BC90DC /* Build configuration list for PBXNativeTarget "MeishiTests" */;
+			buildConfigurationList = 3979F8C52F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishiTests" */;
 			buildPhases = (
 				3979F8AA2F7275F300BC90DC /* Sources */,
 				3979F8AB2F7275F300BC90DC /* Frameworks */,
@@ -159,18 +159,18 @@
 				3979F8B02F7275F300BC90DC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				3979F8B12F7275F300BC90DC /* MeishiTests */,
+				3979F8B12F7275F300BC90DC /* eMeishiTests */,
 			);
-			name = MeishiTests;
+			name = eMeishiTests;
 			packageProductDependencies = (
 			);
-			productName = MeishiTests;
-			productReference = 3979F8AE2F7275F300BC90DC /* MeishiTests.xctest */;
+			productName = eMeishiTests;
+			productReference = 3979F8AE2F7275F300BC90DC /* eMeishiTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		3979F8B72F7275F300BC90DC /* MeishiUITests */ = {
+		3979F8B72F7275F300BC90DC /* eMeishiUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3979F8C82F7275F300BC90DC /* Build configuration list for PBXNativeTarget "MeishiUITests" */;
+			buildConfigurationList = 3979F8C82F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishiUITests" */;
 			buildPhases = (
 				3979F8B42F7275F300BC90DC /* Sources */,
 				3979F8B52F7275F300BC90DC /* Frameworks */,
@@ -182,13 +182,13 @@
 				3979F8BA2F7275F300BC90DC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				3979F8BB2F7275F300BC90DC /* MeishiUITests */,
+				3979F8BB2F7275F300BC90DC /* eMeishiUITests */,
 			);
-			name = MeishiUITests;
+			name = eMeishiUITests;
 			packageProductDependencies = (
 			);
-			productName = MeishiUITests;
-			productReference = 3979F8B82F7275F300BC90DC /* MeishiUITests.xctest */;
+			productName = eMeishiUITests;
+			productReference = 3979F8B82F7275F300BC90DC /* eMeishiUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -214,7 +214,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 3979F89A2F7275F200BC90DC /* Build configuration list for PBXProject "Meishi" */;
+			buildConfigurationList = 3979F89A2F7275F200BC90DC /* Build configuration list for PBXProject "eMeishi" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -228,9 +228,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				3979F89E2F7275F200BC90DC /* Meishi */,
-				3979F8AD2F7275F300BC90DC /* MeishiTests */,
-				3979F8B72F7275F300BC90DC /* MeishiUITests */,
+				3979F89E2F7275F200BC90DC /* eMeishi */,
+				3979F8AD2F7275F300BC90DC /* eMeishiTests */,
+				3979F8B72F7275F300BC90DC /* eMeishiUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -286,12 +286,12 @@
 /* Begin PBXTargetDependency section */
 		3979F8B02F7275F300BC90DC /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 3979F89E2F7275F200BC90DC /* Meishi */;
+			target = 3979F89E2F7275F200BC90DC /* eMeishi */;
 			targetProxy = 3979F8AF2F7275F300BC90DC /* PBXContainerItemProxy */;
 		};
 		3979F8BA2F7275F300BC90DC /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 3979F89E2F7275F200BC90DC /* Meishi */;
+			target = 3979F89E2F7275F200BC90DC /* eMeishi */;
 			targetProxy = 3979F8B92F7275F300BC90DC /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -423,14 +423,14 @@
 		3979F8C32F7275F300BC90DC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = MeishiIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = eMeishiIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9SD55B8AYW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Meishi/Info.plist;
+				INFOPLIST_FILE = eMeishi/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -441,7 +441,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.Meishi;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinks.emeishi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -460,14 +460,14 @@
 		3979F8C42F7275F300BC90DC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = MeishiIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = eMeishiIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9SD55B8AYW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Meishi/Info.plist;
+				INFOPLIST_FILE = eMeishi/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -478,7 +478,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.Meishi;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jinks.emeishi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -504,7 +504,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.MeishiTests;
+				PRODUCT_BUNDLE_IDENTIFIER = jinks.eMeishiTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -516,7 +516,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meishi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Meishi";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/eMeishi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/eMeishi";
 			};
 			name = Debug;
 		};
@@ -530,7 +530,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.MeishiTests;
+				PRODUCT_BUNDLE_IDENTIFIER = jinks.eMeishiTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -542,7 +542,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meishi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Meishi";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/eMeishi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/eMeishi";
 			};
 			name = Release;
 		};
@@ -554,7 +554,7 @@
 				DEVELOPMENT_TEAM = 9SD55B8AYW;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.MeishiUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = jinks.eMeishiUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -566,7 +566,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = Meishi;
+				TEST_TARGET_NAME = eMeishi;
 			};
 			name = Debug;
 		};
@@ -578,7 +578,7 @@
 				DEVELOPMENT_TEAM = 9SD55B8AYW;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jinks.MeishiUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = jinks.eMeishiUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -590,14 +590,14 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = Meishi;
+				TEST_TARGET_NAME = eMeishi;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		3979F89A2F7275F200BC90DC /* Build configuration list for PBXProject "Meishi" */ = {
+		3979F89A2F7275F200BC90DC /* Build configuration list for PBXProject "eMeishi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3979F8C02F7275F300BC90DC /* Debug */,
@@ -606,7 +606,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3979F8C22F7275F300BC90DC /* Build configuration list for PBXNativeTarget "Meishi" */ = {
+		3979F8C22F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3979F8C32F7275F300BC90DC /* Debug */,
@@ -615,7 +615,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3979F8C52F7275F300BC90DC /* Build configuration list for PBXNativeTarget "MeishiTests" */ = {
+		3979F8C52F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishiTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3979F8C62F7275F300BC90DC /* Debug */,
@@ -624,7 +624,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3979F8C82F7275F300BC90DC /* Build configuration list for PBXNativeTarget "MeishiUITests" */ = {
+		3979F8C82F7275F300BC90DC /* Build configuration list for PBXNativeTarget "eMeishiUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3979F8C92F7275F300BC90DC /* Debug */,
