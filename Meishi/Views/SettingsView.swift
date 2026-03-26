@@ -5,14 +5,14 @@ import FoundationModels
 // 設定画面
 struct SettingsView: View {
 
+    @EnvironmentObject private var listViewModel: CardListViewModel
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var llm = LocalLLMService.shared
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showDeleteAllConfirm  = false
+    @State private var showDeleteAllConfirm   = false
     @State private var showDeleteModelConfirm = false
-    @State private var deleteAllError: String? = nil
     @State private var modelError: String? = nil
 
     var body: some View {
@@ -204,11 +204,11 @@ struct SettingsView: View {
                 Label("すべての名刺を削除", systemImage: "trash")
             }
             .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-                Button("すべて削除", role: .destructive) { deleteAllCards() }
+                Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
             } message: {
                 Text("この操作は取り消せません。")
             }
-            if let err = deleteAllError {
+            if let err = listViewModel.errorMessage {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
         }
@@ -230,19 +230,9 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
-    private func deleteAllCards() {
-        let context = PersistenceController.shared.container.viewContext
-        let request = BusinessCard.fetchRequest()
-        do {
-            let cards = try context.fetch(request)
-            cards.forEach { context.delete($0) }
-            try context.save()
-        } catch {
-            deleteAllError = "削除に失敗しました: \(error.localizedDescription)"
-        }
-    }
 }
 
 #Preview {
     SettingsView()
+        .environmentObject(CardListViewModel())
 }

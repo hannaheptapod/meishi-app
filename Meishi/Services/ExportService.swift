@@ -3,6 +3,8 @@ import Foundation
 // CSV・vCard（.vcf）エクスポートサービス
 class ExportService {
 
+    static let shared = ExportService()
+
     // MARK: - CSV エクスポート
 
     /// 複数の BusinessCard を CSV 形式の文字列に変換する

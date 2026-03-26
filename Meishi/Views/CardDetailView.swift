@@ -4,15 +4,15 @@ import SwiftUI
 struct CardDetailView: View {
 
     let card: BusinessCard
-    let onUpdate: () -> Void
 
+    @EnvironmentObject private var listViewModel: CardListViewModel
     @State private var isShowingEditForm = false
     @State private var exportItem: ExportItem? = nil
     @State private var alertMessage: String? = nil
     @State private var isShowingAlert = false
 
-    private let contactsService = ContactsService()
-    private let exportService   = ExportService()
+    private let contactsService = ContactsService.shared
+    private let exportService   = ExportService.shared
 
     var body: some View {
         List {
@@ -151,7 +151,7 @@ struct CardDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $isShowingEditForm, onDismiss: onUpdate) {
+        .sheet(isPresented: $isShowingEditForm, onDismiss: listViewModel.fetchCards) {
             CardFormView(card: card, onSave: { isShowingEditForm = false })
         }
         .sheet(item: $exportItem) { item in
@@ -172,19 +172,10 @@ struct CardDetailView: View {
             Circle()
                 .fill(Color.accentColor.opacity(0.12))
                 .frame(width: 58, height: 58)
-            Text(cardInitials)
+            Text(card.initials)
                 .font(.title3.bold())
                 .foregroundStyle(Color.accentColor)
         }
-    }
-
-    private var cardInitials: String {
-        let last  = card.lastName?.prefix(1)  ?? ""
-        let first = card.firstName?.prefix(1) ?? ""
-        if last.isEmpty && first.isEmpty {
-            return String(card.company?.prefix(1).uppercased() ?? "?")
-        }
-        return "\(last)\(first)"
     }
 
     // MARK: - アクション

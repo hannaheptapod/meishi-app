@@ -36,6 +36,16 @@ extension BusinessCard {
             .filter { !$0.isEmpty }
     }
 
+    /// アバター表示用のイニシャルを返す（姓・名の先頭各1文字、どちらも空なら会社名の先頭1文字）
+    public var initials: String {
+        let last  = lastName?.prefix(1)  ?? ""
+        let first = firstName?.prefix(1) ?? ""
+        if last.isEmpty && first.isEmpty {
+            return String(company?.prefix(1).uppercased() ?? "?")
+        }
+        return "\(last)\(first)"
+    }
+
     /// 「姓 名」形式のフルネームを返す
     public var fullName: String {
         let last  = lastName?.trimmingCharacters(in: .whitespaces) ?? ""

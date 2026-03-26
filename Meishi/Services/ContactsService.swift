@@ -4,6 +4,8 @@ import Contacts
 // iPhoneの連絡先との連携サービス
 class ContactsService {
 
+    static let shared = ContactsService()
+
     private let store = CNContactStore()
 
     // MARK: - 権限確認・要求

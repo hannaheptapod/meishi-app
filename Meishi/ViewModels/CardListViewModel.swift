@@ -26,6 +26,12 @@ class CardListViewModel: ObservableObject {
 
     @Published var cards: [BusinessCard] = []
     @Published var duplicatePairs: [DuplicatePair] = []
+    @Published var exportItem: ExportItem? = nil
+    @Published var errorMessage: String? = nil
+    @Published var searchText: String = "" {
+        didSet { updateFilteredCards() }
+    }
+    @Published var filteredCards: [BusinessCard] = []
     @Published var sortOrder: CardSortOrder = .newestFirst {
         didSet { fetchCards() }
     }
@@ -67,8 +73,22 @@ class CardListViewModel: ObservableObject {
         do {
             cards = try context.fetch(request)
             detectDuplicates()
+            updateFilteredCards()
         } catch {
             print("名刺の取得に失敗しました: \(error)")
+        }
+    }
+
+    // MARK: - 検索フィルタ
+
+    private func updateFilteredCards() {
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { filteredCards = cards; return }
+        filteredCards = cards.filter { card in
+            card.fullName.lowercased().contains(q)
+            || (card.company?.lowercased().contains(q) ?? false)
+            || (card.title?.lowercased().contains(q) ?? false)
+            || (card.email?.lowercased().contains(q) ?? false)
         }
     }
 
@@ -79,11 +99,43 @@ class CardListViewModel: ObservableObject {
         duplicatePairs = checker.findDuplicates(in: cards)
     }
 
+    // MARK: - エクスポート
+
+    func exportCSV() {
+        do {
+            exportItem = ExportItem(url: try ExportService.shared.exportCSV(from: cards))
+        } catch {
+            errorMessage = "CSVエクスポートに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func exportVCard() {
+        do {
+            exportItem = ExportItem(url: try ExportService.shared.exportVCard(from: cards))
+        } catch {
+            errorMessage = "vCardエクスポートに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - 削除
 
     func deleteCards(_ cardsToDelete: [BusinessCard]) {
         cardsToDelete.forEach { context.delete($0) }
         save()
+    }
+
+    // MARK: - 全削除
+
+    func deleteAllCards() {
+        let request = BusinessCard.fetchRequest()
+        do {
+            let all = try context.fetch(request)
+            all.forEach { context.delete($0) }
+            try context.save()
+            fetchCards()
+        } catch {
+            errorMessage = "削除に失敗しました: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - 保存
@@ -93,7 +145,7 @@ class CardListViewModel: ObservableObject {
             try context.save()
             fetchCards()
         } catch {
-            print("保存に失敗しました: \(error)")
+            errorMessage = "保存に失敗しました: \(error.localizedDescription)"
         }
     }
 }
