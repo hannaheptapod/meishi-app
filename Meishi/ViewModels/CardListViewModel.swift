@@ -21,12 +21,7 @@ enum CardSortKey: String, CaseIterable, Identifiable {
     }
 
     func directionLabel(ascending: Bool) -> String {
-        switch self {
-        case .name, .company:
-            return ascending ? "あいうえお順" : "逆順"
-        case .createdAt, .updatedAt:
-            return ascending ? "古い順" : "新しい順"
-        }
+        ascending ? "昇順" : "降順"
     }
 }
 

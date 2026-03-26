@@ -122,6 +122,7 @@ struct CardListView: View {
                             Label(key.rawValue, systemImage: key.systemImage)
                         }
                     }
+                    .menuActionDismissBehavior(.disabled)
                 }
             } label: {
                 Label("並び替え", systemImage: "arrow.up.arrow.down")
