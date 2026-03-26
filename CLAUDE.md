@@ -162,11 +162,6 @@ meishi-app/
 - 閉じるボタン・検索UI改善
 - ふりがなフィールド（姓読み・名読み）：OCR時に名刺上のフリガナ行があれば自動取得、なければ CFStringTokenizer で自動生成。フォームで手動修正可能。名前順ソート・検索でも利用
 
-## 未完了 / 保留中
-
-- **Foundation Models 統合（Tier 1）：** ハイブリッド方式で実装済み（`runFoundationModels`）。FoundationModels framework リンク済み。実機 iPhone 15 Pro 以降 + Apple Intelligence 有効が必要
-- **テスト：** `eMeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`eMeishiUITests.swift` / `eMeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
-
 ---
 
 ## コーディング規約
