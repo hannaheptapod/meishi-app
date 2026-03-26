@@ -182,7 +182,10 @@ struct CardFieldClassifier {
             let nameMidY = selectedLine.boundingBox.midY
 
             // 等間隔文字でOCRが行を分断した場合の補正：
-            // Y座標が近い（同一行とみなせる）短い漢字行を断片として収集する
+            // Y座標がほぼ同一（同一行とみなせる）かつX座標が近接する短い漢字行を断片として収集する
+            let nameBox = selectedLine.boundingBox
+            let nameMinX = nameBox.minX
+            let nameMaxX = nameBox.maxX
             let fragmentIndices = remaining.indices.filter { i -> Bool in
                 guard i != nameIndex else { return false }
                 let line = remaining[i]
@@ -191,9 +194,16 @@ struct CardFieldClassifier {
                     .replacingOccurrences(of: " ",  with: "")
                     .replacingOccurrences(of: "　", with: "")
                 let hasKanji = t.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+                let box = line.boundingBox
+                // Y座標がほぼ同一行（高さの半分以内）
+                let sameRow = abs(box.midY - nameMidY) < max(nameBox.height, box.height) * 0.6
+                // X座標が名前行の近傍にある（名前行の幅の50%以内の間隔）
+                let xGap = nameBox.width * 0.5
+                let xNearby = box.minX < nameMaxX + xGap && box.maxX > nameMinX - xGap
                 return hasKanji
                     && stripped.count <= 3
-                    && abs(line.boundingBox.midY - nameMidY) < 0.08
+                    && sameRow
+                    && xNearby
             }
 
             // 選択行＋断片を X 座標順（左→右）に並べて結合
