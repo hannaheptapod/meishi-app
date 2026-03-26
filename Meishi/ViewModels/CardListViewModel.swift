@@ -62,6 +62,7 @@ class CardListViewModel: ObservableObject {
         case .oldestFirst:
             request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: true)]
         case .nameAscending:
+            // ふりがなが設定されていればそちらで、なければ漢字名でソート（Swift 側で実施）
             request.sortDescriptors = [
                 NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: true),
                 NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: true)
@@ -73,7 +74,18 @@ class CardListViewModel: ObservableObject {
             ]
         }
         do {
-            cards = try context.fetch(request)
+            var fetched = try context.fetch(request)
+            // 名前順はふりがな優先でSwift側ソート
+            if sortOrder == .nameAscending {
+                fetched.sort {
+                    let lhs = ($0.lastNameReading?.isEmpty == false ? $0.lastNameReading! : $0.lastName ?? "")
+                           + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
+                    let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
+                           + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
+                    return lhs.localizedStandardCompare(rhs) == .orderedAscending
+                }
+            }
+            cards = fetched
             detectDuplicates()
             updateFilteredCards()
         } catch {
@@ -88,6 +100,7 @@ class CardListViewModel: ObservableObject {
         guard !q.isEmpty else { filteredCards = cards; return }
         filteredCards = cards.filter { card in
             card.fullName.lowercased().contains(q)
+            || card.fullNameReading.lowercased().contains(q)
             || (card.company?.lowercased().contains(q) ?? false)
             || (card.title?.lowercased().contains(q) ?? false)
             || (card.email?.lowercased().contains(q) ?? false)

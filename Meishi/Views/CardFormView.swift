@@ -11,7 +11,8 @@ struct CardFormView: View {
     @FocusState private var focusedField: FormField?
 
     private enum FormField: Hashable {
-        case lastName, firstName, company, department, title, email, address, website, notes
+        case lastName, lastNameReading, firstName, firstNameReading
+        case company, department, title, email, address, website, notes
     }
 
     // MARK: - 初期化（手動入力・新規作成）
@@ -72,11 +73,23 @@ struct CardFormView: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .lastName)
                         .submitLabel(.next)
+                        .onSubmit { focusedField = .lastNameReading }
+                    TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .lastNameReading)
+                        .submitLabel(.next)
                         .onSubmit { focusedField = .firstName }
                     TextField("名", text: $viewModel.firstName)
                         .textContentType(.givenName)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .firstName)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .firstNameReading }
+                    TextField("名（ふりがな）", text: $viewModel.firstNameReading)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .firstNameReading)
                         .submitLabel(.next)
                         .onSubmit { focusedField = .company }
                 }

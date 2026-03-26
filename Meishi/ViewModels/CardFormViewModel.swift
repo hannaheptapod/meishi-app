@@ -8,7 +8,9 @@ import FoundationModels
 class CardFormViewModel: ObservableObject {
 
     @Published var lastName: String = ""
+    @Published var lastNameReading: String = ""
     @Published var firstName: String = ""
+    @Published var firstNameReading: String = ""
     @Published var company: String = ""
     @Published var department: String = ""
     @Published var title: String = ""
@@ -67,8 +69,10 @@ class CardFormViewModel: ObservableObject {
          context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.card = card
         self.context = context
-        lastName   = card.lastName   ?? ""
-        firstName  = card.firstName  ?? ""
+        lastName        = card.lastName        ?? ""
+        lastNameReading = card.lastNameReading ?? ""
+        firstName       = card.firstName       ?? ""
+        firstNameReading = card.firstNameReading ?? ""
         company    = card.company    ?? ""
         department = card.department ?? ""
         title      = card.title      ?? ""
@@ -168,8 +172,11 @@ class CardFormViewModel: ObservableObject {
             """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         let p = response.content
-        apply(lastName: p.lastName, firstName: p.firstName, company: p.company,
-              department: p.department, title: p.title,
+        apply(lastName: p.lastName,
+              lastNameReading: Self.generateReading(from: p.lastName),
+              firstName: p.firstName,
+              firstNameReading: Self.generateReading(from: p.firstName),
+              company: p.company, department: p.department, title: p.title,
               phones: p.phone.isEmpty ? [] : [p.phone],
               email: p.email, address: p.address, website: p.website)
     }
@@ -209,17 +216,28 @@ class CardFormViewModel: ObservableObject {
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
     private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
-        apply(lastName: parsed.lastName, firstName: parsed.firstName,
+        // 読み仮名：ParsedCard に含まれていなければ自動生成
+        let lastR  = parsed.lastNameReading.isEmpty
+            ? Self.generateReading(from: parsed.lastName)
+            : parsed.lastNameReading
+        let firstR = parsed.firstNameReading.isEmpty
+            ? Self.generateReading(from: parsed.firstName)
+            : parsed.firstNameReading
+        apply(lastName: parsed.lastName, lastNameReading: lastR,
+              firstName: parsed.firstName, firstNameReading: firstR,
               company: parsed.company, department: parsed.department,
               title: parsed.title, phones: parsed.phones,
               email: parsed.email, address: parsed.address, website: parsed.website)
     }
 
-    private func apply(lastName: String, firstName: String, company: String,
-                       department: String, title: String, phones: [String],
-                       email: String, address: String, website: String) {
-        self.lastName   = lastName
-        self.firstName  = firstName
+    private func apply(lastName: String, lastNameReading: String = "",
+                       firstName: String, firstNameReading: String = "",
+                       company: String, department: String, title: String,
+                       phones: [String], email: String, address: String, website: String) {
+        self.lastName        = lastName
+        self.lastNameReading = lastNameReading
+        self.firstName       = firstName
+        self.firstNameReading = firstNameReading
         self.company    = company
         self.department = department
         self.title      = title
@@ -227,6 +245,50 @@ class CardFormViewModel: ObservableObject {
         self.email      = email
         self.address    = address
         self.website    = website
+    }
+
+    // MARK: - 読み仮名自動生成
+
+    /// CFStringTokenizer のラテン転写属性からひらがな読みを生成する
+    static func generateReading(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        // ひらがな・カタカナのみなら変換不要でそのまま返す（カタカナはひらがなへ）
+        if trimmed.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) || $0.value == 0x20 || $0.value == 0x3000 }) {
+            let mutable = NSMutableString(string: trimmed)
+            CFStringTransform(mutable, nil, kCFStringTransformToHiragana, false)
+            return mutable as String
+        }
+
+        // ASCII のみ（英語名など）はそのまま返す
+        if trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) { return trimmed }
+
+        let cfText   = trimmed as CFString
+        let cfLocale = Locale(identifier: "ja_JP") as CFLocale
+        guard let tokenizer = CFStringTokenizerCreate(
+            kCFAllocatorDefault, cfText,
+            CFRangeMake(0, CFStringGetLength(cfText)),
+            kCFStringTokenizerUnitWord, cfLocale
+        ) else { return trimmed }
+
+        var result = ""
+        while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
+            if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
+                tokenizer, kCFStringTokenizerAttributeLatinTranscription
+            ) as? String {
+                let mutable = NSMutableString(string: latin)
+                CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
+                result += mutable as String
+            } else {
+                let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+                let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
+                if let swiftRange = Range(nsRange, in: trimmed) {
+                    result += String(trimmed[swiftRange])
+                }
+            }
+        }
+        return result
     }
 
     // MARK: - 保存
@@ -239,8 +301,10 @@ class CardFormViewModel: ObservableObject {
             return newCard
         }()
 
-        target.lastName   = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstName  = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.lastName        = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.lastNameReading = lastNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
         target.company    = company.trimmingCharacters(in: .whitespacesAndNewlines)
         target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)

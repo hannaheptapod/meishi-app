@@ -10,7 +10,9 @@ struct CardFieldClassifier {
 
     struct ParsedCard {
         var lastName: String = ""
+        var lastNameReading: String = ""
         var firstName: String = ""
+        var firstNameReading: String = ""
         var company: String = ""
         var department: String = ""
         var title: String = ""
@@ -88,7 +90,13 @@ struct CardFieldClassifier {
         // --- パス2：未分類の行から氏名を推定し、姓と名に分割 ---
         unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
 
-        // フリガナ行（ひらがな/カタカナのみの短い行）を除去
+        // フリガナ行（ひらがな/カタカナのみの短い行）を氏名読み仮名として取得してから除去
+        if let furiganaLine = unclassified.first(where: { isFuriganaLine($0) }) {
+            let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let (lastR, firstR) = splitName(rawReading)
+            result.lastNameReading  = lastR
+            result.firstNameReading = firstR
+        }
         unclassified.removeAll { isFuriganaLine($0) }
 
         // まだ会社名が未設定なら残り行から補完

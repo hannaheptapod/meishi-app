@@ -13,7 +13,9 @@ extension BusinessCard {
 
     @NSManaged public var id: UUID?
     @NSManaged public var lastName: String?
+    @NSManaged public var lastNameReading: String?
     @NSManaged public var firstName: String?
+    @NSManaged public var firstNameReading: String?
     @NSManaged public var company: String?
     @NSManaged public var department: String?
     @NSManaged public var title: String?
@@ -44,6 +46,18 @@ extension BusinessCard {
             return String(company?.prefix(1).uppercased() ?? "?")
         }
         return "\(last)\(first)"
+    }
+
+    /// 「姓読み 名読み」形式の読み仮名を返す
+    public var fullNameReading: String {
+        let last  = lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+        let first = firstNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+        switch (last.isEmpty, first.isEmpty) {
+        case (false, false): return "\(last) \(first)"
+        case (false, true):  return last
+        case (true, false):  return first
+        default:             return ""
+        }
     }
 
     /// 「姓 名」形式のフルネームを返す
