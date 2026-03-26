@@ -172,7 +172,7 @@ struct CardListView: View {
                                 } label: {
                                     CardRowView(card: card)
                                 }
-                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 20))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                                 .alignmentGuide(.listRowSeparatorLeading) { d in
                                     d[.leading]
                                 }
