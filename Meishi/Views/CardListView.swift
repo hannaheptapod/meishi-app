@@ -295,6 +295,7 @@ struct CardListView: View {
                 .buttonStyle(.bordered)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
 }
