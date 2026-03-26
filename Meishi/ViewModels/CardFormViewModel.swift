@@ -159,19 +159,31 @@ class CardFormViewModel: ObservableObject {
 
     @available(iOS 18.0, *)
     private func runFoundationModels(lines: [RecognizedLine]) async throws {
-        let rawText = lines.map { $0.text }.joined(separator: "\n")
+        // --- ルールベース（座標情報活用）で確実なフィールドを先に抽出 ---
+        let ruleResult = classifier.classifyStructuredFields(lines: lines)
+        var base = ruleResult.parsed
+
+        if ruleResult.unclassifiedLines.isEmpty {
+            // 全フィールドがルールで解決済み → LLM不要
+            apply(base)
+            return
+        }
+
+        // --- 未分類行のみ Foundation Models に送る ---
+        let unclassifiedText = ruleResult.unclassifiedLines.joined(separator: "\n")
+        let companyHint = base.company.isEmpty ? "" : "会社名「\(base.company)」は判明済みです。"
         let session = LanguageModelSession()
-        let prompt = """
-            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-            姓と名は必ず分けてください。
-            \(rawText)
-            """
+        let prompt = "以下は名刺の未分類テキストです。\(companyHint)姓と名は必ず分けてください。\n\(unclassifiedText)"
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
         let p = response.content
-        apply(lastName: p.lastName, firstName: p.firstName, company: p.company,
-              department: p.department, title: p.title,
-              phones: p.phone.isEmpty ? [] : [p.phone],
-              email: p.email, address: p.address, website: p.website)
+
+        // --- マージ: LLM結果で未確定フィールドを補完 ---
+        if !p.lastName.isEmpty  { base.lastName  = p.lastName }
+        if !p.firstName.isEmpty { base.firstName = p.firstName }
+        if base.company.isEmpty && !p.company.isEmpty { base.company = p.company }
+        if !p.department.isEmpty { base.department = p.department }
+        if !p.title.isEmpty     { base.title     = p.title }
+        apply(base)
     }
 
     // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
