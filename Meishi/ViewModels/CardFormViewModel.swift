@@ -159,7 +159,6 @@ class CardFormViewModel: ObservableObject {
 
     @available(iOS 18.0, *)
     private func runFoundationModels(lines: [RecognizedLine]) async throws {
-        // Foundation Models にはテキストのみ渡す
         let rawText = lines.map { $0.text }.joined(separator: "\n")
         let session = LanguageModelSession()
         let prompt = """
@@ -168,16 +167,11 @@ class CardFormViewModel: ObservableObject {
             \(rawText)
             """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-        let parsed = response.content
-        lastName   = parsed.lastName
-        firstName  = parsed.firstName
-        company    = parsed.company
-        department = parsed.department
-        title      = parsed.title
-        phones     = parsed.phone.isEmpty ? [""] : [parsed.phone]
-        email      = parsed.email
-        address    = parsed.address
-        website    = parsed.website
+        let p = response.content
+        apply(lastName: p.lastName, firstName: p.firstName, company: p.company,
+              department: p.department, title: p.title,
+              phones: p.phone.isEmpty ? [] : [p.phone],
+              email: p.email, address: p.address, website: p.website)
     }
 
     // 明示指定モード: AIアシストのみ（未取得・失敗時はエラー表示 + Classifier）
@@ -187,17 +181,8 @@ class CardFormViewModel: ObservableObject {
             populateWithClassifier(lines: lines)
             return
         }
-        // LocalLLM にはテキストのみ渡す
         if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
-            lastName   = parsed.lastName
-            firstName  = parsed.firstName
-            company    = parsed.company
-            department = parsed.department
-            title      = parsed.title
-            phones     = parsed.phones.isEmpty ? [""] : parsed.phones
-            email      = parsed.email
-            address    = parsed.address
-            website    = parsed.website
+            apply(parsed)
         } else {
             ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
             populateWithClassifier(lines: lines)
@@ -211,33 +196,37 @@ class CardFormViewModel: ObservableObject {
             populateWithClassifier(lines: lines)
             return
         }
-        // LocalLLM にはテキストのみ渡す
         if let parsed = await LocalLLMService.shared.classify(lines: lines.map { $0.text }) {
-            lastName   = parsed.lastName
-            firstName  = parsed.firstName
-            company    = parsed.company
-            department = parsed.department
-            title      = parsed.title
-            phones     = parsed.phones.isEmpty ? [""] : parsed.phones
-            email      = parsed.email
-            address    = parsed.address
-            website    = parsed.website
+            apply(parsed)
         } else {
             populateWithClassifier(lines: lines)
         }
     }
 
     private func populateWithClassifier(lines: [RecognizedLine]) {
-        let parsed = classifier.classify(lines: lines)
-        lastName   = parsed.lastName
-        firstName  = parsed.firstName
-        company    = parsed.company
-        department = parsed.department
-        title      = parsed.title
-        phones     = parsed.phones.isEmpty ? [""] : parsed.phones
-        email      = parsed.email
-        address    = parsed.address
-        website    = parsed.website
+        apply(classifier.classify(lines: lines))
+    }
+
+    /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
+    private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
+        apply(lastName: parsed.lastName, firstName: parsed.firstName,
+              company: parsed.company, department: parsed.department,
+              title: parsed.title, phones: parsed.phones,
+              email: parsed.email, address: parsed.address, website: parsed.website)
+    }
+
+    private func apply(lastName: String, firstName: String, company: String,
+                       department: String, title: String, phones: [String],
+                       email: String, address: String, website: String) {
+        self.lastName   = lastName
+        self.firstName  = firstName
+        self.company    = company
+        self.department = department
+        self.title      = title
+        self.phones     = phones.isEmpty ? [""] : phones
+        self.email      = email
+        self.address    = address
+        self.website    = website
     }
 
     // MARK: - 保存

@@ -46,7 +46,7 @@ class LocalLLMService: ObservableObject {
     /// causal_mask のデータ型（int32: 1/0マスク、float32/float16: 0.0/-大値加算マスク）
     private var attentionMaskDataType:   MLMultiArrayDataType = .int32
 
-    // MARK: - パス
+    // MARK: - ファイルパス
 
     var modelDirURL: URL {
         FileManager.default
@@ -67,7 +67,7 @@ class LocalLLMService: ObservableObject {
                         && FileManager.default.fileExists(atPath: tokenizerURL.path)
     }
 
-    // MARK: - モデルロード
+    // MARK: - モデル管理
 
     func loadModelIfNeeded() throws {
         guard isModelAvailable else { return }
@@ -83,7 +83,7 @@ class LocalLLMService: ObservableObject {
         }
     }
 
-    /// ロード済みモデルの入出力フィーチャー名を自動検出する
+    /// ロード済みモデルの入出力フィーチャー名とマスク形式を自動検出する
     private func introspectModel() {
         guard let model = loadedModel else { return }
         let desc = model.modelDescription
@@ -211,6 +211,8 @@ class LocalLLMService: ObservableObject {
         return tokenizer.decode(generatedIds)
     }
 
+    // MARK: - Forward Pass
+
     /// 1 ステップの forward pass（stateful KV キャッシュ使用）
     /// - startPos: ids[0] の絶対位置（KV キャッシュ内のオフセット）
     private func forward(model: MLModel, state: MLState,
@@ -269,6 +271,8 @@ class LocalLLMService: ObservableObject {
     }
 
     private enum InferenceError: Error { case noLogits }
+
+    // MARK: - Argmax・float16変換
 
     /// ロジット配列の最後のトークン位置で argmax を取り、最大値のインデックスを返す
     private func argmaxLastToken(logits: MLMultiArray, seqLen: Int) -> Int? {
@@ -407,7 +411,7 @@ class LocalLLMService: ObservableObject {
         return result
     }
 
-    // MARK: - ダウンロード
+    // MARK: - モデルダウンロード
 
     /// ユーザーの同意後に呼び出す。@Published プロパティで進捗を通知する。
     func downloadModel() async throws {
@@ -458,7 +462,7 @@ class LocalLLMService: ObservableObject {
         await MainActor.run { self.isModelAvailable = true }
     }
 
-    // MARK: - 削除
+    // MARK: - モデル削除
 
     func deleteModel() throws {
         guard isModelAvailable else { return }
@@ -468,7 +472,7 @@ class LocalLLMService: ObservableObject {
         isModelAvailable = false
     }
 
-    // MARK: - ファイルサイズ
+    // MARK: - モデルファイルサイズ
 
     var modelFileSize: Int64? {
         guard isModelAvailable else { return nil }

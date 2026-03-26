@@ -5,30 +5,16 @@ import UIKit
 struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
-    @State private var searchText = ""
     @FocusState private var isSearchFocused: Bool
     @State private var isShowingForm = false
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
-    @State private var exportItem: ExportItem? = nil
     @State private var isShowingSettings = false
-
-    private let exportService = ExportService()
-
-    private var displayedCards: [BusinessCard] {
-        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return viewModel.cards }
-        return viewModel.cards.filter { card in
-            card.fullName.lowercased().contains(q)
-            || (card.company?.lowercased().contains(q) ?? false)
-            || (card.title?.lowercased().contains(q) ?? false)
-            || (card.email?.lowercased().contains(q) ?? false)
-        }
-    }
 
     var body: some View {
         NavigationStack {
             Group {
+
                 if viewModel.cards.isEmpty {
                     emptyState
                 } else {
@@ -49,14 +35,24 @@ struct CardListView: View {
             .sheet(item: $capturedImage, onDismiss: viewModel.fetchCards) { image in
                 CardFormView(image: image, onSave: { capturedImage = nil })
             }
-            .sheet(item: $exportItem) { item in
+            .sheet(item: $viewModel.exportItem) { item in
                 ShareSheet(activityItems: [item.url])
+            }
+            .alert("エラー", isPresented: Binding(
+                get: { viewModel.errorMessage != nil },
+                set: { if !$0 { viewModel.errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { viewModel.errorMessage = nil }
+            } message: {
+                Text(viewModel.errorMessage ?? "")
             }
             .sheet(isPresented: $isShowingSettings) {
                 SettingsView()
+                    .environmentObject(viewModel)
             }
             .onAppear(perform: viewModel.fetchCards)
         }
+        .environmentObject(viewModel)
     }
 
     // MARK: - 下部バー
@@ -116,10 +112,10 @@ struct CardListView: View {
                     )
                 }
                 Divider()
-                Button { exportAllCSV() } label: {
+                Button { viewModel.exportCSV() } label: {
                     Label("CSV としてエクスポート", systemImage: "tablecells")
                 }
-                Button { exportAllVCard() } label: {
+                Button { viewModel.exportVCard() } label: {
                     Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
                 }
             }
@@ -141,12 +137,12 @@ struct CardListView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField("検索", text: $searchText)
+            TextField("検索", text: $viewModel.searchText)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .focused($isSearchFocused)
-            if !searchText.isEmpty {
-                Button { searchText = "" } label: {
+            if !viewModel.searchText.isEmpty {
+                Button { viewModel.searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
@@ -158,10 +154,10 @@ struct CardListView: View {
 
     @ViewBuilder
     private var addMenu: some View {
-        if !searchText.isEmpty || isSearchFocused {
+        if !viewModel.searchText.isEmpty || isSearchFocused {
             // 検索中は × ボタンで検索を閉じる（テキストクリア＋キーボード閉じる）
             Button {
-                searchText = ""
+                viewModel.searchText = ""
                 isSearchFocused = false
             } label: {
                 Image(systemName: "xmark")
@@ -181,15 +177,15 @@ struct CardListView: View {
 
     private var cardList: some View {
         List {
-            ForEach(displayedCards) { card in
+            ForEach(viewModel.filteredCards) { card in
                 NavigationLink {
-                    CardDetailView(card: card, onUpdate: viewModel.fetchCards)
+                    CardDetailView(card: card)
                 } label: {
                     CardRowView(card: card)
                 }
             }
             .onDelete { offsets in
-                viewModel.deleteCards(offsets.map { displayedCards[$0] })
+                viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
             }
         }
         .listStyle(.plain)
@@ -217,25 +213,6 @@ struct CardListView: View {
         }
     }
 
-    // MARK: - エクスポート
-
-    private func exportAllCSV() {
-        do {
-            let url = try exportService.exportCSV(from: viewModel.cards)
-            exportItem = ExportItem(url: url)
-        } catch {
-            print("CSVエクスポート失敗: \(error)")
-        }
-    }
-
-    private func exportAllVCard() {
-        do {
-            let url = try exportService.exportVCard(from: viewModel.cards)
-            exportItem = ExportItem(url: url)
-        } catch {
-            print("vCardエクスポート失敗: \(error)")
-        }
-    }
 }
 
 // MARK: - 一覧行
@@ -250,7 +227,7 @@ private struct CardRowView: View {
                 Circle()
                     .fill(Color.accentColor.opacity(0.12))
                     .frame(width: 44, height: 44)
-                Text(initials)
+                Text(card.initials)
                     .font(.subheadline.bold())
                     .foregroundStyle(Color.accentColor)
             }
@@ -286,14 +263,6 @@ private struct CardRowView: View {
         .padding(.vertical, 4)
     }
 
-    private var initials: String {
-        let last  = card.lastName?.prefix(1)  ?? ""
-        let first = card.firstName?.prefix(1) ?? ""
-        if last.isEmpty && first.isEmpty {
-            return String(card.company?.prefix(1).uppercased() ?? "?")
-        }
-        return "\(last)\(first)"
-    }
 }
 
 // MARK: - 共有シート
