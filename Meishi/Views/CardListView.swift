@@ -253,13 +253,14 @@ private struct CardRowView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                let phones = card.phoneList
-                let email  = card.email ?? ""
-                if !phones.isEmpty || !email.isEmpty {
-                    Text(phones.first ?? email)
-                        .lineLimit(1)
+                let dept = card.department ?? ""
+                let ttl = card.title ?? ""
+                let deptTitle = [dept, ttl].filter { !$0.isEmpty }.joined(separator: " ")
+                if !deptTitle.isEmpty {
+                    Text(deptTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
