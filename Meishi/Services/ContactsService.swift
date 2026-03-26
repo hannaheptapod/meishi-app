@@ -93,6 +93,8 @@ class ContactsService {
     func importContacts() async throws -> [ImportedContact] {
         try await requestAccess()
 
+        // CNContactNoteKey は iOS 13+ で com.apple.developer.contacts.notes entitlement が必要なため除外
+        // CNContactImageDataKey はインポート時のパフォーマンス低下を避けるため除外
         let keys: [CNKeyDescriptor] = [
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactFamilyNameKey as CNKeyDescriptor,
@@ -103,8 +105,6 @@ class ContactsService {
             CNContactEmailAddressesKey as CNKeyDescriptor,
             CNContactPostalAddressesKey as CNKeyDescriptor,
             CNContactUrlAddressesKey as CNKeyDescriptor,
-            CNContactNoteKey as CNKeyDescriptor,
-            CNContactImageDataKey as CNKeyDescriptor,
         ]
         let request = CNContactFetchRequest(keysToFetch: keys)
         request.sortOrder = .familyName
@@ -167,7 +167,7 @@ struct ImportedContact {
             CNPostalAddressFormatter.string(from: $0.value, style: .mailingAddress)
         } ?? ""
         website   = c.urlAddresses.first?.value as String? ?? ""
-        notes     = c.note
-        imageData = c.imageData
+        notes     = ""
+        imageData = nil
     }
 }

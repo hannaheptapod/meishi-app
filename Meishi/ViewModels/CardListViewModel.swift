@@ -28,6 +28,8 @@ class CardListViewModel: ObservableObject {
     @Published var duplicatePairs: [DuplicatePair] = []
     @Published var exportItem: ExportItem? = nil
     @Published var errorMessage: String? = nil
+    @Published var isImporting = false
+    @Published var importResultMessage: String? = nil
     @Published var searchText: String = "" {
         didSet { updateFilteredCards() }
     }
@@ -114,6 +116,48 @@ class CardListViewModel: ObservableObject {
             exportItem = ExportItem(url: try ExportService.shared.exportVCard(from: cards))
         } catch {
             errorMessage = "vCardエクスポートに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - 連絡先からインポート
+
+    func importFromContacts() {
+        guard !isImporting else { return }
+        isImporting = true
+        Task { @MainActor in
+            defer { isImporting = false }
+            do {
+                let contacts = try await ContactsService.shared.importContacts()
+                var count = 0
+                for contact in contacts {
+                    // 名前・会社・電話・メールがすべて空のエントリはスキップ
+                    let hasName = !contact.lastName.isEmpty || !contact.firstName.isEmpty
+                    let hasInfo = !contact.company.isEmpty || !contact.phone.isEmpty || !contact.email.isEmpty
+                    guard hasName || hasInfo else { continue }
+
+                    let card = BusinessCard(context: context)
+                    card.id         = UUID()
+                    card.lastName   = contact.lastName.isEmpty ? nil : contact.lastName
+                    card.firstName  = contact.firstName.isEmpty ? nil : contact.firstName
+                    card.company    = contact.company.isEmpty ? nil : contact.company
+                    card.department = contact.department.isEmpty ? nil : contact.department
+                    card.title      = contact.title.isEmpty ? nil : contact.title
+                    card.phone      = contact.phone.isEmpty ? nil : contact.phone
+                    card.email      = contact.email.isEmpty ? nil : contact.email
+                    card.address    = contact.address.isEmpty ? nil : contact.address
+                    card.website    = contact.website.isEmpty ? nil : contact.website
+                    card.notes      = contact.notes.isEmpty ? nil : contact.notes
+                    card.imageData  = contact.imageData
+                    card.createdAt  = Date()
+                    card.updatedAt  = Date()
+                    count += 1
+                }
+                try context.save()
+                fetchCards()
+                importResultMessage = "\(count)件の連絡先をインポートしました"
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

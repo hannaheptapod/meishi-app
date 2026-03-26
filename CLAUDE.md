@@ -149,6 +149,7 @@ meishi-app/
 - Qwen2.5-0.5B CoreML 推論（stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）
 - iPhoneの連絡先へのエクスポート（CNContactStore）
+- 連絡先からインポート（`ellipsisMenu` 経由・確認ダイアログ付き・空エントリスキップ）
 - CSV（UTF-8 BOM付き）・vCard 3.0 エクスポート（ExportServiceで部署も出力）
 - Levenshtein距離による重複検出（デフォルト閾値0.75・設定変更可）・マージUI
 - アプリアイコン・アクセントカラー
@@ -157,7 +158,6 @@ meishi-app/
 ## 未完了 / 保留中
 
 - **Foundation Models 統合（Tier 1）：** `CardFormViewModel.populateFromOCR` にコメントアウトで残存。FoundationModels framework をリンクすれば有効化可能
-- **連絡先インポートのUI：** `ContactsService.importContacts()` は実装済みだが CardListView のメニューに未追加
 - **テスト：** `MeishiTests.swift` は機能テストを網羅的に実装済み（`BusinessCard` プロパティ・`DuplicateChecker`・`ExportService`・`CardFieldClassifier`・`LocalLLMService` 関連）。`MeishiUITests.swift` / `MeishiUITestsLaunchTests.swift` は現時点で不要なためコメントアウト済み
 
 ---

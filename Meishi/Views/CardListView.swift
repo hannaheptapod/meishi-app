@@ -10,6 +10,7 @@ struct CardListView: View {
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
     @State private var isShowingSettings = false
+    @State private var isShowingImportConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -49,6 +50,24 @@ struct CardListView: View {
             .sheet(isPresented: $isShowingSettings) {
                 SettingsView()
                     .environmentObject(viewModel)
+            }
+            .confirmationDialog(
+                "連絡先からインポート",
+                isPresented: $isShowingImportConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("インポート") { viewModel.importFromContacts() }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("iPhoneの連絡先をすべて名刺としてインポートします。")
+            }
+            .alert("インポート完了", isPresented: Binding(
+                get: { viewModel.importResultMessage != nil },
+                set: { if !$0 { viewModel.importResultMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { viewModel.importResultMessage = nil }
+            } message: {
+                Text(viewModel.importResultMessage ?? "")
             }
             .onAppear(perform: viewModel.fetchCards)
         }
@@ -101,6 +120,13 @@ struct CardListView: View {
             } label: {
                 Label("並び替え", systemImage: "arrow.up.arrow.down")
             }
+            Divider()
+            Button {
+                isShowingImportConfirm = true
+            } label: {
+                Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
+            }
+            .disabled(viewModel.isImporting)
             if !viewModel.cards.isEmpty {
                 Divider()
                 NavigationLink {
