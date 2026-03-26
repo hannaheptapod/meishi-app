@@ -24,7 +24,6 @@ struct CardListView: View {
             .navigationTitle("名刺")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
-            .searchToolbarBehavior(.minimize)
             .toolbar {
                 // 左: メニューボタン
                 ToolbarItem(placement: .bottomBar) {
