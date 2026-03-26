@@ -10,7 +10,7 @@
 /*
 import XCTest
 
-final class eMeishiUITestsLaunchTests: XCTestCase {
+final class EMeishiUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

@@ -10,7 +10,7 @@
 /*
 import XCTest
 
-final class eMeishiUITests: XCTestCase {
+final class EMeishiUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
