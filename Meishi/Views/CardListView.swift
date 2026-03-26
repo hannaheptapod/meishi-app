@@ -276,14 +276,14 @@ private struct SectionIndexView: View {
     @Binding var dragChar: String?
     let onSelect: (String) -> Void
 
-    // A-Z → あかさたなはまやらわ → # （純正に合わせた順）
+    // あかさたなはまやらわ → A-Z → # （かなをアルファベットより上に配置）
     private static let allItems: [(char: String, sectionId: String)] = {
         var items: [(String, String)] = []
-        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" { items.append((String(c), String(c))) }
         for (c, s) in [("あ","あ行"),("か","か行"),("さ","さ行"),("た","た行"),("な","な行"),
                        ("は","は行"),("ま","ま行"),("や","や行"),("ら","ら行"),("わ","わ行")] {
             items.append((c, s))
         }
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" { items.append((String(c), String(c))) }
         items.append(("#", "その他"))
         return items
     }()
@@ -312,13 +312,13 @@ private struct SectionIndexView: View {
             VStack(spacing: 0) {
                 ForEach(items, id: \.char) { item in
                     Text(item.char)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(
                             existingIds.contains(item.sectionId)
                                 ? Color.accentColor
                                 : Color.secondary.opacity(0.3)
                         )
-                        .frame(width: 16, height: itemH)
+                        .frame(width: 14, height: itemH)
                 }
             }
             .contentShape(Rectangle())
@@ -340,7 +340,7 @@ private struct SectionIndexView: View {
                     }
             )
         }
-        .frame(width: 16)
+        .frame(width: 14)
     }
 }
 
