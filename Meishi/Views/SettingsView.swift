@@ -42,42 +42,83 @@ struct SettingsView: View {
 
     private var readingSection: some View {
         Section {
-            Picker(selection: $settings.readingMethod) {
-                ForEach(ReadingMethod.allCases) { method in
-                    Text(method.displayName).tag(method)
-                }
-            } label: {
-                Label("読み取り方法", systemImage: "doc.text.magnifyingglass")
+            // 自動
+            readingMethodRow(.automatic, icon: "wand.and.sparkles") {
+                EmptyView()
             }
 
-            Text(settings.readingMethod.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
+            // Apple Intelligence
             if #available(iOS 18.0, *) {
-                LabeledContent {
+                readingMethodRow(.appleIntelligence, icon: "apple.intelligence") {
                     appleIntelligenceStatusText
-                } label: {
-                    Label("Apple Intelligence", systemImage: "apple.intelligence")
                 }
             } else {
-                LabeledContent("Apple Intelligence", value: "非対応のデバイスです")
+                readingMethodRow(.appleIntelligence, icon: "brain") {
+                    Text("非対応").foregroundStyle(.secondary)
+                }
             }
 
+            // AIアシスト（ダウンロード管理付き）
+            aiAssistRow
+
+            // 標準読み取り
+            readingMethodRow(.classifier, icon: "text.magnifyingglass") {
+                Text("常時利用可能").foregroundStyle(.secondary)
+            }
+
+            if let err = modelError {
+                Text(err).font(.caption).foregroundStyle(.red)
+            }
+
+        } header: {
+            Text("名刺の読み取り")
+        } footer: {
+            Text("撮影した名刺の文字を自動でフィールドに振り分けます。「自動」は上から順に利用できるエンジンを使用します。")
+        }
+    }
+
+    @ViewBuilder
+    private func readingMethodRow<S: View>(
+        _ method: ReadingMethod,
+        icon: String,
+        @ViewBuilder status: () -> S
+    ) -> some View {
+        Button {
+            settings.readingMethod = method
+        } label: {
+            HStack {
+                Label(method.displayName, systemImage: icon)
+                    .symbolRenderingMode(.monochrome)
+                Spacer()
+                status()
+                if settings.readingMethod == method {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                        .fontWeight(.semibold)
+                        .padding(.leading, 4)
+                }
+            }
+            .foregroundStyle(.primary, .secondary, .tertiary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var aiAssistRow: some View {
+        HStack {
+            Label("AIアシスト", systemImage: "sparkles")
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.primary)
+            Spacer()
+
             if llm.isDownloading {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("AIをダウンロード中…", systemImage: "arrow.down.circle")
-                    ProgressView(value: llm.downloadProgress)
-                        .tint(.accentColor)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
                     Text("\(Int(llm.downloadProgress * 100))%")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else if llm.isModelAvailable {
-                HStack {
-                    Label("AIアシスト", systemImage: "sparkles")
-                        .foregroundStyle(.primary)
-                    Spacer()
+                HStack(spacing: 8) {
                     if let size = llm.modelFileSize {
                         Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                             .font(.caption)
@@ -87,53 +128,45 @@ struct SettingsView: View {
                         showDeleteModelConfirm = true
                     } label: {
                         Image(systemName: "trash")
-                            .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(.red)
                 }
-                .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
-                    Button("削除", role: .destructive) {
+            } else {
+                Button("取得する") {
+                    Task {
                         do {
-                            try llm.deleteModel()
+                            try await llm.downloadModel()
                         } catch {
                             modelError = error.localizedDescription
                         }
                     }
-                } message: {
-                    Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
                 }
-            } else {
-                HStack {
-                    Label("AIアシスト（未取得）", systemImage: "sparkles")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("取得する") {
-                        Task {
-                            do {
-                                try await llm.downloadModel()
-                            } catch {
-                                modelError = error.localizedDescription
-                            }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            if let err = modelError {
-                Text(err).font(.caption).foregroundStyle(.red)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
-            LabeledContent {
-                Text("常時利用可能").foregroundStyle(.secondary)
-            } label: {
-                Label("標準読み取り", systemImage: "text.magnifyingglass")
+            if settings.readingMethod == .localLLM {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold)
+                    .padding(.leading, 4)
             }
-
-        } header: {
-            Text("名刺の読み取り")
-        } footer: {
-            Text("撮影した名刺の文字を自動でフィールドに振り分けます。上から順に利用できるものを使用します。")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            settings.readingMethod = .localLLM
+        }
+        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+            Button("削除", role: .destructive) {
+                do {
+                    try llm.deleteModel()
+                } catch {
+                    modelError = error.localizedDescription
+                }
+            }
+        } message: {
+            Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
         }
     }
 
