@@ -388,142 +388,77 @@ class CardListViewModel: ObservableObject {
         let cal = Calendar.current
         let now = Date()
 
-        // createdAt の分布：各期間のオフセット（秒）を定義
-        // 今日(5件)・今週(10件)・今月(15件)・3ヶ月以内(10件)・それ以前(10件)
         typealias Entry = (
-            lastName: String, firstName: String,
-            company: String, department: String, title: String,
+            lastName: String, lastNameReading: String,
+            firstName: String, firstNameReading: String,
+            company: String, companyReading: String,
+            department: String, title: String,
             email: String, phone: String, address: String, website: String,
             daysAgo: Int
         )
 
         let entries: [Entry] = [
-            // ── 今日（0日前、5件）────────────────────────
-            ("山田", "太郎",   "株式会社アルファテック",       "営業部",       "営業部長",
-             "yamada@alphatech.co.jp",    "03-1234-5678", "東京都渋谷区道玄坂1-2-3",             "https://alphatech.co.jp",   0),
-            ("佐藤", "花子",   "ベータシステムズ株式会社",     "開発部",       "シニアエンジニア",
-             "sato@betasys.co.jp",        "06-2345-6789", "大阪府大阪市北区梅田2-3-4",           "https://betasys.co.jp",     0),
-            ("鈴木", "一郎",   "ガンマ商事株式会社",           "経営企画室",   "代表取締役社長",
-             "suzuki@gamma-trading.jp",   "052-345-6789", "愛知県名古屋市中区栄3-4-5",           "https://gamma-trading.jp",  0),
-            ("田中", "美咲",   "デルタデザイン合同会社",       "クリエイティブ部", "UIデザイナー",
-             "tanaka@delta-design.com",   "011-456-7890", "北海道札幌市中央区大通西1-2",         "https://delta-design.com",  0),
-            ("高橋", "健司",   "イプシロン医療株式会社",       "医療情報部",   "システム課長",
-             "takahashi@epsilon-med.jp",  "092-567-8901", "福岡県福岡市博多区博多駅前1-1-1",     "https://epsilon-med.jp",    0),
+            // ── 今日 ───────────────────────────────────
+            ("山田", "やまだ", "太郎", "たろう",   "株式会社テックビジョン",   "てっくびじょん",
+             "営業部",         "営業部長",           "yamada@techvision.co.jp",    "03-1234-5678", "東京都渋谷区道玄坂1-2-3",         "https://techvision.co.jp",   0),
+            ("佐藤", "さとう", "花子", "はなこ",   "グローバル商事株式会社",   "ぐろーばるしょうじ",
+             "開発部",         "シニアエンジニア",   "sato@global-shoji.co.jp",    "06-2345-6789", "大阪府大阪市北区梅田2-3-4",       "https://global-shoji.co.jp", 0),
 
-            // ── 今週（2〜5日前、10件）───────────────────
-            ("伊藤", "真由",   "ゼータファイナンス株式会社",   "財務部",       "主任",
-             "ito@zeta-finance.co.jp",    "03-2345-6789", "東京都千代田区丸の内1-5-6",           "https://zeta-finance.co.jp", 2),
-            ("渡辺", "拓也",   "エータ教育株式会社",           "コンテンツ部", "コンテンツディレクター",
-             "watanabe@eta-edu.jp",       "045-678-9012", "神奈川県横浜市西区みなとみらい2-3",   "https://eta-edu.jp",         2),
-            ("中村", "さくら", "シータ建設株式会社",           "設計部",       "一級建築士",
-             "nakamura@theta-const.co.jp","022-789-0123", "宮城県仙台市青葉区一番町4-5-6",       "https://theta-const.co.jp",  3),
-            ("小林", "剛",     "イオタ物流株式会社",           "物流管理部",   "部長",
-             "kobayashi@iota-logi.jp",    "082-890-1234", "広島県広島市中区紙屋町1-3-5",         "https://iota-logi.jp",       3),
-            ("加藤", "奈々",   "カッパ出版株式会社",           "編集部",       "編集長",
-             "kato@kappa-pub.co.jp",      "03-3456-7890", "東京都文京区本郷3-7-8",               "https://kappa-pub.co.jp",    4),
-            ("松本", "浩二",   "ラムダコンサルティング株式会社","戦略部",       "シニアコンサルタント",
-             "matsumoto@lambda-cons.jp",  "03-4567-8901", "東京都港区赤坂2-4-6",                 "https://lambda-cons.jp",     4),
-            ("井上", "千恵",   "ミューインシュアランス株式会社","損害保険部",   "営業課長",
-             "inoue@mu-insurance.co.jp",  "06-3456-7890", "大阪府大阪市中央区本町3-5-7",         "https://mu-insurance.co.jp", 4),
-            ("木村", "亮",     "ニューメディア株式会社",       "広告部",       "クリエイティブディレクター",
-             "kimura@nu-media.co.jp",     "03-5678-9012", "東京都新宿区西新宿6-7-8",             "https://nu-media.co.jp",     5),
-            ("林", "明美",     "クシー食品株式会社",           "商品開発部",   "研究員",
-             "hayashi@xi-foods.co.jp",    "054-901-2345", "静岡県静岡市葵区追手町1-2",           "https://xi-foods.co.jp",     5),
-            ("清水", "大輔",   "オミクロンソフト株式会社",     "開発2部",      "テックリード",
-             "shimizu@omicron-soft.jp",   "03-6789-0123", "東京都品川区大崎1-8-9",               "https://omicron-soft.jp",    5),
+            // ── 今週 ───────────────────────────────────
+            ("鈴木", "すずき", "一郎", "いちろう", "有限会社クリエイティブラボ", "くりえいてぃぶらぼ",
+             "企画室",         "プロデューサー",     "suzuki@creative-lab.jp",     "090-9876-5432","愛知県名古屋市中区栄3-4-5",       "https://creative-lab.jp",   3),
+            ("田中", "たなか", "由美", "ゆみ",     "株式会社テックビジョン",   "てっくびじょん",
+             "マーケティング部","ディレクター",      "tanaka@techvision.co.jp",    "03-1234-1111", "東京都千代田区丸の内1-5-6",       "https://techvision.co.jp",   4),
+            ("中村", "なかむら","剛",  "つよし",   "グローバル商事株式会社",   "ぐろーばるしょうじ",
+             "経理部",         "取締役CFO",          "nakamura@global-shoji.co.jp","06-2345-9999", "大阪府大阪市中央区本町3-5-7",     "https://global-shoji.co.jp", 5),
 
-            // ── 今月（8〜20日前、15件）──────────────────
-            ("山口", "恵子",   "パイコンサルタンツ株式会社",   "人事部",       "人事部長",
-             "yamaguchi@pi-consult.co.jp","03-7890-1234", "東京都千代田区霞が関3-1-2",           "https://pi-consult.co.jp",   8),
-            ("斎藤", "直樹",   "ローエナジー株式会社",         "技術部",       "技術部長",
-             "saito@rho-energy.jp",       "011-234-5678", "北海道札幌市豊平区月寒東1-1-1",       "https://rho-energy.jp",      9),
-            ("松田", "由美",   "シグマアパレル株式会社",       "デザイン部",   "パタンナー",
-             "matsuda@sigma-apparel.jp",  "06-4567-8901", "大阪府大阪市浪速区難波中2-3-4",       "https://sigma-apparel.jp",   10),
-            ("藤田", "正人",   "タウリクス株式会社",           "製品部",       "プロダクトマネージャー",
-             "fujita@taurix.co.jp",       "03-8901-2345", "東京都台東区上野7-8-9",               "https://taurix.co.jp",       11),
-            ("岡田", "麻衣",   "ウプシロン保険有限会社",       "総務部",       "総務課長",
-             "okada@upsilon-ins.jp",      "052-678-9012", "愛知県名古屋市東区葵1-5-7",           "https://upsilon-ins.jp",     12),
-            ("後藤", "博",     "ファイテック株式会社",         "品質管理部",   "QAエンジニア",
-             "goto@phitech.co.jp",        "075-345-6789", "京都府京都市下京区四条通1-2-3",       "https://phitech.co.jp",      12),
-            ("村田", "友美",   "カイアドバンス株式会社",       "マーケティング部","マーケティングマネージャー",
-             "murata@chi-advance.jp",     "03-9012-3456", "東京都墨田区押上1-1-2",               "https://chi-advance.jp",     13),
-            ("坂本", "哲也",   "プサイテクノロジー株式会社",   "AI研究部",     "主任研究員",
-             "sakamoto@psi-tech.co.jp",   "06-5678-9012", "大阪府吹田市江坂町1-2-3",             "https://psi-tech.co.jp",     14),
-            ("橋本", "百合子", "オメガリテール株式会社",       "店舗開発部",   "エリアマネージャー",
-             "hashimoto@omega-retail.jp", "098-456-7890", "沖縄県那覇市久茂地1-3-5",             "https://omega-retail.jp",    15),
-            ("石田", "修",     "アルゴリズム株式会社",         "データ分析部", "データサイエンティスト",
-             "ishida@algorithm.co.jp",    "03-0123-4567", "東京都中野区中野4-5-6",               "https://algorithm.co.jp",   16),
-            ("藤井", "香織",   "バイオサイエンス株式会社",     "研究開発部",   "研究員",
-             "fujii@bioscience.co.jp",    "078-567-8901", "兵庫県神戸市中央区三宮町2-4-6",       "https://bioscience.co.jp",   17),
-            ("前田", "慎一",   "クラウドネット株式会社",       "インフラ部",   "インフラエンジニア",
-             "maeda@cloudnet.jp",         "03-1357-2468", "東京都豊島区池袋2-3-4",               "https://cloudnet.jp",       18),
-            ("小川", "雅子",   "デジタルウェーブ合同会社",     "事業開発部",   "ビジネスデベロッパー",
-             "ogawa@digitalwave.co.jp",   "06-6789-0123", "大阪府堺市堺区市之町東1-2",           "https://digitalwave.co.jp", 19),
-            ("池田", "俊",     "エコソリューションズ株式会社", "環境部",       "環境コンサルタント",
-             "ikeda@eco-solutions.jp",    "082-234-5678", "広島県広島市南区宇品海岸3-1-2",       "https://eco-solutions.jp",  20),
-            ("西村", "綾",     "グローバルリンク株式会社",     "国際事業部",   "海外営業マネージャー",
-             "nishimura@globallink.co.jp","03-2468-1357", "東京都江東区木場3-4-5",               "https://globallink.co.jp",  20),
+            // ── 今月 ───────────────────────────────────
+            ("高橋", "たかはし","健司", "けんじ",  "アルファテック株式会社",   "あるふぁてっく",
+             "医療情報部",     "システム課長",       "takahashi@alphatech.co.jp",  "092-567-8901", "福岡県福岡市博多区博多駅前1-1-1", "https://alphatech.co.jp",   10),
+            ("伊藤", "いとう", "真由", "まゆ",     "ゼータファイナンス株式会社", "ぜーたふぁいなんす",
+             "財務部",         "主任",               "ito@zeta-finance.co.jp",     "03-2345-6789", "東京都千代田区霞が関3-1-2",       "https://zeta-finance.co.jp", 12),
+            ("渡辺", "わたなべ","拓也", "たくや",  "ベータシステムズ株式会社", "べーたしすてむず",
+             "コンテンツ部",   "コンテンツディレクター","watanabe@betasys.co.jp",   "045-678-9012", "神奈川県横浜市西区みなとみらい2-3","https://betasys.co.jp",     15),
+            ("小林", "こばやし","剛",  "つよし",   "イオタ物流株式会社",       "いおたぶつりゅう",
+             "物流管理部",     "部長",               "kobayashi@iota-logi.jp",     "082-890-1234", "広島県広島市中区紙屋町1-3-5",     "https://iota-logi.jp",      18),
 
-            // ── 3ヶ月以内（40〜70日前、10件）───────────
-            ("岡本", "裕之",   "サイバーロジック株式会社",     "セキュリティ部","セキュリティエンジニア",
-             "okamoto@cyberlogic.co.jp",  "03-3579-2468", "東京都新宿区四谷1-2-3",               "https://cyberlogic.co.jp",  40),
-            ("吉田", "典子",   "スマートホーム有限会社",       "製品部",       "IoTエンジニア",
-             "yoshida@smarthome.jp",      "052-890-1234", "愛知県名古屋市千種区今池3-5-7",       "https://smarthome.jp",      45),
-            ("山本", "誠",     "フィンテックジャパン株式会社", "決済サービス部","プロジェクトマネージャー",
-             "yamamoto@fintechjp.co.jp",  "03-4680-1357", "東京都中央区日本橋室町1-5-6",         "https://fintechjp.co.jp",   50),
-            ("中島", "瑠衣",   "ヘルスケアテック株式会社",     "臨床開発部",   "臨床開発マネージャー",
-             "nakajima@healthtech.jp",    "06-7890-1234", "大阪府大阪市此花区桜島1-1-1",         "https://healthtech.jp",     55),
-            ("野口", "徹",     "モビリティソリューション株式会社","EV開発部",  "シニアエンジニア",
-             "noguchi@mobility-sol.co.jp","045-901-2345", "神奈川県横浜市鶴見区鶴見中央2-3",     "https://mobility-sol.co.jp", 55),
-            ("原田", "美穂",   "エドテックラボ合同会社",       "教育コンテンツ部","カリキュラムデザイナー",
-             "harada@edtechlab.jp",       "03-5791-2468", "東京都世田谷区三軒茶屋2-4-6",         "https://edtechlab.jp",      60),
-            ("川口", "雄大",   "スペースベンチャー株式会社",   "宇宙開発部",   "宇宙機エンジニア",
-             "kawaguchi@spaceventure.jp", "029-234-5678", "茨城県つくば市研究学園5-6-7",         "https://spaceventure.jp",   60),
-            ("村上", "朋子",   "アグリテック株式会社",         "農業DX部",     "農業ICTコンサルタント",
-             "murakami@agritech.co.jp",   "011-567-8901", "北海道帯広市西2条南5-1",              "https://agritech.co.jp",    65),
-            ("横山", "智也",   "ソーシャルインパクト株式会社", "事業推進部",   "事業推進マネージャー",
-             "yokoyama@socialimpact.jp",  "06-8901-2345", "大阪府大阪市西区靱本町1-2-3",         "https://socialimpact.jp",   68),
-            ("石川", "えみ",   "クリエイティブスタジオ有限会社","映像制作部",  "ビデオプロデューサー",
-             "ishikawa@cstudio.co.jp",    "03-6802-4689", "東京都杉並区阿佐ヶ谷北3-5-7",         "https://cstudio.co.jp",     70),
+            // ── 3ヶ月以内 ──────────────────────────────
+            ("加藤", "かとう", "奈々", "なな",     "カッパ出版株式会社",       "かっぱしゅっぱん",
+             "編集部",         "編集長",             "kato@kappa-pub.co.jp",       "03-3456-7890", "東京都文京区本郷3-7-8",           "https://kappa-pub.co.jp",   40),
+            ("松本", "まつもと","浩二","こうじ",   "ラムダコンサルティング株式会社","らむだこんさるてぃんぐ",
+             "戦略部",         "シニアコンサルタント","matsumoto@lambda-cons.jp",  "03-4567-8901", "東京都港区赤坂2-4-6",             "https://lambda-cons.jp",    50),
+            ("井上", "いのうえ","千恵","ちえ",     "ミューインシュアランス株式会社","みゅーいんしゅあらんす",
+             "損害保険部",     "営業課長",           "inoue@mu-insurance.co.jp",   "06-3456-7890", "大阪府大阪市北区梅田3-5-7",       "https://mu-insurance.co.jp", 60),
+            ("木村", "きむら", "亮",   "りょう",   "ニューメディア株式会社",   "にゅーめでぃあ",
+             "広告部",         "クリエイティブディレクター","kimura@nu-media.co.jp","03-5678-9012","東京都新宿区西新宿6-7-8",         "https://nu-media.co.jp",    70),
 
-            // ── それ以前（100〜200日前、10件）───────────
-            ("三浦", "伸介",   "レガシーシステムズ株式会社",   "システム部",   "IT部長",
-             "miura@legacysys.co.jp",     "03-7913-5791", "東京都大田区蒲田4-5-6",               "https://legacysys.co.jp",  100),
-            ("西田", "久美子", "パシフィックトレード株式会社", "貿易部",       "貿易事務マネージャー",
-             "nishida@pacific-trade.jp",  "06-9012-3456", "大阪府大阪市港区弁天1-3-5",           "https://pacific-trade.jp", 110),
-            ("菊池", "大樹",   "ノーザンソフト株式会社",       "開発部",       "フルスタックエンジニア",
-             "kikuchi@northernsoft.co.jp","011-678-9012", "北海道函館市若松町2-4",               "https://northernsoft.co.jp",120),
-            ("長谷川", "遥",   "センチュリー不動産株式会社",   "賃貸管理部",   "管理課長",
-             "hasegawa@century-re.jp",    "03-8024-6802", "東京都港区麻布十番1-2-3",             "https://century-re.jp",    130),
-            ("福田", "義雄",   "ウエスタンフード株式会社",     "生産管理部",   "工場長",
-             "fukuda@western-food.co.jp", "086-345-6789", "岡山県岡山市北区奉還町1-5-7",         "https://western-food.co.jp",140),
-            ("近藤", "恵",     "メトロポリスバンク株式会社",   "法人営業部",   "上席営業部長",
-             "kondo@metropolis-bk.co.jp", "03-9135-7913", "東京都千代田区大手町2-6-8",           "https://metropolis-bk.co.jp",150),
-            ("土屋", "宗一郎", "スターライトエンタメ株式会社", "コンテンツ制作部","プロデューサー",
-             "tsuchiya@starlight-ent.jp", "03-0246-8024", "東京都渋谷区神南1-4-6",               "https://starlight-ent.jp", 160),
-            ("浜田", "貴子",   "ノードネットワーク株式会社",   "ネットワーク部","ネットワークアーキテクト",
-             "hamada@nodenet.co.jp",      "06-0123-4567", "大阪府大阪市都島区都島本通1-2-3",     "https://nodenet.co.jp",    170),
-            ("桑原", "亮太",   "テラバイトストレージ株式会社", "ストレージ部",  "ストレージエンジニア",
-             "kuwahara@terabyte-st.co.jp","03-1358-2469", "東京都江戸川区西葛西6-7-8",           "https://terabyte-st.co.jp",180),
-            ("矢野", "裕子",   "グリーンビルディング合同会社", "環境設計部",   "環境建築家",
-             "yano@greenbuild.jp",        "03-2469-3580", "東京都目黒区自由が丘1-2-3",           "https://greenbuild.jp",    200),
+            // ── それ以前 ──────────────────────────────
+            ("林",   "はやし", "明美", "あけみ",   "クシー食品株式会社",       "くしーしょくひん",
+             "商品開発部",     "研究員",             "hayashi@xi-foods.co.jp",     "054-901-2345", "静岡県静岡市葵区追手町1-2",       "https://xi-foods.co.jp",   100),
+            ("清水", "しみず", "大輔", "だいすけ", "オミクロンソフト株式会社", "おみくろんそふと",
+             "開発部",         "テックリード",       "shimizu@omicron-soft.jp",    "03-6789-0123", "東京都品川区大崎1-8-9",           "https://omicron-soft.jp",  130),
+            ("長谷川","はせがわ","遥", "はるか",   "センチュリー不動産株式会社","せんちゅりーふどうさん",
+             "賃貸管理部",     "管理課長",           "hasegawa@century-re.jp",     "03-8024-6802", "東京都港区麻布十番1-2-3",         "https://century-re.jp",    180),
         ]
 
         for entry in entries {
             let card = BusinessCard(context: context)
-            card.id         = UUID()
-            card.lastName   = entry.lastName
-            card.firstName  = entry.firstName
-            card.company    = entry.company
-            card.department = entry.department
-            card.title      = entry.title
-            card.email      = entry.email
-            card.phone      = entry.phone
-            card.address    = entry.address
-            card.website    = entry.website
+            card.id               = UUID()
+            card.lastName         = entry.lastName
+            card.lastNameReading  = entry.lastNameReading
+            card.firstName        = entry.firstName
+            card.firstNameReading = entry.firstNameReading
+            card.company          = entry.company
+            card.companyReading   = entry.companyReading
+            card.department       = entry.department
+            card.title            = entry.title
+            card.email            = entry.email
+            card.phone            = entry.phone
+            card.address          = entry.address
+            card.website          = entry.website
             let date = cal.date(byAdding: .day, value: -entry.daysAgo, to: now) ?? now
-            card.createdAt  = date
-            card.updatedAt  = date
+            card.createdAt        = date
+            card.updatedAt        = date
         }
         save()
     }

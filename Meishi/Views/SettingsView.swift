@@ -263,10 +263,10 @@ struct SettingsView: View {
             Button {
                 showSeedConfirm = true
             } label: {
-                Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
+                Label("サンプルデータを挿入", systemImage: "doc.badge.plus")
             }
             .confirmationDialog(
-                "サンプル名刺を50件追加しますか？",
+                "サンプル名刺を追加しますか？",
                 isPresented: $showSeedConfirm,
                 titleVisibility: .visible
             ) {
