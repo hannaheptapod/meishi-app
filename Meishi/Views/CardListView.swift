@@ -11,6 +11,7 @@ struct CardListView: View {
     @State private var capturedImage: UIImage? = nil
     @State private var isShowingSettings = false
     @State private var isShowingImportConfirm = false
+    @State private var sectionIndexChar: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -252,9 +253,21 @@ struct CardListView: View {
             }
             .listStyle(.plain)
             .scrollDismissesKeyboard(.immediately)
+            .overlay {
+                if let char = sectionIndexChar {
+                    Text(char)
+                        .font(.system(size: 36, weight: .bold))
+                        .frame(width: 60, height: 60)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .trailing) {
                 if showIndex {
-                    SectionIndexView(sections: viewModel.groupedCards) { sectionId in
+                    SectionIndexView(
+                        sections: viewModel.groupedCards,
+                        dragChar: $sectionIndexChar
+                    ) { sectionId in
                         proxy.scrollTo(sectionId, anchor: .top)
                     }
                     .padding(.trailing, 4)
@@ -333,50 +346,72 @@ private struct CardRowView: View {
 private struct SectionIndexView: View {
 
     let sections: [CardSection]
+    @Binding var dragChar: String?
     let onSelect: (String) -> Void
 
-    // かな行の代表文字 → セクションID マッピング
-    private static let kanaRows: [(char: String, sectionId: String)] = [
-        ("あ", "あ行"), ("か", "か行"), ("さ", "さ行"), ("た", "た行"), ("な", "な行"),
-        ("は", "は行"), ("ま", "ま行"), ("や", "や行"), ("ら", "ら行"), ("わ", "わ行")
-    ]
+    // A-Z → あかさたなはまやらわ → # （純正に合わせた順）
+    private static let allItems: [(char: String, sectionId: String)] = {
+        var items: [(String, String)] = []
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" { items.append((String(c), String(c))) }
+        for (c, s) in [("あ","あ行"),("か","か行"),("さ","さ行"),("た","た行"),("な","な行"),
+                       ("は","は行"),("ま","ま行"),("や","や行"),("ら","ら行"),("わ","わ行")] {
+            items.append((c, s))
+        }
+        items.append(("#", "その他"))
+        return items
+    }()
 
-    private var items: [(char: String, sectionId: String)] {
-        let existing = Set(sections.map(\.id))
-        var result: [(String, String)] = []
-        for row in Self.kanaRows where existing.contains(row.sectionId) {
-            result.append((row.char, row.sectionId))
+    private var existingIds: Set<String> { Set(sections.map(\.id)) }
+
+    // 対象セクションが存在しない場合は前後で最近傍を探す
+    private func nearestId(for sectionId: String) -> String? {
+        if existingIds.contains(sectionId) { return sectionId }
+        guard let idx = Self.allItems.firstIndex(where: { $0.sectionId == sectionId }) else { return nil }
+        for offset in 1...Self.allItems.count {
+            if idx - offset >= 0, existingIds.contains(Self.allItems[idx - offset].sectionId) {
+                return Self.allItems[idx - offset].sectionId
+            }
+            if idx + offset < Self.allItems.count, existingIds.contains(Self.allItems[idx + offset].sectionId) {
+                return Self.allItems[idx + offset].sectionId
+            }
         }
-        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
-            let s = String(c)
-            if existing.contains(s) { result.append((s, s)) }
-        }
-        if existing.contains("その他") { result.append(("#", "その他")) }
-        return result
+        return nil
     }
 
     var body: some View {
         GeometryReader { geo in
-            let list = items
-            if !list.isEmpty {
-                let itemH = geo.size.height / CGFloat(list.count)
-                VStack(spacing: 0) {
-                    ForEach(list, id: \.char) { item in
-                        Text(item.char)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 16, height: itemH)
-                    }
+            let items = Self.allItems
+            let itemH = geo.size.height / CGFloat(items.count)
+            VStack(spacing: 0) {
+                ForEach(items, id: \.char) { item in
+                    Text(item.char)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(
+                            existingIds.contains(item.sectionId)
+                                ? Color.accentColor
+                                : Color.secondary.opacity(0.3)
+                        )
+                        .frame(width: 16, height: itemH)
                 }
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let idx = max(0, min(Int(value.location.y / itemH), list.count - 1))
-                            onSelect(list[idx].sectionId)
-                        }
-                )
-                .contentShape(Rectangle())
             }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let idx = max(0, min(Int(value.location.y / itemH), items.count - 1))
+                        let item = items[idx]
+                        if dragChar != item.char {
+                            dragChar = item.char
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            if let id = nearestId(for: item.sectionId) {
+                                onSelect(id)
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        withAnimation(.easeOut(duration: 0.15)) { dragChar = nil }
+                    }
+            )
         }
         .frame(width: 16)
     }
