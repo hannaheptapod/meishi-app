@@ -19,10 +19,6 @@ enum CardSortKey: String, CaseIterable, Identifiable {
         case .updatedAt: return "calendar.badge.clock"
         }
     }
-
-    func directionLabel(ascending: Bool) -> String {
-        ascending ? "昇順" : "降順"
-    }
 }
 
 // セクション（グループ）単位
