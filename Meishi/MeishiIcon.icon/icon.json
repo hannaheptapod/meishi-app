@@ -38,7 +38,7 @@
           "image-name" : "layer_4_person_text.svg",
           "name" : "layer_4_person_text",
           "position" : {
-            "scale" : 0.96,
+            "scale" : 1,
             "translation-in-points" : [
               0,
               44
@@ -58,7 +58,7 @@
           "image-name" : "layer_3_card_main.svg",
           "name" : "layer_3_card_main",
           "position" : {
-            "scale" : 0.96,
+            "scale" : 0.98,
             "translation-in-points" : [
               0,
               44
@@ -78,7 +78,7 @@
           "image-name" : "layer_2_card_2nd.svg",
           "name" : "layer_2_card_2nd",
           "position" : {
-            "scale" : 0.96,
+            "scale" : 0.98,
             "translation-in-points" : [
               0,
               44
@@ -95,7 +95,7 @@
           "image-name" : "layer_1_card_3rd.svg",
           "name" : "layer_1_card_3rd",
           "position" : {
-            "scale" : 0.96,
+            "scale" : 0.98,
             "translation-in-points" : [
               0,
               44
