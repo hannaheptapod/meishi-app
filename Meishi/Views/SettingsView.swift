@@ -12,6 +12,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showDeleteAllConfirm = false
+    @State private var showDeleteModelConfirm = false
     @State private var modelError: String? = nil
 #if DEBUG
     @State private var showSeedConfirm = false
@@ -158,15 +159,22 @@ struct SettingsView: View {
         .swipeActions(edge: .trailing) {
             if llm.isModelAvailable {
                 Button(role: .destructive) {
-                    do {
-                        try llm.deleteModel()
-                    } catch {
-                        modelError = error.localizedDescription
-                    }
+                    showDeleteModelConfirm = true
                 } label: {
                     Label("削除", systemImage: "trash")
                 }
             }
+        }
+        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+            Button("削除", role: .destructive) {
+                do {
+                    try llm.deleteModel()
+                } catch {
+                    modelError = error.localizedDescription
+                }
+            }
+        } message: {
+            Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
         }
     }
 

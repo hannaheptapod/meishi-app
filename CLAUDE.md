@@ -149,6 +149,7 @@ meishi-app/
 ## 実装済み機能
 
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
+- ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
 - カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
 - Qwen2.5-0.5B CoreML 推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM名前・役職判定・10秒タイムアウト・stateful KV キャッシュ・BPEトークナイザー・早期終了ロジック）
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）

@@ -216,7 +216,11 @@ class CardListViewModel: ObservableObject {
     private func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            let name = (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
+            // ふりがながあればそちらを使ってセクション分類（ない場合は漢字）
+            let reading = card.lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+            let name = reading.isEmpty
+                ? (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
+                : reading
             let key = name.isEmpty ? "その他" : sectionKey(for: name)
             buckets[key, default: []].append(card)
         }
@@ -231,8 +235,9 @@ class CardListViewModel: ObservableObject {
         let noCompanyKey = "（会社名なし）"
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            let co = card.company ?? ""
-            let key = co.isEmpty ? noCompanyKey : sectionKey(for: co)
+            // companySortKey（法人格除去・読み優先）でセクション分類
+            let sortKey = card.companySortKey
+            let key = sortKey.isEmpty ? noCompanyKey : sectionKey(for: sortKey)
             buckets[key, default: []].append(card)
         }
         let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()
