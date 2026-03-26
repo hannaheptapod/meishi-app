@@ -284,16 +284,6 @@ struct CardListView: View {
             Text("名刺がありません")
                 .font(.title3)
                 .foregroundColor(.secondary)
-            HStack(spacing: 12) {
-                Button { isShowingCamera = true } label: {
-                    Label("カメラで撮影", systemImage: "camera")
-                }
-                .buttonStyle(.borderedProminent)
-                Button { isShowingForm = true } label: {
-                    Label("手動で追加", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
