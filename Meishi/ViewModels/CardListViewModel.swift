@@ -42,8 +42,12 @@ class CardListViewModel: ObservableObject {
     }
     @Published var filteredCards: [BusinessCard] = []
     @Published var groupedCards: [CardSection] = []
-    @Published var sortKey: CardSortKey = .createdAt
-    @Published var sortAscending: Bool = false  // 登録日時は降順（新しい順）がデフォルト
+    @Published var sortKey: CardSortKey {
+        didSet { SettingsStore.shared.sortKey = sortKey.rawValue }
+    }
+    @Published var sortAscending: Bool {
+        didSet { SettingsStore.shared.sortAscending = sortAscending }
+    }
 
     // 検索中かどうか（セクション表示 vs フラット表示の切替に使用）
     var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -65,6 +69,12 @@ class CardListViewModel: ObservableObject {
 
     init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
         self.context = context
+
+        // SettingsStore から前回のソート設定を復元
+        let settings = SettingsStore.shared
+        self.sortKey = CardSortKey(rawValue: settings.sortKey) ?? .createdAt
+        self.sortAscending = settings.sortAscending
+
         fetchCards()
 
         // 閾値が変わったら重複検出を再実行
