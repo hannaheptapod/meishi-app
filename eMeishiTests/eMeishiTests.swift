@@ -2,7 +2,7 @@ import Testing
 import CoreData
 import CoreGraphics
 import CoreML
-@testable import Meishi
+@testable import eMeishi
 
 // MARK: - テスト用ヘルパー
 

@@ -198,7 +198,7 @@ class LocalLLMService: ObservableObject {
                                           inputIds: [Int],
                                           timeoutSeconds: TimeInterval) async throws -> String {
         try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask {
+            group.addTask { @MainActor in
                 try self.runGeneration(model: model, tokenizer: tokenizer, inputIds: inputIds)
             }
             group.addTask {

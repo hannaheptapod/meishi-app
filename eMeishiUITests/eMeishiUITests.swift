@@ -1,6 +1,6 @@
 //
-//  MeishiUITests.swift
-//  MeishiUITests
+//  eMeishiUITests.swift
+//  eMeishiUITests
 //
 //  Created by Jin Kishimoto on 2026/03/24.
 //
@@ -10,7 +10,7 @@
 /*
 import XCTest
 
-final class MeishiUITests: XCTestCase {
+final class eMeishiUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false

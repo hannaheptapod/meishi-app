@@ -1,6 +1,6 @@
 //
-//  MeishiUITestsLaunchTests.swift
-//  MeishiUITests
+//  eMeishiUITestsLaunchTests.swift
+//  eMeishiUITests
 //
 //  Created by Jin Kishimoto on 2026/03/24.
 //
@@ -10,7 +10,7 @@
 /*
 import XCTest
 
-final class MeishiUITestsLaunchTests: XCTestCase {
+final class eMeishiUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
