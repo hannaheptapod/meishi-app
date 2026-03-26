@@ -63,7 +63,7 @@ struct SettingsView: View {
 
             // 標準読み取り
             readingMethodRow(.classifier, icon: "text.magnifyingglass") {
-                Text("常時利用可能").foregroundStyle(.secondary)
+                Text("利用可能").foregroundStyle(.secondary)
             }
 
             if let err = modelError {
@@ -116,10 +116,7 @@ struct SettingsView: View {
                 }
             } else if llm.isModelAvailable {
                 HStack(spacing: 8) {
-                    if let size = llm.modelFileSize {
-                        Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("利用可能").foregroundStyle(.green)
                     Button(role: .destructive) {
                         showDeleteModelConfirm = true
                     } label: {
@@ -129,17 +126,20 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
                 }
             } else {
-                Button("取得する") {
-                    Task {
-                        do {
-                            try await llm.downloadModel()
-                        } catch {
-                            modelError = error.localizedDescription
+                HStack(spacing: 8) {
+                    Text("未取得").foregroundStyle(.secondary)
+                    Button("取得する") {
+                        Task {
+                            do {
+                                try await llm.downloadModel()
+                            } catch {
+                                modelError = error.localizedDescription
+                            }
                         }
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
 
             if settings.readingMethod == .localLLM {
@@ -191,9 +191,9 @@ struct SettingsView: View {
         case .available:
             return Text("利用可能").foregroundStyle(.green)
         case .unavailable(.deviceNotEligible):
-            return Text("非対応デバイス").foregroundStyle(.secondary)
+            return Text("非対応").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("設定でオフになっています").foregroundStyle(.orange)
+            return Text("オフ").foregroundStyle(.orange)
         case .unavailable(.modelNotReady):
             return Text("準備中").foregroundStyle(.secondary)
         default:
