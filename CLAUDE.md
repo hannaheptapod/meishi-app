@@ -106,7 +106,7 @@ meishi-app/
 │   │   ├── DuplicateChecker.swift
 │   │   └── CardFieldClassifier.swift
 │   ├── Resources/
-│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）の2バージョン
+│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）の3バージョン
 │   └── Assets.xcassets                         # アプリアイコン・アクセントカラー含む
 ├── MeishiTests/
 │   └── MeishiTests.swift                       # プレースホルダーのみ
@@ -117,7 +117,7 @@ meishi-app/
 
 ---
 
-## CoreData スキーマ（v2 現在）
+## CoreData スキーマ（v3 現在）
 
 エンティティ名：`BusinessCard`
 
@@ -125,8 +125,11 @@ meishi-app/
 |---|---|---|
 | id | UUID | 主キー |
 | lastName | String | 姓 |
+| lastNameReading | String | **姓ふりがな（v3で追加）** |
 | firstName | String | 名 |
+| firstNameReading | String | **名ふりがな（v3で追加）** |
 | company | String | 会社名 |
+| companyReading | String | **会社名ふりがな（v3で追加）** |
 | department | String | **部署（v2で追加）** |
 | title | String | 役職 |
 | email | String | メールアドレス |
@@ -138,7 +141,7 @@ meishi-app/
 | createdAt | Date | 登録日時 |
 | updatedAt | Date | 更新日時 |
 
-- スキーマは `BusinessCard 2.xcdatamodel`（v2）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 を自動対応
+- スキーマは `BusinessCard 3.xcdatamodel`（v3）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 → v3 を自動対応
 - **スキーマを変更する場合：** `.xcdatamodeld` に新バージョンを追加し、軽量マイグレーション可能な変更（属性追加・省略可能化など）にとどめる。破壊的変更は Custom Migration が必要
 
 ---
@@ -155,6 +158,7 @@ meishi-app/
 - Levenshtein距離による重複検出（デフォルト閾値0.75・設定変更可）・マージUI
 - アプリアイコン・アクセントカラー
 - 閉じるボタン・検索UI改善
+- ふりがなフィールド（姓読み・名読み）：OCR時に名刺上のフリガナ行があれば自動取得、なければ CFStringTokenizer で自動生成。フォームで手動修正可能。名前順ソート・検索でも利用
 
 ## 未完了 / 保留中
 
