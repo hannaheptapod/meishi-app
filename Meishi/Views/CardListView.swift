@@ -5,7 +5,6 @@ import UIKit
 struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
-    @FocusState private var isSearchFocused: Bool
     @State private var isShowingForm = false
     @State private var isShowingCamera = false
     @State private var capturedImage: UIImage? = nil
@@ -16,16 +15,82 @@ struct CardListView: View {
     var body: some View {
         NavigationStack {
             Group {
-
                 if viewModel.cards.isEmpty {
                     emptyState
                 } else {
                     cardList
                 }
             }
-            .navigationBarHidden(true)
-            .safeAreaInset(edge: .bottom) {
-                bottomBar
+            .navigationTitle("名刺")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
+            .toolbar {
+                // 左: メニューボタン
+                ToolbarItem(placement: .bottomBar) {
+                    Menu {
+                        Menu {
+                            ForEach(CardSortKey.allCases) { key in
+                                Button { viewModel.toggleSort(key: key) } label: {
+                                    if viewModel.sortKey == key {
+                                        Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                                    } else {
+                                        Text(key.rawValue)
+                                    }
+                                }
+                                .menuActionDismissBehavior(.disabled)
+                            }
+                        } label: {
+                            Label("並び替え", systemImage: "arrow.up.arrow.down")
+                        }
+                        Divider()
+                        if !viewModel.cards.isEmpty {
+                            NavigationLink {
+                                DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
+                            } label: {
+                                Label(
+                                    viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
+                                    systemImage: "person.2.slash"
+                                )
+                            }
+                            Divider()
+                        }
+                        Button {
+                            isShowingImportConfirm = true
+                        } label: {
+                            Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
+                        }
+                        .disabled(viewModel.isImporting)
+                        if !viewModel.cards.isEmpty {
+                            Divider()
+                            Button { viewModel.exportCSV() } label: {
+                                Label("CSV としてエクスポート", systemImage: "tablecells")
+                            }
+                            Button { viewModel.exportVCard() } label: {
+                                Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
+                            }
+                        }
+                        Divider()
+                        Button { isShowingSettings = true } label: {
+                            Label("設定", systemImage: "gearshape")
+                        }
+                    } label: {
+                        Label("メニュー", systemImage: "ellipsis")
+                    }
+                }
+
+                // 中央: 検索バー（システム提供・Liquid Glass自動適用）
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+
+                // 右: 追加ボタン
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        isShowingCamera = true
+                    } label: {
+                        Label("追加", systemImage: "plus")
+                    }
+                }
             }
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
@@ -73,138 +138,6 @@ struct CardListView: View {
             .onAppear(perform: viewModel.fetchCards)
         }
         .environmentObject(viewModel)
-    }
-
-    // MARK: - 下部バー
-
-    @ViewBuilder
-    private var bottomBar: some View {
-        if #available(iOS 26.0, *) {
-            // Liquid Glass
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    ellipsisMenu
-                        .glassEffect(in: .capsule)
-
-                    searchField
-                        .glassEffect(in: .capsule)
-
-                    addMenu
-                        .glassEffect(in: .capsule)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-        } else {
-            HStack(spacing: 8) {
-                ellipsisMenu
-                searchField
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.quaternary, in: Capsule())
-                addMenu
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(.bar)
-        }
-    }
-
-    private var ellipsisMenu: some View {
-        Menu {
-            Menu {
-                ForEach(CardSortKey.allCases) { key in
-                    Button { viewModel.toggleSort(key: key) } label: {
-                        if viewModel.sortKey == key {
-                            Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                        } else {
-                            Text(key.rawValue)
-                        }
-                    }
-                    .menuActionDismissBehavior(.disabled)
-                }
-            } label: {
-                Label("並び替え", systemImage: "arrow.up.arrow.down")
-            }
-            Divider()
-            if !viewModel.cards.isEmpty {
-                NavigationLink {
-                    DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
-                } label: {
-                    Label(
-                        viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
-                        systemImage: "person.2.slash"
-                    )
-                }
-                Divider()
-            }
-            Button {
-                isShowingImportConfirm = true
-            } label: {
-                Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
-            }
-            .disabled(viewModel.isImporting)
-            if !viewModel.cards.isEmpty {
-                Divider()
-                Button { viewModel.exportCSV() } label: {
-                    Label("CSV としてエクスポート", systemImage: "tablecells")
-                }
-                Button { viewModel.exportVCard() } label: {
-                    Label("vCard としてエクスポート", systemImage: "person.crop.rectangle")
-                }
-            }
-            Divider()
-            Button { isShowingSettings = true } label: {
-                Label("設定", systemImage: "gearshape")
-            }
-        } label: {
-            Image(systemName: viewModel.duplicatePairs.isEmpty ? "ellipsis" : "ellipsis")
-                .symbolRenderingMode(viewModel.duplicatePairs.isEmpty ? .monochrome : .palette)
-                .foregroundStyle(viewModel.duplicatePairs.isEmpty ? Color.primary : Color.red)
-                .font(.system(size: 20, weight: .medium))
-        .frame(width: 44, height: 44)
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(.secondary)
-            TextField("検索", text: $viewModel.searchText)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .focused($isSearchFocused)
-            if !viewModel.searchText.isEmpty {
-                Button { viewModel.searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-    }
-
-    @ViewBuilder
-    private var addMenu: some View {
-        if !viewModel.searchText.isEmpty || isSearchFocused {
-            // 検索中は × ボタンで検索を閉じる（テキストクリア＋キーボード閉じる）
-            Button {
-                viewModel.searchText = ""
-                isSearchFocused = false
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 20, weight: .medium))
-                    .frame(width: 44, height: 44)
-            }
-        } else {
-            Button { isShowingCamera = true } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .medium))
-                    .frame(width: 44, height: 44)
-            }
-        }
     }
 
     // MARK: - サブビュー
