@@ -26,8 +26,8 @@ struct CardListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
             .toolbar {
-                // 左上: 3点リーダーメニュー
-                ToolbarItem(placement: .topBarLeading) {
+                // 右上: 3点リーダーメニュー
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if !viewModel.cards.isEmpty {
                             NavigationLink {
@@ -71,6 +71,22 @@ struct CardListView: View {
                 // 左: 並び替え・フィルタ統合メニュー
                 ToolbarItem(placement: .bottomBar) {
                     Menu {
+                        // ── フィルタ ──
+                        Section("フィルタ") {
+                            Button { viewModel.toggleFavoritesFilter() } label: {
+                                Label("お気に入りのみ", systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "circle")
+                            }
+                            .menuActionDismissBehavior(.disabled)
+                            if !viewModel.allTags.isEmpty {
+                                ForEach(viewModel.allTags) { tag in
+                                    Button { viewModel.toggleTagFilter(tag) } label: {
+                                        Label(tag.tagName, systemImage: viewModel.selectedTagIDs.contains(tag.id ?? UUID()) ? "checkmark.circle.fill" : "circle")
+                                    }
+                                    .menuActionDismissBehavior(.disabled)
+                                }
+                            }
+                        }
+
                         // ── 並び替え ──
                         Section("並び替え") {
                             ForEach(CardSortKey.allCases) { key in
@@ -82,40 +98,6 @@ struct CardListView: View {
                                     }
                                 }
                                 .menuActionDismissBehavior(.disabled)
-                            }
-                        }
-
-                        // ── フィルタ ──
-                        Section("フィルタ") {
-                            Button {
-                                viewModel.toggleFavoritesFilter()
-                            } label: {
-                                Label(
-                                    "お気に入りのみ",
-                                    systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "star"
-                                )
-                            }
-                            if !viewModel.allTags.isEmpty {
-                                ForEach(viewModel.allTags) { tag in
-                                    Button {
-                                        viewModel.toggleTagFilter(tag)
-                                    } label: {
-                                        let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                                        Label(
-                                            tag.tagName,
-                                            systemImage: selected ? "checkmark.circle.fill" : "tag"
-                                        )
-                                    }
-                                }
-                            }
-                            if viewModel.isFilterActive {
-                                Button(role: .destructive) {
-                                    viewModel.showFavoritesOnly = false
-                                    viewModel.selectedTagIDs.removeAll()
-                                    viewModel.fetchCards()
-                                } label: {
-                                    Label("フィルタを解除", systemImage: "xmark.circle")
-                                }
                             }
                         }
                     } label: {
