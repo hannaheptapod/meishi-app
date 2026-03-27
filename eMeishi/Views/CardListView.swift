@@ -26,8 +26,8 @@ struct CardListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
             .toolbar {
-                // 左上: 3点リーダーメニュー
-                ToolbarItem(placement: .topBarLeading) {
+                // 右上: 3点リーダーメニュー
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if !viewModel.cards.isEmpty {
                             NavigationLink {
@@ -90,22 +90,26 @@ struct CardListView: View {
                             Button {
                                 viewModel.toggleFavoritesFilter()
                             } label: {
-                                Label(
-                                    "お気に入りのみ",
-                                    systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "star"
-                                )
+                                if viewModel.showFavoritesOnly {
+                                    Label("お気に入りのみ", systemImage: "checkmark")
+                                } else {
+                                    Text("お気に入りのみ")
+                                }
                             }
+                            .menuActionDismissBehavior(.disabled)
                             if !viewModel.allTags.isEmpty {
                                 ForEach(viewModel.allTags) { tag in
                                     Button {
                                         viewModel.toggleTagFilter(tag)
                                     } label: {
                                         let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                                        Label(
-                                            tag.tagName,
-                                            systemImage: selected ? "checkmark.circle.fill" : "tag"
-                                        )
+                                        if selected {
+                                            Label(tag.tagName, systemImage: "checkmark")
+                                        } else {
+                                            Text(tag.tagName)
+                                        }
                                     }
+                                    .menuActionDismissBehavior(.disabled)
                                 }
                             }
                             if viewModel.isFilterActive {
