@@ -347,9 +347,12 @@ private struct SectionIndexView: View {
 
     private var existingIds: Set<String> { Set(sections.map(\.id)) }
 
-    /// 存在するセクションのみに絞ったアイテムリスト（純正と同様に空セクションは非表示）
+    /// かな行 + # は常時表示、A-Z は存在するセクションのみ表示
+    private static let alwaysVisibleIds: Set<String> = Set(
+        ["あ行","か行","さ行","た行","な行","は行","ま行","や行","ら行","わ行","その他"]
+    )
     private var filteredItems: [(char: String, sectionId: String)] {
-        Self.allItems.filter { existingIds.contains($0.sectionId) }
+        Self.allItems.filter { Self.alwaysVisibleIds.contains($0.sectionId) || existingIds.contains($0.sectionId) }
     }
 
     // 対象セクションが存在しない場合は前後で最近傍を探す
