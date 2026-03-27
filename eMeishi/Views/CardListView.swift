@@ -90,10 +90,11 @@ struct CardListView: View {
                             Button {
                                 viewModel.toggleFavoritesFilter()
                             } label: {
-                                if viewModel.showFavoritesOnly {
-                                    Label("お気に入りのみ", systemImage: "checkmark")
-                                } else {
+                                Label {
                                     Text("お気に入りのみ")
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                        .opacity(viewModel.showFavoritesOnly ? 1 : 0)
                                 }
                             }
                             .menuActionDismissBehavior(.disabled)
@@ -103,10 +104,11 @@ struct CardListView: View {
                                         viewModel.toggleTagFilter(tag)
                                     } label: {
                                         let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                                        if selected {
-                                            Label(tag.tagName, systemImage: "checkmark")
-                                        } else {
+                                        Label {
                                             Text(tag.tagName)
+                                        } icon: {
+                                            Image(systemName: "checkmark")
+                                                .opacity(selected ? 1 : 0)
                                         }
                                     }
                                     .menuActionDismissBehavior(.disabled)
