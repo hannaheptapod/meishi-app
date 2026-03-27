@@ -91,17 +91,18 @@ struct CardListView: View {
                                 get: { viewModel.showFavoritesOnly },
                                 set: { _ in viewModel.toggleFavoritesFilter() }
                             ))
+                            .menuActionDismissBehavior(.disabled)
                             if !viewModel.allTags.isEmpty {
                                 ForEach(viewModel.allTags) { tag in
                                     Toggle(tag.tagName, isOn: Binding(
                                         get: { viewModel.selectedTagIDs.contains(tag.id ?? UUID()) },
                                         set: { _ in viewModel.toggleTagFilter(tag) }
                                     ))
+                                    .menuActionDismissBehavior(.disabled)
                                 }
                             }
-                        }
-                        if viewModel.isFilterActive {
-                            Section {
+                            if viewModel.isFilterActive {
+                                Divider()
                                 Button(role: .destructive) {
                                     viewModel.showFavoritesOnly = false
                                     viewModel.selectedTagIDs.removeAll()
