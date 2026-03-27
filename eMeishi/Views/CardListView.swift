@@ -236,9 +236,9 @@ struct CardListView: View {
                             }
                         } header: {
                             Text(section.title)
-                                .font(.footnote)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.primary)
                                 .textCase(nil)
                         }
                         .id(section.id)
@@ -246,7 +246,7 @@ struct CardListView: View {
                 }
             }
             .listStyle(.plain)
-            .scrollIndicators(showIndex ? .hidden : .automatic)
+            .scrollIndicators(.automatic)
             .scrollDismissesKeyboard(.immediately)
             .overlay {
                 if let char = sectionIndexChar {
@@ -254,9 +254,12 @@ struct CardListView: View {
                         .font(.system(size: 36, weight: .bold))
                         .frame(width: 60, height: 60)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .shadow(radius: 4, y: 2)
+                        .transition(.scale.combined(with: .opacity))
                         .allowsHitTesting(false)
                 }
             }
+            .animation(.easeOut(duration: 0.15), value: sectionIndexChar)
             .overlay(alignment: .trailing) {
                 if showIndex {
                     SectionIndexView(
@@ -342,6 +345,8 @@ private struct SectionIndexView: View {
     @Binding var dragChar: String?
     let proxy: ScrollViewProxy
 
+    @State private var feedbackGenerator = UISelectionFeedbackGenerator()
+
     // あかさたなはまやらわ → A-Z → # （かなをアルファベットより上に配置）
     private static let allItems: [(char: String, sectionId: String)] = {
         var items: [(String, String)] = []
@@ -355,6 +360,11 @@ private struct SectionIndexView: View {
     }()
 
     private var existingIds: Set<String> { Set(sections.map(\.id)) }
+
+    /// 存在するセクションのみに絞ったアイテムリスト（純正と同様に空セクションは非表示）
+    private var filteredItems: [(char: String, sectionId: String)] {
+        Self.allItems.filter { existingIds.contains($0.sectionId) }
+    }
 
     // 対象セクションが存在しない場合は前後で最近傍を探す
     private func nearestId(for sectionId: String) -> String? {
@@ -371,49 +381,49 @@ private struct SectionIndexView: View {
         return nil
     }
 
-    private static let itemHeight: CGFloat = 16
+    private static let itemHeight: CGFloat = 14
 
     /// 利用可能な高さに収まるよう等間隔に間引いた表示用アイテムを返す
-    private static func visibleItems(for height: CGFloat) -> [(char: String, sectionId: String)] {
-        let all = allItems
+    private static func thinned(_ items: [(char: String, sectionId: String)], for height: CGFloat) -> [(char: String, sectionId: String)] {
         let maxCount = max(2, Int(height / itemHeight))
-        if all.count <= maxCount { return all }
-        var result: [(String, String)] = [all.first!]
-        let step = Double(all.count - 1) / Double(maxCount - 1)
+        if items.count <= maxCount { return items }
+        var result: [(String, String)] = [items.first!]
+        let step = Double(items.count - 1) / Double(maxCount - 1)
         for i in 1..<(maxCount - 1) {
             let idx = Int((Double(i) * step).rounded())
-            result.append(all[idx])
+            result.append(items[idx])
         }
-        result.append(all.last!)
+        result.append(items.last!)
         return result
     }
 
     var body: some View {
         GeometryReader { geo in
-            let visible = Self.visibleItems(for: geo.size.height)
-            let itemH = geo.size.height / CGFloat(visible.count)
+            let availableHeight = geo.size.height - 16 // 上下パディング分を差し引く
+            let visible = Self.thinned(filteredItems, for: availableHeight)
+            let itemH = visible.isEmpty ? 0 : min(availableHeight / CGFloat(visible.count), 20)
             VStack(spacing: 0) {
                 ForEach(visible, id: \.char) { item in
                     Text(item.char)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(
-                            existingIds.contains(item.sectionId)
-                                ? Color.accentColor
-                                : Color.secondary.opacity(0.3)
-                        )
-                        .frame(width: 16, height: itemH)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.primary.opacity(0.5))
+                        .frame(width: 14, height: itemH)
                 }
             }
-            .padding(.leading, 12)
+            .frame(maxHeight: .infinity, alignment: .center)
+            .padding(.leading, 4)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let idx = max(0, min(Int(value.location.y / itemH), visible.count - 1))
+                        feedbackGenerator.prepare()
+                        let paddingTop = (geo.size.height - itemH * CGFloat(visible.count)) / 2
+                        let adjustedY = value.location.y - paddingTop
+                        let idx = max(0, min(Int(adjustedY / itemH), visible.count - 1))
                         let item = visible[idx]
                         if dragChar != item.char {
                             dragChar = item.char
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            feedbackGenerator.selectionChanged()
                             if let id = nearestId(for: item.sectionId) {
                                 proxy.scrollTo(id, anchor: .top)
                             }
@@ -424,7 +434,8 @@ private struct SectionIndexView: View {
                     }
             )
         }
-        .frame(width: 28)
+        .frame(width: 20)
+        .padding(.vertical, 8)
     }
 }
 
