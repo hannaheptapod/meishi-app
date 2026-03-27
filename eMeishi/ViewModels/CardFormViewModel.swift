@@ -2,7 +2,9 @@ import Foundation
 import CoreData
 import Combine
 import UIKit
-// import FoundationModels  // フレームワーク未リンクのためコメントアウト
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 // 名刺の新規作成・編集フォームのViewModel
 class CardFormViewModel: ObservableObject {
@@ -108,12 +110,27 @@ class CardFormViewModel: ObservableObject {
 
             switch SettingsStore.shared.readingMethod {
             case .automatic:
-                // FoundationModels 未リンクのため LocalLLM → Classifier にフォールバック
+                #if canImport(FoundationModels)
+                if #available(iOS 26.0, *) {
+                    await populateWithFoundationModels(lines: lines)
+                } else {
+                    await populateWithLocalLLMOrClassifier(lines: lines)
+                }
+                #else
                 await populateWithLocalLLMOrClassifier(lines: lines)
+                #endif
             case .appleIntelligence:
-                // FoundationModels 未リンクのため Classifier で代替
+                #if canImport(FoundationModels)
+                if #available(iOS 26.0, *) {
+                    await populateWithFoundationModelsOnly(lines: lines)
+                } else {
+                    ocrErrorMessage = "Apple Intelligence は iOS 26 以降で利用できます。標準読み取りで処理しました。"
+                    populateWithClassifier(lines: lines)
+                }
+                #else
                 ocrErrorMessage = "Apple Intelligence は現在利用できません。標準読み取りで処理しました。"
                 populateWithClassifier(lines: lines)
+                #endif
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
                 await populateWithLocalLLMOnly(lines: lines)
@@ -127,62 +144,61 @@ class CardFormViewModel: ObservableObject {
         isProcessingOCR = false
     }
 
-    // 自動モード: Foundation Models → Classifier の順にフォールバック
-    // FoundationModels framework 未リンクのためコメントアウト
-//    @available(iOS 18.0, *)
-//    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
-//        switch SystemLanguageModel.default.availability {
-//        case .available:
-//            do {
-//                try await runFoundationModels(lines: lines)
-//            } catch {
-//                populateWithClassifier(lines: lines)
-//            }
-//        default:
-//            populateWithClassifier(lines: lines)
-//        }
-//    }
+    #if canImport(FoundationModels)
+    // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
+    @available(iOS 26.0, *)
+    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            do {
+                try await runFoundationModels(lines: lines)
+            } catch {
+                await populateWithLocalLLMOrClassifier(lines: lines)
+            }
+        default:
+            await populateWithLocalLLMOrClassifier(lines: lines)
+        }
+    }
 
     // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
-    // FoundationModels framework 未リンクのためコメントアウト
-//    @available(iOS 18.0, *)
-//    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
-//        switch SystemLanguageModel.default.availability {
-//        case .available:
-//            do {
-//                try await runFoundationModels(lines: lines)
-//            } catch {
-//                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
-//                populateWithClassifier(lines: lines)
-//            }
-//        default:
-//            ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
-//            populateWithClassifier(lines: lines)
-//        }
-//    }
+    @available(iOS 26.0, *)
+    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            do {
+                try await runFoundationModels(lines: lines)
+            } catch {
+                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
+                populateWithClassifier(lines: lines)
+            }
+        default:
+            ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
+            populateWithClassifier(lines: lines)
+        }
+    }
 
-    // FoundationModels framework 未リンクのためコメントアウト
-//    @available(iOS 18.0, *)
-//    private func runFoundationModels(lines: [RecognizedLine]) async throws {
-//        let rawText = lines.map { $0.text }.joined(separator: "\n")
-//        let session = LanguageModelSession()
-//        let prompt = """
-//            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-//            姓と名は必ず分けてください。
-//            \(rawText)
-//            """
-//        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-//        let p = response.content
-//        apply(lastName: p.lastName,
-//              lastNameReading: Self.generateReading(from: p.lastName),
-//              firstName: p.firstName,
-//              firstNameReading: Self.generateReading(from: p.firstName),
-//              company: p.company,
-//              companyReading: Self.generateReading(from: p.company),
-//              department: p.department, title: p.title,
-//              phones: p.phone.isEmpty ? [] : [p.phone],
-//              email: p.email, address: p.address, website: p.website)
-//    }
+    @available(iOS 26.0, *)
+    private func runFoundationModels(lines: [RecognizedLine]) async throws {
+        let rawText = lines.map { $0.text }.joined(separator: "\n")
+        let session = LanguageModelSession()
+        let prompt = """
+            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
+            姓と名は必ず分けてください。
+            \(rawText)
+            """
+        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
+        let p = response.content
+        apply(lastName: p.lastName,
+              lastNameReading: Self.generateReading(from: p.lastName),
+              firstName: p.firstName,
+              firstNameReading: Self.generateReading(from: p.firstName),
+              company: p.company,
+              companyReading: Self.generateReading(from: p.company),
+              department: p.department, title: p.title,
+              phones: p.phone.isEmpty ? [] : [p.phone],
+              email: p.email, address: p.address, website: p.website)
+    }
+    #endif
 
     // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
     // LLMが失敗してもルールベース結果が返るため、完全な失敗は「モデル未ロード」のみ
@@ -353,16 +369,18 @@ class CardFormViewModel: ObservableObject {
 }
 
 // MARK: - ParsedCard（Foundation Models @Generable 定義）
-// FoundationModels framework 未リンクのためコメントアウト
-//@Generable
-//struct ParsedCard {
-//    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
-//    @Guide(description: "名（ファーストネーム）")          var firstName: String
-//    @Guide(description: "会社名")                          var company: String
-//    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
-//    @Guide(description: "役職（部長・Directorなど）")      var title: String
-//    @Guide(description: "電話番号")                        var phone: String
-//    @Guide(description: "メールアドレス")                  var email: String
-//    @Guide(description: "住所")                            var address: String
-//    @Guide(description: "WebサイトURL")                   var website: String
-//}
+#if canImport(FoundationModels)
+@available(iOS 26.0, *)
+@Generable
+struct ParsedCard {
+    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
+    @Guide(description: "名（ファーストネーム）")          var firstName: String
+    @Guide(description: "会社名")                          var company: String
+    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
+    @Guide(description: "役職（部長・Directorなど）")      var title: String
+    @Guide(description: "電話番号")                        var phone: String
+    @Guide(description: "メールアドレス")                  var email: String
+    @Guide(description: "住所")                            var address: String
+    @Guide(description: "WebサイトURL")                   var website: String
+}
+#endif

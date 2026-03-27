@@ -49,7 +49,7 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。クラウド�
 | UI フレームワーク | SwiftUI |
 | データ永続化 | CoreData（端末内のみ・オフライン完結） |
 | OCR（文字認識） | Vision Framework（VNRecognizeTextRequest） |
-| 意味分析 Tier 1 | Apple Foundation Models（FoundationModels framework・現在コメントアウト中） |
+| 意味分析 Tier 1 | Apple Foundation Models（FoundationModels framework・`#if canImport` で条件付きコンパイル・iOS 26+） |
 | 意味分析 Tier 2 | Qwen2.5-0.5B-Instruct CoreML（LocalLLMService / オプションダウンロード） |
 | 意味分析 Tier 3 | 正規表現ベース分類（CardFieldClassifier・常時利用可能） |
 | BPEトークナイザー | Qwen25Tokenizer（HuggingFace tokenizer.json を解析） |
