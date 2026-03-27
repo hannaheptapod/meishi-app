@@ -71,40 +71,34 @@ struct CardListView: View {
                 // 左: 並び替え・フィルタ統合メニュー
                 ToolbarItem(placement: .bottomBar) {
                     Menu {
-                        // フィルタ
-                        Button { viewModel.toggleFavoritesFilter() } label: {
-                            if viewModel.showFavoritesOnly {
-                                Label("お気に入りのみ", systemImage: "checkmark")
-                            } else {
-                                Text("お気に入りのみ")
+                        // ── フィルタ ──
+                        Section("フィルタ") {
+                            Button { viewModel.toggleFavoritesFilter() } label: {
+                                Label("お気に入りのみ", systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "circle")
+                            }
+                            .menuActionDismissBehavior(.disabled)
+                            if !viewModel.allTags.isEmpty {
+                                ForEach(viewModel.allTags) { tag in
+                                    Button { viewModel.toggleTagFilter(tag) } label: {
+                                        Label(tag.tagName, systemImage: viewModel.selectedTagIDs.contains(tag.id ?? UUID()) ? "checkmark.circle.fill" : "circle")
+                                    }
+                                    .menuActionDismissBehavior(.disabled)
+                                }
                             }
                         }
-                        .menuActionDismissBehavior(.disabled)
-                        if !viewModel.allTags.isEmpty {
-                            ForEach(viewModel.allTags) { tag in
-                                Button { viewModel.toggleTagFilter(tag) } label: {
-                                    if viewModel.selectedTagIDs.contains(tag.id ?? UUID()) {
-                                        Label(tag.tagName, systemImage: "checkmark")
+
+                        // ── 並び替え ──
+                        Section("並び替え") {
+                            ForEach(CardSortKey.allCases) { key in
+                                Button { viewModel.toggleSort(key: key) } label: {
+                                    if viewModel.sortKey == key {
+                                        Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
                                     } else {
-                                        Text(tag.tagName)
+                                        Text(key.rawValue)
                                     }
                                 }
                                 .menuActionDismissBehavior(.disabled)
                             }
-                        }
-
-                        Divider()
-
-                        // 並び替え
-                        ForEach(CardSortKey.allCases) { key in
-                            Button { viewModel.toggleSort(key: key) } label: {
-                                if viewModel.sortKey == key {
-                                    Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                                } else {
-                                    Text(key.rawValue)
-                                }
-                            }
-                            .menuActionDismissBehavior(.disabled)
                         }
                     } label: {
                         Label(
