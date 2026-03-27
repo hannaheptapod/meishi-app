@@ -107,16 +107,6 @@ struct CardListView: View {
                                     .menuActionDismissBehavior(.disabled)
                                 }
                             }
-                            if viewModel.isFilterActive {
-                                Divider()
-                                Button(role: .destructive) {
-                                    viewModel.showFavoritesOnly = false
-                                    viewModel.selectedTagIDs.removeAll()
-                                    viewModel.fetchCards()
-                                } label: {
-                                    Label("フィルタを解除", systemImage: "xmark.circle")
-                                }
-                            }
                         }
                     } label: {
                         Label(
