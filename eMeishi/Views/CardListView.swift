@@ -71,42 +71,40 @@ struct CardListView: View {
                 // 左: 並び替え・フィルタ統合メニュー
                 ToolbarItem(placement: .bottomBar) {
                     Menu {
-                        // ── 並び替え ──
-                        Section("並び替え") {
-                            ForEach(CardSortKey.allCases) { key in
-                                Button { viewModel.toggleSort(key: key) } label: {
-                                    if viewModel.sortKey == key {
-                                        Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                        // フィルタ
+                        Button { viewModel.toggleFavoritesFilter() } label: {
+                            if viewModel.showFavoritesOnly {
+                                Label("お気に入りのみ", systemImage: "checkmark")
+                            } else {
+                                Text("お気に入りのみ")
+                            }
+                        }
+                        .menuActionDismissBehavior(.disabled)
+                        if !viewModel.allTags.isEmpty {
+                            ForEach(viewModel.allTags) { tag in
+                                Button { viewModel.toggleTagFilter(tag) } label: {
+                                    if viewModel.selectedTagIDs.contains(tag.id ?? UUID()) {
+                                        Label(tag.tagName, systemImage: "checkmark")
                                     } else {
-                                        Text(key.rawValue)
+                                        Text(tag.tagName)
                                     }
                                 }
                                 .menuActionDismissBehavior(.disabled)
                             }
                         }
 
-                        // ── フィルタ ──
-                        Section("フィルタ") {
-                            Button { viewModel.toggleFavoritesFilter() } label: {
-                                if viewModel.showFavoritesOnly {
-                                    Label("お気に入りのみ", systemImage: "checkmark")
+                        Divider()
+
+                        // 並び替え
+                        ForEach(CardSortKey.allCases) { key in
+                            Button { viewModel.toggleSort(key: key) } label: {
+                                if viewModel.sortKey == key {
+                                    Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
                                 } else {
-                                    Text("お気に入りのみ")
+                                    Text(key.rawValue)
                                 }
                             }
                             .menuActionDismissBehavior(.disabled)
-                            if !viewModel.allTags.isEmpty {
-                                ForEach(viewModel.allTags) { tag in
-                                    Button { viewModel.toggleTagFilter(tag) } label: {
-                                        if viewModel.selectedTagIDs.contains(tag.id ?? UUID()) {
-                                            Label(tag.tagName, systemImage: "checkmark")
-                                        } else {
-                                            Text(tag.tagName)
-                                        }
-                                    }
-                                    .menuActionDismissBehavior(.disabled)
-                                }
-                            }
                         }
                     } label: {
                         Label(
