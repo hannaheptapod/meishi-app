@@ -87,17 +87,23 @@ struct CardListView: View {
 
                         // ── フィルタ ──
                         Section("フィルタ") {
-                            Toggle("お気に入りのみ", isOn: Binding(
-                                get: { viewModel.showFavoritesOnly },
-                                set: { _ in viewModel.toggleFavoritesFilter() }
-                            ))
+                            Button { viewModel.toggleFavoritesFilter() } label: {
+                                if viewModel.showFavoritesOnly {
+                                    Label("お気に入りのみ", systemImage: "checkmark")
+                                } else {
+                                    Text("お気に入りのみ")
+                                }
+                            }
                             .menuActionDismissBehavior(.disabled)
                             if !viewModel.allTags.isEmpty {
                                 ForEach(viewModel.allTags) { tag in
-                                    Toggle(tag.tagName, isOn: Binding(
-                                        get: { viewModel.selectedTagIDs.contains(tag.id ?? UUID()) },
-                                        set: { _ in viewModel.toggleTagFilter(tag) }
-                                    ))
+                                    Button { viewModel.toggleTagFilter(tag) } label: {
+                                        if viewModel.selectedTagIDs.contains(tag.id ?? UUID()) {
+                                            Label(tag.tagName, systemImage: "checkmark")
+                                        } else {
+                                            Text(tag.tagName)
+                                        }
+                                    }
                                     .menuActionDismissBehavior(.disabled)
                                 }
                             }
