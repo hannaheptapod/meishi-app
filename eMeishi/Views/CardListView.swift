@@ -11,7 +11,6 @@ struct CardListView: View {
     @State private var isShowingSettings = false
     @State private var isShowingImportConfirm = false
     @State private var isShowingTagManager = false
-    @State private var sectionIndexChar: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -246,25 +245,12 @@ struct CardListView: View {
                 }
             }
             .listStyle(.plain)
-            .scrollIndicators(.automatic)
+            .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
-            .overlay {
-                if let char = sectionIndexChar {
-                    Text(char)
-                        .font(.system(size: 36, weight: .bold))
-                        .frame(width: 60, height: 60)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                        .shadow(radius: 4, y: 2)
-                        .transition(.scale.combined(with: .opacity))
-                        .allowsHitTesting(false)
-                }
-            }
-            .animation(.easeOut(duration: 0.15), value: sectionIndexChar)
             .overlay(alignment: .trailing) {
                 if showIndex {
                     SectionIndexView(
                         sections: viewModel.groupedCards,
-                        dragChar: $sectionIndexChar,
                         proxy: proxy
                     )
                     .padding(.trailing, 0)
@@ -342,10 +328,10 @@ private struct CardRowView: View {
 private struct SectionIndexView: View {
 
     let sections: [CardSection]
-    @Binding var dragChar: String?
     let proxy: ScrollViewProxy
 
     @State private var feedbackGenerator = UISelectionFeedbackGenerator()
+    @State private var lastChar: String?
 
     // あかさたなはまやらわ → A-Z → # （かなをアルファベットより上に配置）
     private static let allItems: [(char: String, sectionId: String)] = {
@@ -421,8 +407,8 @@ private struct SectionIndexView: View {
                         let adjustedY = value.location.y - paddingTop
                         let idx = max(0, min(Int(adjustedY / itemH), visible.count - 1))
                         let item = visible[idx]
-                        if dragChar != item.char {
-                            dragChar = item.char
+                        if lastChar != item.char {
+                            lastChar = item.char
                             feedbackGenerator.selectionChanged()
                             if let id = nearestId(for: item.sectionId) {
                                 proxy.scrollTo(id, anchor: .top)
@@ -430,7 +416,7 @@ private struct SectionIndexView: View {
                         }
                     }
                     .onEnded { _ in
-                        withAnimation(.easeOut(duration: 0.15)) { dragChar = nil }
+                        lastChar = nil
                     }
             )
         }
