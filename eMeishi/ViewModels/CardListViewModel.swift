@@ -377,6 +377,50 @@ class CardListViewModel: ObservableObject {
             .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
     }
 
+    // MARK: - 一括操作（選択モード）
+
+    func selectedCards(from ids: Set<BusinessCard.ID>) -> [BusinessCard] {
+        cards.filter { ids.contains($0.id) }
+    }
+
+    func exportSelectedCSV(ids: Set<BusinessCard.ID>) {
+        let selected = selectedCards(from: ids)
+        guard !selected.isEmpty else { return }
+        do {
+            exportItem = ExportItem(url: try ExportService.shared.exportCSV(from: selected))
+        } catch {
+            errorMessage = "CSVエクスポートに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func exportSelectedVCard(ids: Set<BusinessCard.ID>) {
+        let selected = selectedCards(from: ids)
+        guard !selected.isEmpty else { return }
+        do {
+            exportItem = ExportItem(url: try ExportService.shared.exportVCard(from: selected))
+        } catch {
+            errorMessage = "vCardエクスポートに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func addTagToCards(tag: Tag, ids: Set<BusinessCard.ID>) {
+        let selected = selectedCards(from: ids)
+        for card in selected {
+            card.addToTags(tag)
+            card.updatedAt = Date()
+        }
+        save()
+    }
+
+    func removeTagFromCards(tag: Tag, ids: Set<BusinessCard.ID>) {
+        let selected = selectedCards(from: ids)
+        for card in selected {
+            card.removeFromTags(tag)
+            card.updatedAt = Date()
+        }
+        save()
+    }
+
     // MARK: - 重複検出
 
     func detectDuplicates() {
