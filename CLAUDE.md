@@ -82,7 +82,9 @@ meishi-app/
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
 │   │   ├── BusinessCard+CoreDataClass.swift
-│   │   └── BusinessCard+CoreDataProperties.swift
+│   │   ├── BusinessCard+CoreDataProperties.swift
+│   │   ├── Tag+CoreDataClass.swift
+│   │   └── Tag+CoreDataProperties.swift
 │   ├── ContentView.swift                        # ルートレベルに配置
 │   ├── Views/
 │   │   ├── CardListView.swift
@@ -91,6 +93,7 @@ meishi-app/
 │   │   ├── CameraView.swift
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
+│   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更）
 │   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・モデル管理
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -106,7 +109,7 @@ meishi-app/
 │   │   ├── DuplicateChecker.swift
 │   │   └── CardFieldClassifier.swift
 │   ├── Resources/
-│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）の3バージョン
+│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）・v4（isFavorite+Tag追加）の4バージョン
 │   ├── AppIcon.icon/                           # アプリアイコン
 │   └── Assets.xcassets                         # アクセントカラー
 ├── eMeishiTests/
@@ -118,9 +121,9 @@ meishi-app/
 
 ---
 
-## CoreData スキーマ（v3 現在）
+## CoreData スキーマ（v4 現在）
 
-エンティティ名：`BusinessCard`
+### エンティティ：`BusinessCard`
 
 | 属性名 | 型 | 備考 |
 |---|---|---|
@@ -139,10 +142,22 @@ meishi-app/
 | website | String | WebサイトURL |
 | notes | String | メモ |
 | imageData | Binary Data | 名刺写真（任意保存） |
+| isFavorite | Boolean | **お気に入りフラグ（v4で追加）・デフォルト NO** |
 | createdAt | Date | 登録日時 |
 | updatedAt | Date | 更新日時 |
+| tags | Relationship | **Tag への多対多リレーション（v4で追加）** |
 
-- スキーマは `BusinessCard 3.xcdatamodel`（v3）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 → v3 を自動対応
+### エンティティ：`Tag`（v4で追加）
+
+| 属性名 | 型 | 備考 |
+|---|---|---|
+| id | UUID | 主キー |
+| name | String | タグ名 |
+| colorHex | String | 表示色（16進数・デフォルト #007AFF） |
+| createdAt | Date | 作成日時 |
+| cards | Relationship | BusinessCard への多対多リレーション（inverse: tags） |
+
+- スキーマは `BusinessCard 4.xcdatamodel`（v4）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 → v3 → v4 を自動対応
 - **スキーマを変更する場合：** `.xcdatamodeld` に新バージョンを追加し、軽量マイグレーション可能な変更（属性追加・省略可能化など）にとどめる。破壊的変更は Custom Migration が必要
 
 ---
@@ -161,6 +176,8 @@ meishi-app/
 - アプリアイコン・アクセントカラー
 - 閉じるボタン・検索UI改善
 - ふりがなフィールド（姓読み・名読み）：OCR時に名刺上のフリガナ行があれば自動取得、なければ CFStringTokenizer で自動生成。フォームで手動修正可能。名前順ソート・検索でも利用
+- お気に入り機能：スワイプ操作 or 詳細画面の★ボタンでトグル。一覧でお気に入りのみフィルタ可能。★アイコンで視覚表示
+- タグ機能：ユーザー定義タグ（名前・色）を作成し名刺に複数紐づけ。タグ管理画面で追加・削除。一覧画面でタグフィルタ（AND条件）。フォーム画面でタグ選択。詳細画面でタグ表示
 
 ---
 
