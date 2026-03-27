@@ -171,11 +171,7 @@ struct CardListView: View {
                 TagManagementView()
                     .environmentObject(viewModel)
             }
-            .confirmationDialog(
-                "連絡先からインポート",
-                isPresented: $isShowingImportConfirm,
-                titleVisibility: .visible
-            ) {
+            .alert("連絡先からインポート", isPresented: $isShowingImportConfirm) {
                 Button("インポート") { viewModel.importFromContacts() }
                 Button("キャンセル", role: .cancel) {}
             } message: {
