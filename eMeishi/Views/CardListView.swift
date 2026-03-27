@@ -123,7 +123,7 @@ struct CardListView: View {
                             "並び替え・フィルタ",
                             systemImage: viewModel.isFilterActive
                                 ? "line.3.horizontal.decrease.circle.fill"
-                                : "arrow.up.arrow.down"
+                                : "line.3.horizontal.decrease.circle"
                         )
                     }
                 }
