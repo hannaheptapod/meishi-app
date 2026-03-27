@@ -87,30 +87,17 @@ struct CardListView: View {
 
                         // ── フィルタ ──
                         Section("フィルタ") {
-                            Button {
-                                viewModel.toggleFavoritesFilter()
-                            } label: {
-                                Label {
-                                    Text("お気に入りのみ")
-                                } icon: {
-                                    Image(systemName: "checkmark")
-                                        .opacity(viewModel.showFavoritesOnly ? 1 : 0)
-                                }
-                            }
+                            Toggle("お気に入りのみ", isOn: Binding(
+                                get: { viewModel.showFavoritesOnly },
+                                set: { _ in viewModel.toggleFavoritesFilter() }
+                            ))
                             .menuActionDismissBehavior(.disabled)
                             if !viewModel.allTags.isEmpty {
                                 ForEach(viewModel.allTags) { tag in
-                                    Button {
-                                        viewModel.toggleTagFilter(tag)
-                                    } label: {
-                                        let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                                        Label {
-                                            Text(tag.tagName)
-                                        } icon: {
-                                            Image(systemName: "checkmark")
-                                                .opacity(selected ? 1 : 0)
-                                        }
-                                    }
+                                    Toggle(tag.tagName, isOn: Binding(
+                                        get: { viewModel.selectedTagIDs.contains(tag.id ?? UUID()) },
+                                        set: { _ in viewModel.toggleTagFilter(tag) }
+                                    ))
                                     .menuActionDismissBehavior(.disabled)
                                 }
                             }
