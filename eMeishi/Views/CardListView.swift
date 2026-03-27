@@ -19,13 +19,7 @@ struct CardListView: View {
                 if viewModel.cards.isEmpty {
                     emptyState
                 } else {
-                    VStack(spacing: 0) {
-                        // タグ・お気に入りフィルタバー
-                        if !viewModel.allTags.isEmpty || viewModel.showFavoritesOnly {
-                            filterBar
-                        }
-                        cardList
-                    }
+                    cardList
                 }
             }
             .navigationTitle("名刺")
@@ -74,10 +68,11 @@ struct CardListView: View {
                     }
                 }
 
-                // 左: 並び替え・フィルタボタン
+                // 左: 並び替え・フィルタ統合メニュー
                 ToolbarItem(placement: .bottomBar) {
-                    HStack(spacing: 16) {
-                        Menu {
+                    Menu {
+                        // ── 並び替え ──
+                        Section("並び替え") {
                             ForEach(CardSortKey.allCases) { key in
                                 Button { viewModel.toggleSort(key: key) } label: {
                                     if viewModel.sortKey == key {
@@ -88,11 +83,10 @@ struct CardListView: View {
                                 }
                                 .menuActionDismissBehavior(.disabled)
                             }
-                        } label: {
-                            Label("並び替え", systemImage: "arrow.up.arrow.down")
                         }
 
-                        Menu {
+                        // ── フィルタ ──
+                        Section("フィルタ") {
                             Button {
                                 viewModel.toggleFavoritesFilter()
                             } label: {
@@ -102,7 +96,6 @@ struct CardListView: View {
                                 )
                             }
                             if !viewModel.allTags.isEmpty {
-                                Divider()
                                 ForEach(viewModel.allTags) { tag in
                                     Button {
                                         viewModel.toggleTagFilter(tag)
@@ -116,7 +109,6 @@ struct CardListView: View {
                                 }
                             }
                             if viewModel.isFilterActive {
-                                Divider()
                                 Button(role: .destructive) {
                                     viewModel.showFavoritesOnly = false
                                     viewModel.selectedTagIDs.removeAll()
@@ -125,9 +117,14 @@ struct CardListView: View {
                                     Label("フィルタを解除", systemImage: "xmark.circle")
                                 }
                             }
-                        } label: {
-                            Label("フィルタ", systemImage: viewModel.isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                         }
+                    } label: {
+                        Label(
+                            "並び替え・フィルタ",
+                            systemImage: viewModel.isFilterActive
+                                ? "line.3.horizontal.decrease.circle.fill"
+                                : "arrow.up.arrow.down"
+                        )
                     }
                 }
 
@@ -295,37 +292,6 @@ struct CardListView: View {
         }
     }
 
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                // お気に入りフィルタチップ
-                FilterChipView(
-                    label: "お気に入り",
-                    systemImage: "star.fill",
-                    isSelected: viewModel.showFavoritesOnly,
-                    color: .yellow
-                ) {
-                    viewModel.toggleFavoritesFilter()
-                }
-
-                // タグフィルタチップ
-                ForEach(viewModel.allTags) { tag in
-                    let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                    FilterChipView(
-                        label: tag.tagName,
-                        systemImage: "tag.fill",
-                        isSelected: selected,
-                        color: tag.color
-                    ) {
-                        viewModel.toggleTagFilter(tag)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-    }
-
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "rectangle.portrait.on.rectangle.portrait.slash")
@@ -481,37 +447,6 @@ private struct SectionIndexView: View {
             )
         }
         .frame(width: 28)
-    }
-}
-
-// MARK: - フィルタチップ
-
-private struct FilterChipView: View {
-    let label: String
-    let systemImage: String
-    let isSelected: Bool
-    let color: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.caption2)
-                Text(label)
-                    .font(.caption)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isSelected ? color.opacity(0.2) : Color(.systemGray6))
-            .foregroundStyle(isSelected ? color : .secondary)
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? color.opacity(0.5) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
 
