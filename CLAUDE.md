@@ -107,6 +107,7 @@ meishi-app/
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更）
+│   │   ├── LaunchScreenView.swift              # 起動スプラッシュ画面
 │   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・モデル管理
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -191,6 +192,7 @@ meishi-app/
 - ふりがなフィールド（姓読み・名読み）：OCR時に名刺上のフリガナ行があれば自動取得、なければ CFStringTokenizer で自動生成。フォームで手動修正可能。名前順ソート・検索でも利用
 - お気に入り機能：スワイプ操作 or 詳細画面の★ボタンでトグル。一覧でお気に入りのみフィルタ可能。★アイコンで視覚表示
 - タグ機能：ユーザー定義タグ（名前・色）を作成し名刺に複数紐づけ。タグ管理画面で追加・削除。一覧画面でタグフィルタ（AND条件）。フォーム画面でタグ選択。詳細画面でタグ表示
+- スプラッシュ画面：起動時にアプリ名とアイコンをアニメーション表示し、メイン画面へフェード遷移
 
 ---
 
