@@ -10,6 +10,7 @@ struct CardListView: View {
     @State private var capturedImage: UIImage? = nil
     @State private var isShowingSettings = false
     @State private var isShowingImportConfirm = false
+    @State private var isShowingTagManager = false
     @State private var sectionIndexChar: String? = nil
 
     var body: some View {
@@ -18,7 +19,13 @@ struct CardListView: View {
                 if viewModel.cards.isEmpty {
                     emptyState
                 } else {
-                    cardList
+                    VStack(spacing: 0) {
+                        // タグ・お気に入りフィルタバー
+                        if !viewModel.allTags.isEmpty || viewModel.showFavoritesOnly {
+                            filterBar
+                        }
+                        cardList
+                    }
                 }
             }
             .navigationTitle("名刺")
@@ -55,6 +62,10 @@ struct CardListView: View {
                             }
                         }
                         Divider()
+                        Button { isShowingTagManager = true } label: {
+                            Label("タグ管理", systemImage: "tag")
+                        }
+                        Divider()
                         Button { isShowingSettings = true } label: {
                             Label("設定", systemImage: "gearshape")
                         }
@@ -63,21 +74,60 @@ struct CardListView: View {
                     }
                 }
 
-                // 左: 並び替えボタン（将来フィルタも追加予定）
+                // 左: 並び替え・フィルタボタン
                 ToolbarItem(placement: .bottomBar) {
-                    Menu {
-                        ForEach(CardSortKey.allCases) { key in
-                            Button { viewModel.toggleSort(key: key) } label: {
-                                if viewModel.sortKey == key {
-                                    Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                                } else {
-                                    Text(key.rawValue)
+                    HStack(spacing: 16) {
+                        Menu {
+                            ForEach(CardSortKey.allCases) { key in
+                                Button { viewModel.toggleSort(key: key) } label: {
+                                    if viewModel.sortKey == key {
+                                        Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                                    } else {
+                                        Text(key.rawValue)
+                                    }
+                                }
+                                .menuActionDismissBehavior(.disabled)
+                            }
+                        } label: {
+                            Label("並び替え", systemImage: "arrow.up.arrow.down")
+                        }
+
+                        Menu {
+                            Button {
+                                viewModel.toggleFavoritesFilter()
+                            } label: {
+                                Label(
+                                    "お気に入りのみ",
+                                    systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "star"
+                                )
+                            }
+                            if !viewModel.allTags.isEmpty {
+                                Divider()
+                                ForEach(viewModel.allTags) { tag in
+                                    Button {
+                                        viewModel.toggleTagFilter(tag)
+                                    } label: {
+                                        let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
+                                        Label(
+                                            tag.tagName,
+                                            systemImage: selected ? "checkmark.circle.fill" : "tag"
+                                        )
+                                    }
                                 }
                             }
-                            .menuActionDismissBehavior(.disabled)
+                            if viewModel.isFilterActive {
+                                Divider()
+                                Button(role: .destructive) {
+                                    viewModel.showFavoritesOnly = false
+                                    viewModel.selectedTagIDs.removeAll()
+                                    viewModel.fetchCards()
+                                } label: {
+                                    Label("フィルタを解除", systemImage: "xmark.circle")
+                                }
+                            }
+                        } label: {
+                            Label("フィルタ", systemImage: viewModel.isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                         }
-                    } label: {
-                        Label("並び替え", systemImage: "arrow.up.arrow.down")
                     }
                 }
 
@@ -120,6 +170,10 @@ struct CardListView: View {
                 SettingsView()
                     .environmentObject(viewModel)
             }
+            .sheet(isPresented: $isShowingTagManager) {
+                TagManagementView()
+                    .environmentObject(viewModel)
+            }
             .confirmationDialog(
                 "連絡先からインポート",
                 isPresented: $isShowingImportConfirm,
@@ -158,6 +212,17 @@ struct CardListView: View {
                         } label: {
                             CardRowView(card: card)
                         }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                viewModel.toggleFavorite(card)
+                            } label: {
+                                Label(
+                                    card.isFavorite ? "解除" : "お気に入り",
+                                    systemImage: card.isFavorite ? "star.slash" : "star.fill"
+                                )
+                            }
+                            .tint(.yellow)
+                        }
                     }
                     .onDelete { offsets in
                         viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
@@ -171,6 +236,17 @@ struct CardListView: View {
                                     CardDetailView(card: card)
                                 } label: {
                                     CardRowView(card: card)
+                                }
+                                .swipeActions(edge: .leading) {
+                                    Button {
+                                        viewModel.toggleFavorite(card)
+                                    } label: {
+                                        Label(
+                                            card.isFavorite ? "解除" : "お気に入り",
+                                            systemImage: card.isFavorite ? "star.slash" : "star.fill"
+                                        )
+                                    }
+                                    .tint(.yellow)
                                 }
                                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                                 .alignmentGuide(.listRowSeparatorLeading) { d in
@@ -219,6 +295,37 @@ struct CardListView: View {
         }
     }
 
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // お気に入りフィルタチップ
+                FilterChipView(
+                    label: "お気に入り",
+                    systemImage: "star.fill",
+                    isSelected: viewModel.showFavoritesOnly,
+                    color: .yellow
+                ) {
+                    viewModel.toggleFavoritesFilter()
+                }
+
+                // タグフィルタチップ
+                ForEach(viewModel.allTags) { tag in
+                    let selected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
+                    FilterChipView(
+                        label: tag.tagName,
+                        systemImage: "tag.fill",
+                        isSelected: selected,
+                        color: tag.color
+                    ) {
+                        viewModel.toggleTagFilter(tag)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "rectangle.portrait.on.rectangle.portrait.slash")
@@ -251,9 +358,16 @@ private struct CardRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if card.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                    }
+                }
                 if let company = card.company, !company.isEmpty {
                     Text(company)
                         .font(.subheadline)
@@ -367,6 +481,37 @@ private struct SectionIndexView: View {
             )
         }
         .frame(width: 28)
+    }
+}
+
+// MARK: - フィルタチップ
+
+private struct FilterChipView: View {
+    let label: String
+    let systemImage: String
+    let isSelected: Bool
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.caption2)
+                Text(label)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isSelected ? color.opacity(0.2) : Color(.systemGray6))
+            .foregroundStyle(isSelected ? color : .secondary)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSelected ? color.opacity(0.5) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

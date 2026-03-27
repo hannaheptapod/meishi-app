@@ -28,6 +28,28 @@ extension BusinessCard {
     @NSManaged public var imageData: Data?
     @NSManaged public var createdAt: Date?
     @NSManaged public var updatedAt: Date?
+    @NSManaged public var isFavorite: Bool
+    @NSManaged public var tags: NSSet?
+
+    // MARK: - タグ操作
+
+    /// 紐づくタグの配列（名前順）
+    public var tagArray: [Tag] {
+        let set = tags as? Set<Tag> ?? []
+        return set.sorted { ($0.name ?? "") < ($1.name ?? "") }
+    }
+
+    @objc(addTagsObject:)
+    @NSManaged public func addToTags(_ value: Tag)
+
+    @objc(removeTagsObject:)
+    @NSManaged public func removeFromTags(_ value: Tag)
+
+    @objc(addTags:)
+    @NSManaged public func addToTags(_ values: NSSet)
+
+    @objc(removeTags:)
+    @NSManaged public func removeFromTags(_ values: NSSet)
 
     // MARK: - 計算プロパティ
 

@@ -8,6 +8,7 @@ struct CardFormView: View {
     let onSave: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var listViewModel: CardListViewModel
     @FocusState private var focusedField: FormField?
 
     private enum FormField: Hashable {
@@ -151,6 +152,39 @@ struct CardFormView: View {
                         .focused($focusedField, equals: .email)
                         .submitLabel(.next)
                         .onSubmit { focusedField = .address }
+                }
+
+                // タグ選択セクション
+                if !listViewModel.allTags.isEmpty {
+                    Section("タグ") {
+                        FlowLayout(spacing: 6) {
+                            ForEach(listViewModel.allTags) { tag in
+                                let selected = viewModel.selectedTags.contains(tag.id ?? UUID())
+                                Button {
+                                    if let id = tag.id {
+                                        if selected {
+                                            viewModel.selectedTags.remove(id)
+                                        } else {
+                                            viewModel.selectedTags.insert(id)
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                            .font(.caption2)
+                                        Text(tag.tagName)
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(selected ? tag.color.opacity(0.2) : Color(.systemGray6))
+                                    .foregroundStyle(selected ? tag.color : .secondary)
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                 }
 
                 Section("その他") {

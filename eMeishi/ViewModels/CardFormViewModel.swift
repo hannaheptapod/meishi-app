@@ -20,6 +20,7 @@ class CardFormViewModel: ObservableObject {
     @Published var address: String = ""
     @Published var website: String = ""
     @Published var notes: String = ""
+    @Published var selectedTags: Set<UUID> = []
 
     // OCR処理中フラグ・エラーメッセージ
     @Published var isProcessingOCR: Bool = false
@@ -84,6 +85,7 @@ class CardFormViewModel: ObservableObject {
         address   = card.address   ?? ""
         website   = card.website   ?? ""
         notes     = card.notes     ?? ""
+        selectedTags = Set(card.tagArray.compactMap { $0.id })
     }
 
     // MARK: - OCR + AI意味分析
@@ -326,6 +328,21 @@ class CardFormViewModel: ObservableObject {
         target.notes     = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         target.imageData = capturedImageData
         target.updatedAt = Date()
+
+        // タグのリレーションを更新
+        let tagRequest = Tag.fetchRequest()
+        if let allTags = try? context.fetch(tagRequest) {
+            // 既存のタグをすべて外す
+            if let currentTags = target.tags as? Set<Tag> {
+                for tag in currentTags {
+                    target.removeFromTags(tag)
+                }
+            }
+            // 選択されたタグを紐づけ
+            for tag in allTags where selectedTags.contains(tag.id ?? UUID()) {
+                target.addToTags(tag)
+            }
+        }
 
         do {
             try context.save()

@@ -42,6 +42,9 @@ class CardListViewModel: ObservableObject {
     }
     @Published var filteredCards: [BusinessCard] = []
     @Published var groupedCards: [CardSection] = []
+    @Published var allTags: [Tag] = []
+    @Published var selectedTagIDs: Set<UUID> = []
+    @Published var showFavoritesOnly: Bool = false
     @Published var sortKey: CardSortKey {
         didSet { SettingsStore.shared.sortKey = sortKey.rawValue }
     }
@@ -51,6 +54,9 @@ class CardListViewModel: ObservableObject {
 
     // 検索中かどうか（セクション表示 vs フラット表示の切替に使用）
     var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    // フィルタが適用されているか
+    var isFilterActive: Bool { showFavoritesOnly || !selectedTagIDs.isEmpty }
 
     // タップでキー選択 or 昇降順トグル
     func toggleSort(key: CardSortKey) {
@@ -76,6 +82,7 @@ class CardListViewModel: ObservableObject {
         self.sortAscending = settings.sortAscending
 
         fetchCards()
+        fetchTags()
 
         // 閾値が変わったら重複検出を再実行
         SettingsStore.shared.$duplicateThreshold
@@ -135,15 +142,90 @@ class CardListViewModel: ObservableObject {
         }
     }
 
+    // MARK: - お気に入り
+
+    func toggleFavorite(_ card: BusinessCard) {
+        card.isFavorite.toggle()
+        card.updatedAt = Date()
+        save()
+    }
+
+    // MARK: - タグ管理
+
+    func fetchTags() {
+        let request = Tag.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \Tag.name, ascending: true)]
+        do {
+            allTags = try context.fetch(request)
+        } catch {
+            print("タグの取得に失敗しました: \(error)")
+        }
+    }
+
+    func createTag(name: String, colorHex: String) {
+        let tag = Tag(context: context)
+        tag.id = UUID()
+        tag.name = name
+        tag.colorHex = colorHex
+        tag.createdAt = Date()
+        do {
+            try context.save()
+            fetchTags()
+        } catch {
+            errorMessage = "タグの作成に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteTag(_ tag: Tag) {
+        context.delete(tag)
+        selectedTagIDs.remove(tag.id ?? UUID())
+        do {
+            try context.save()
+            fetchTags()
+            updateFilteredCards()
+        } catch {
+            errorMessage = "タグの削除に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func toggleTagFilter(_ tag: Tag) {
+        guard let id = tag.id else { return }
+        if selectedTagIDs.contains(id) {
+            selectedTagIDs.remove(id)
+        } else {
+            selectedTagIDs.insert(id)
+        }
+        updateFilteredCards()
+    }
+
+    func toggleFavoritesFilter() {
+        showFavoritesOnly.toggle()
+        updateFilteredCards()
+    }
+
     // MARK: - 検索フィルタ
 
     private func updateFilteredCards() {
+        var result = cards
+
+        // お気に入りフィルタ
+        if showFavoritesOnly {
+            result = result.filter { $0.isFavorite }
+        }
+
+        // タグフィルタ（選択されたタグすべてを持つカードのみ）
+        if !selectedTagIDs.isEmpty {
+            result = result.filter { card in
+                let cardTagIDs = Set((card.tags as? Set<Tag> ?? []).compactMap { $0.id })
+                return selectedTagIDs.isSubset(of: cardTagIDs)
+            }
+        }
+
+        // テキスト検索
         let q = searchText.trimmingCharacters(in: .whitespaces)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        if q.isEmpty {
-            filteredCards = cards
-        } else {
-            filteredCards = cards.filter { card in
+        if !q.isEmpty {
+            result = result.filter { card in
                 func match(_ s: String?) -> Bool {
                     s?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
                         .contains(q) ?? false
@@ -158,6 +240,7 @@ class CardListViewModel: ObservableObject {
                     || match(card.address)
             }
         }
+        filteredCards = result
         updateGroupedCards()
     }
 
@@ -168,15 +251,17 @@ class CardListViewModel: ObservableObject {
             groupedCards = []
             return
         }
+        // フィルタ適用時は filteredCards を使用
+        let source = isFilterActive ? filteredCards : cards
         switch sortKey {
         case .name:
-            groupedCards = groupByName(cards, ascending: sortAscending)
+            groupedCards = groupByName(source, ascending: sortAscending)
         case .company:
-            groupedCards = groupByCompany(cards, ascending: sortAscending)
+            groupedCards = groupByCompany(source, ascending: sortAscending)
         case .createdAt:
-            groupedCards = groupByDate(cards, dateOf: { $0.createdAt }, ascending: sortAscending)
+            groupedCards = groupByDate(source, dateOf: { $0.createdAt }, ascending: sortAscending)
         case .updatedAt:
-            groupedCards = groupByDate(cards, dateOf: { $0.updatedAt }, ascending: sortAscending)
+            groupedCards = groupByDate(source, dateOf: { $0.updatedAt }, ascending: sortAscending)
         }
     }
 
