@@ -129,8 +129,8 @@ meishi-app/
 ├── eMeishiTests/
 │   └── eMeishiTests.swift                      # 機能テスト網羅的に実装済み
 └── eMeishiUITests/
-    ├── eMeishiUITests.swift
-    └── eMeishiUITestsLaunchTests.swift
+    ├── eMeishiUITests.swift                  # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
+    └── eMeishiUITestsLaunchTests.swift       # 起動テスト
 ```
 
 ---
@@ -196,6 +196,7 @@ meishi-app/
 - 選択モード：一覧画面左上の「選択」ボタンで複数選択モード。一括削除・CSV/vCardエクスポート・一括タグ付けに対応。全選択/全解除・件数表示あり
 - 触覚フィードバック：お気に入り切替時に UIImpactFeedbackGenerator で振動フィードバック
 - フィルタ時カウント表示：フィルタや検索適用中にナビゲーションタイトルに件数表示
+- UIテスト：`-UITestMode` 起動引数でインメモリ＋サンプルデータを使用。コンテキストメニュー・選択モード・検索・ナビゲーション等のUIテストを網羅的に実装
 
 ---
 
