@@ -26,6 +26,14 @@ struct CardListView: View {
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
+    /// 選択モード時のみ選択を受け付けるバインディング
+    private var selectionBinding: Binding<Set<BusinessCard.ID>> {
+        Binding(
+            get: { editMode == .active ? selectedCardIDs : [] },
+            set: { if editMode == .active { selectedCardIDs = $0 } }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -162,6 +170,7 @@ struct CardListView: View {
                     editMode = .active
                     selectedCardIDs = []
                 }
+                .accessibilityIdentifier("selectButton")
             }
         }
 
@@ -205,6 +214,7 @@ struct CardListView: View {
             } label: {
                 Label("メニュー", systemImage: "ellipsis")
             }
+            .accessibilityIdentifier("ellipsisMenu")
         }
 
         // 左: 並び替え・フィルタ統合メニュー
@@ -261,6 +271,7 @@ struct CardListView: View {
             } label: {
                 Label("追加", systemImage: "plus")
             }
+            .accessibilityIdentifier("addButton")
         }
     }
 
@@ -277,6 +288,7 @@ struct CardListView: View {
                     selectedCardIDs = Set(viewModel.filteredCards.compactMap(\.id))
                 }
             }
+            .accessibilityIdentifier("selectAllButton")
         }
 
         // 右上: 完了ボタン
@@ -285,6 +297,7 @@ struct CardListView: View {
                 editMode = .inactive
                 selectedCardIDs = []
             }
+            .accessibilityIdentifier("doneButton")
         }
 
         // 下部: 一括操作
@@ -296,6 +309,7 @@ struct CardListView: View {
                 Label("削除", systemImage: "trash")
             }
             .disabled(selectedCardIDs.isEmpty)
+            .accessibilityIdentifier("bulkDeleteButton")
 
             Spacer()
 
@@ -304,10 +318,12 @@ struct CardListView: View {
                 Text("名刺をタップして選択")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("selectionGuideText")
             } else {
                 Text("\(selectedCardIDs.count)件選択中")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("selectionCountText")
             }
 
             Spacer()
@@ -345,7 +361,7 @@ struct CardListView: View {
         let showIndex = editMode == .inactive && !viewModel.isSearchActive &&
             (viewModel.sortKey == .name || viewModel.sortKey == .company)
         return ScrollViewReader { proxy in
-            List(selection: $selectedCardIDs) {
+            List(selection: selectionBinding) {
                 if viewModel.isSearchActive {
                     // 検索中はフラット表示
                     ForEach(viewModel.filteredCards) { card in
@@ -354,6 +370,7 @@ struct CardListView: View {
                     .onDelete { offsets in
                         viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
                     }
+                    .deleteDisabled(editMode == .active)
                 } else {
                     // ソート順に応じたセクション表示
                     ForEach(viewModel.groupedCards) { section in
@@ -371,6 +388,7 @@ struct CardListView: View {
                             .onDelete { offsets in
                                 viewModel.deleteCards(offsets.map { section.cards[$0] })
                             }
+                            .deleteDisabled(editMode == .active)
                         } header: {
                             Text(section.title)
                                 .font(.subheadline)
@@ -553,6 +571,7 @@ private struct CardRowView: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityIdentifier("cardRow_\(card.fullName)")
     }
 
 }

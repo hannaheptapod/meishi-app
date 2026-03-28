@@ -4,8 +4,16 @@ import CoreData
 @main
 struct EMeishiApp: App {
 
-    // CoreData スタック
-    let persistenceController = PersistenceController.shared
+    // CoreData スタック（UIテスト時はインメモリ＋サンプルデータ）
+    let persistenceController: PersistenceController
+
+    init() {
+        if ProcessInfo.processInfo.arguments.contains("-UITestMode") {
+            persistenceController = PersistenceController.preview
+        } else {
+            persistenceController = PersistenceController.shared
+        }
+    }
 
     var body: some Scene {
         WindowGroup {

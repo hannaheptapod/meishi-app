@@ -1,13 +1,3 @@
-//
-//  eMeishiUITestsLaunchTests.swift
-//  eMeishiUITests
-//
-//  Created by Jin Kishimoto on 2026/03/24.
-//
-
-// UIテストは現在不要のためコメントアウト中
-
-/*
 import XCTest
 
 final class EMeishiUITestsLaunchTests: XCTestCase {
@@ -23,6 +13,7 @@ final class EMeishiUITestsLaunchTests: XCTestCase {
     @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["-UITestMode"]
         app.launch()
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -31,4 +22,3 @@ final class EMeishiUITestsLaunchTests: XCTestCase {
         add(attachment)
     }
 }
-*/
