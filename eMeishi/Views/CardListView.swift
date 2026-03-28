@@ -163,8 +163,8 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var normalToolbarContent: some ToolbarContent {
-        // 左上: 選択ボタン
-        ToolbarItem(placement: .topBarLeading) {
+        // 右上: 選択ボタン＋3点メニュー（HIG: Edit/Selectは trailing に配置）
+        ToolbarItemGroup(placement: .topBarTrailing) {
             if !viewModel.cards.isEmpty {
                 Button("選択") {
                     editMode = .active
@@ -172,10 +172,7 @@ struct CardListView: View {
                 }
                 .accessibilityIdentifier("selectButton")
             }
-        }
 
-        // 右上: 3点リーダーメニュー
-        ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
@@ -215,7 +212,7 @@ struct CardListView: View {
                 Label("メニュー", systemImage: "ellipsis")
             }
             .accessibilityIdentifier("ellipsisMenu")
-        }
+        }  // end ToolbarItemGroup
 
         // 左: 並び替え・フィルタ統合メニュー
         ToolbarItem(placement: .bottomBar) {
@@ -279,17 +276,8 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var selectionToolbarContent: some ToolbarContent {
-        // 左上: 完了ボタン（HIG: 編集/完了は同じ位置でトグル）
+        // 左上: すべて選択/全解除
         ToolbarItem(placement: .topBarLeading) {
-            Button("完了") {
-                editMode = .inactive
-                selectedCardIDs = []
-            }
-            .accessibilityIdentifier("doneButton")
-        }
-
-        // 右上: すべて選択/全解除
-        ToolbarItem(placement: .topBarTrailing) {
             Button(selectedCardIDs.count == viewModel.filteredCards.count && !viewModel.filteredCards.isEmpty ? "全解除" : "すべて選択") {
                 if selectedCardIDs.count == viewModel.filteredCards.count {
                     selectedCardIDs = []
@@ -298,6 +286,15 @@ struct CardListView: View {
                 }
             }
             .accessibilityIdentifier("selectAllButton")
+        }
+
+        // 右上: 完了ボタン（HIG: Edit/Done は trailing でトグル）
+        ToolbarItem(placement: .topBarTrailing) {
+            Button("完了") {
+                editMode = .inactive
+                selectedCardIDs = []
+            }
+            .accessibilityIdentifier("doneButton")
         }
 
         // 下部: 一括操作
