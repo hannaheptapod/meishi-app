@@ -232,3 +232,4 @@ meishi-app/
 - CSV は Excel での文字化けを防ぐため UTF-8 BOM を付与（設定で無効化可能）
 - vCard は 3.0 形式（設定で 4.0 に変更可能）
 - 重複判定は名前70%・会社名30%の重み付きスコア
+- **HIG（Human Interface Guidelines）を参照する際は、まず sosumi MCPサーバーを使う。** `searchAppleDocumentation` で検索 → `fetchAppleDocumentation` で詳細取得（パス例：`design/human-interface-guidelines/foundations/color`）。必要に応じて `fetchAppleVideoTranscript` で関連WWDCセッションも参照
