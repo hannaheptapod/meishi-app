@@ -85,6 +85,6 @@ private struct DuplicatePairRow: View {
     }
 
     private func scoreColor(_ score: Double) -> Color {
-        score >= 0.9 ? .red : score >= 0.8 ? .orange : .yellow
+        score >= 0.9 ? .red : score >= 0.8 ? .orange : .mint
     }
 }

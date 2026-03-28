@@ -25,6 +25,8 @@ struct BulkTagAssignView: View {
                             .foregroundStyle(.tertiary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("タグがありません。タグ管理画面で作成してください。")
                 } else {
                     List {
                         ForEach(viewModel.allTags) { tag in
@@ -41,6 +43,8 @@ struct BulkTagAssignView: View {
                                     Image(systemName: "plus.circle")
                                         .foregroundStyle(.secondary)
                                 }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("\(tag.tagName)タグを付ける")
                             }
                         }
                     }

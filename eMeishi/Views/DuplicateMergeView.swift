@@ -10,6 +10,7 @@ struct DuplicateMergeView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var selections = FieldSelections()
+    @State private var isShowingMergeConfirm = false
 
     private let context = PersistenceController.shared.container.viewContext
 
@@ -26,9 +27,19 @@ struct DuplicateMergeView: View {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("マージ") { merge() }
+                    Button("マージ") { isShowingMergeConfirm = true }
                         .bold()
                 }
+            }
+            .confirmationDialog(
+                "名刺をマージ",
+                isPresented: $isShowingMergeConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("マージして1枚にまとめる", role: .destructive) { merge() }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("「\(pair.cardB.fullName.isEmpty ? "名前なし" : pair.cardB.fullName)」は削除されます。この操作は取り消せません。")
             }
         }
     }
@@ -48,6 +59,7 @@ struct DuplicateMergeView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(scoreColor(pair.score), in: Capsule())
+                        .accessibilityLabel("類似度 \(pair.scoreText)")
                 }
                 cardHeader(pair.cardB, side: .b)
             }
@@ -141,6 +153,9 @@ struct DuplicateMergeView: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(selected ? Color.accentColor.opacity(0.08) : nil)
+        .accessibilityLabel("カード\(side == .a ? "A" : "B"): \(value.isEmpty ? "値なし" : value)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(selected ? "選択中" : "タップして選択")
     }
 
     // MARK: - マージ実行
