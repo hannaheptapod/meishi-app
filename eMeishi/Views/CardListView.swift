@@ -374,13 +374,6 @@ struct CardListView: View {
                         Section {
                             ForEach(section.cards) { card in
                                 cardRow(for: card)
-                                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                                    .alignmentGuide(.listRowSeparatorLeading) { d in
-                                        d[.leading]
-                                    }
-                                    .alignmentGuide(.listRowSeparatorTrailing) { d in
-                                        d[.trailing]
-                                    }
                             }
                             .onDelete { offsets in
                                 viewModel.deleteCards(offsets.map { section.cards[$0] })
