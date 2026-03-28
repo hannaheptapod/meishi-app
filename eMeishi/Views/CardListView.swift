@@ -279,8 +279,17 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var selectionToolbarContent: some ToolbarContent {
-        // 左上: 全選択/全解除
+        // 左上: 完了ボタン（HIG: 編集/完了は同じ位置でトグル）
         ToolbarItem(placement: .topBarLeading) {
+            Button("完了") {
+                editMode = .inactive
+                selectedCardIDs = []
+            }
+            .accessibilityIdentifier("doneButton")
+        }
+
+        // 右上: すべて選択/全解除
+        ToolbarItem(placement: .topBarTrailing) {
             Button(selectedCardIDs.count == viewModel.filteredCards.count && !viewModel.filteredCards.isEmpty ? "全解除" : "すべて選択") {
                 if selectedCardIDs.count == viewModel.filteredCards.count {
                     selectedCardIDs = []
@@ -289,15 +298,6 @@ struct CardListView: View {
                 }
             }
             .accessibilityIdentifier("selectAllButton")
-        }
-
-        // 右上: 完了ボタン
-        ToolbarItem(placement: .topBarTrailing) {
-            Button("完了") {
-                editMode = .inactive
-                selectedCardIDs = []
-            }
-            .accessibilityIdentifier("doneButton")
         }
 
         // 下部: 一括操作
