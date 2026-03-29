@@ -30,6 +30,21 @@ extension Tag {
         Color(hex: colorHex ?? "#007AFF")
     }
 
+    /// アクセシビリティ用の色名
+    public var colorName: String {
+        switch colorHex?.uppercased() {
+        case "#007AFF": return "ブルー"
+        case "#FF3B30": return "レッド"
+        case "#34C759": return "グリーン"
+        case "#FF9500": return "オレンジ"
+        case "#AF52DE": return "パープル"
+        case "#FF2D55": return "ピンク"
+        case "#5AC8FA": return "ティール"
+        case "#FFCC00": return "イエロー"
+        default: return ""
+        }
+    }
+
     /// 紐づくカードの配列
     public var cardArray: [BusinessCard] {
         let set = cards as? Set<BusinessCard> ?? []

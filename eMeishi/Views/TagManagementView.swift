@@ -50,6 +50,8 @@ struct TagManagementView: View {
                                         }
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel(preset.name)
+                                .accessibilityAddTraits(selectedColor == preset.hex ? .isSelected : [])
                             }
                         }
                         .padding(.vertical, 4)
@@ -80,6 +82,7 @@ struct TagManagementView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            .accessibilityElement(children: .combine)
                         }
                         .onDelete { offsets in
                             if let idx = offsets.first {

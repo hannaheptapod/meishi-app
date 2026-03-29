@@ -511,6 +511,8 @@ struct CardListView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("名刺がありません")
     }
 
 }
@@ -562,6 +564,15 @@ private struct CardRowView: View {
         }
         .padding(.vertical, 4)
         .accessibilityIdentifier("cardRow_\(card.fullName)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(cardAccessibilityLabel)
+    }
+
+    private var cardAccessibilityLabel: String {
+        var parts = [card.fullName.isEmpty ? "名前なし" : card.fullName]
+        if let company = card.company, !company.isEmpty { parts.append(company) }
+        if card.isFavorite { parts.append("お気に入り") }
+        return parts.joined(separator: "、")
     }
 
 }

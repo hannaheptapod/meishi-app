@@ -74,6 +74,7 @@ struct CardDetailView: View {
                                 Image(systemName: "phone.fill")
                                     .foregroundStyle(.green)
                             }
+                            .accessibilityHint("タップして電話をかける")
                         } else {
                             Label(phone, systemImage: "phone.fill")
                         }
@@ -86,6 +87,7 @@ struct CardDetailView: View {
                                 Image(systemName: "envelope.fill")
                                     .foregroundStyle(.blue)
                             }
+                            .accessibilityHint("タップしてメールを送る")
                         } else {
                             Label(email, systemImage: "envelope.fill")
                         }
@@ -111,6 +113,7 @@ struct CardDetailView: View {
                                 Image(systemName: "globe")
                                     .foregroundStyle(.indigo)
                             }
+                            .accessibilityHint("タップしてブラウザで開く")
                         } else {
                             Label(website, systemImage: "globe")
                         }
@@ -137,6 +140,8 @@ struct CardDetailView: View {
                             .padding(.vertical, 5)
                             .background(tag.color.opacity(0.12))
                             .clipShape(Capsule())
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("タグ: \(tag.tagName)\(tag.colorName.isEmpty ? "" : "、\(tag.colorName)")")
                         }
                     }
                 }
@@ -167,6 +172,7 @@ struct CardDetailView: View {
                         Image(systemName: card.isFavorite ? "star.fill" : "star")
                             .foregroundStyle(card.isFavorite ? .yellow : .secondary)
                     }
+                    .accessibilityLabel(card.isFavorite ? "お気に入り解除" : "お気に入りに追加")
                     Button("編集") { isShowingEditForm = true }
                 }
             }
@@ -210,6 +216,7 @@ struct CardDetailView: View {
                 .font(.title3.bold())
                 .foregroundStyle(Color.accentColor)
         }
+        .accessibilityLabel("\(card.fullName.isEmpty ? "名前なし" : card.fullName)のアバター")
     }
 
     // MARK: - アクション

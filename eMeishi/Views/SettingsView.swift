@@ -108,6 +108,10 @@ struct SettingsView: View {
         .onTapGesture {
             settings.readingMethod = method
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(method.displayName)
+        .accessibilityValue(settings.readingMethod == method ? "選択中" : "")
     }
 
     private var aiAssistRow: some View {
@@ -189,6 +193,8 @@ struct SettingsView: View {
                     Text(thresholdLabel).foregroundStyle(.secondary)
                 }
                 Slider(value: $settings.duplicateThreshold, in: 0.5...1.0, step: 0.05)
+                    .accessibilityLabel("重複検出感度")
+                    .accessibilityValue(thresholdLabel)
             }
         } header: {
             Text("重複チェック")
