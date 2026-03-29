@@ -26,6 +26,10 @@
 	<string>連絡先への読み書きに使用します</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>名刺画像を保存するために使用します</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
