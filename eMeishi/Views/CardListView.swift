@@ -415,6 +415,7 @@ struct CardListView: View {
             } label: {
                 CardRowView(card: card)
             }
+            .accessibilityIdentifier("cardRow_\(card.fullName)")
             .swipeActions(edge: .leading) {
                 Button {
                     haptic.impactOccurred()
@@ -435,6 +436,7 @@ struct CardListView: View {
             }
         } else {
             CardRowView(card: card)
+                .accessibilityIdentifier("cardRow_\(card.fullName)")
         }
     }
 
@@ -563,7 +565,6 @@ private struct CardRowView: View {
             }
         }
         .padding(.vertical, 4)
-        .accessibilityIdentifier("cardRow_\(card.fullName)")
         .accessibilityElement(children: .combine)
         .accessibilityLabel(cardAccessibilityLabel)
     }

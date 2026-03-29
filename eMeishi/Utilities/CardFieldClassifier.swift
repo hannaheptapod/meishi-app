@@ -32,6 +32,13 @@ struct CardFieldClassifier {
         "Co., Ltd", "Co.,Ltd", "GmbH", "S.A.", "Pty"
     ]
 
+    /// 会社名に使われる接尾辞（名前スコアリングの誤判定防止用）
+    private static let companySuffixes = [
+        "商事", "商会", "物産", "工業", "建設", "製作所", "製薬",
+        "電気", "電子", "通信", "不動産", "保険", "証券", "銀行",
+        "産業", "興業", "機械", "食品", "化学", "出版", "運輸", "印刷"
+    ]
+
     private static let departmentSuffixes = [
         // 日本語部署サフィックス
         "部", "課", "室", "係", "局", "本部", "センター", "グループ", "チーム",
@@ -380,8 +387,10 @@ struct CardFieldClassifier {
         if hasKanji && (2...8).contains(charCount) { score += 0.3 }
 
         // 条件3a: CFStringTokenizer が姓名の2トークンに分割する（+0.25）
+        // ただし会社名接尾辞を含む場合は除外（例: "ABC商事" → 名前ではない）
         if hasKanji && (3...8).contains(charCount),
-           let (_, first) = cfTokenizerSplit(text), !first.isEmpty {
+           let (_, first) = cfTokenizerSplit(text), !first.isEmpty,
+           !Self.companySuffixes.contains(where: { text.hasSuffix($0) }) {
             score += 0.25
         }
 
