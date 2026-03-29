@@ -154,6 +154,8 @@ class CloudKitModelService {
               let tokenizerSourceURL = tokenizerAsset.fileURL else {
             throw CloudKitModelError.missingAsset(tokenizerField)
         }
+        let tokenizerDir = tokenizerDestination.deletingLastPathComponent()
+        try fm.createDirectory(at: tokenizerDir, withIntermediateDirectories: true)
         try? fm.removeItem(at: tokenizerDestination)
         try fm.copyItem(at: tokenizerSourceURL, to: tokenizerDestination)
 
