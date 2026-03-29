@@ -73,8 +73,14 @@ class CardListViewModel: ObservableObject {
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
 
-    init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
-        self.context = context
+    init(context: NSManagedObjectContext? = nil) {
+        if let context = context {
+            self.context = context
+        } else if ProcessInfo.processInfo.arguments.contains("-UITestMode") {
+            self.context = PersistenceController.preview.container.viewContext
+        } else {
+            self.context = PersistenceController.shared.container.viewContext
+        }
 
         // SettingsStore から前回のソート設定を復元
         let settings = SettingsStore.shared
