@@ -17,6 +17,13 @@ final class EMeishiUITests: XCTestCase {
         app = nil
     }
 
+    // MARK: - ヘルパー
+
+    /// カード行をアクセシビリティIDで取得（.accessibilityElement(children: .combine) 対応）
+    private func cardRow(_ name: String) -> XCUIElement {
+        app.descendants(matching: .any)["cardRow_\(name)"]
+    }
+
     // MARK: - 起動・一覧表示
 
     @MainActor
@@ -28,8 +35,8 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testCardListShowsCards() throws {
         // サンプルデータのカード名が表示される
-        XCTAssertTrue(app.staticTexts["山田 太郎"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["佐藤 誠"].exists)
+        XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: 5))
+        XCTAssertTrue(cardRow("佐藤 誠").exists)
     }
 
     // MARK: - ツールバーボタンの存在確認
@@ -138,9 +145,9 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testNavigateToCardDetail() throws {
         // カードをタップして詳細画面に遷移
-        let cardText = app.staticTexts["山田 太郎"]
-        XCTAssertTrue(cardText.waitForExistence(timeout: 5))
-        cardText.tap()
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
 
         // 詳細画面のナビゲーションタイトルが表示される
         XCTAssertTrue(app.navigationBars.staticTexts["山田 太郎"].waitForExistence(timeout: 3))
@@ -149,9 +156,9 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testNavigateBackNoHighlightPersistence() throws {
         // カードをタップして詳細に遷移
-        let cardText = app.staticTexts["山田 太郎"]
-        XCTAssertTrue(cardText.waitForExistence(timeout: 5))
-        cardText.tap()
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
 
         // 詳細画面が表示される
         XCTAssertTrue(app.navigationBars.staticTexts["山田 太郎"].waitForExistence(timeout: 3))
@@ -171,9 +178,9 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testLongPressShowsContextMenu() throws {
         // カードを長押し
-        let cardText = app.staticTexts["山田 太郎"]
-        XCTAssertTrue(cardText.waitForExistence(timeout: 5))
-        cardText.press(forDuration: 1.5)
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 1.5)
 
         // コンテキストメニューの項目が表示される
         XCTAssertTrue(app.buttons["お気に入りに追加"].waitForExistence(timeout: 3))
@@ -186,9 +193,9 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testContextMenuFavoriteToggle() throws {
         // カードを長押し
-        let cardText = app.staticTexts["山田 太郎"]
-        XCTAssertTrue(cardText.waitForExistence(timeout: 5))
-        cardText.press(forDuration: 1.5)
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 1.5)
 
         // お気に入りに追加
         let favoriteButton = app.buttons["お気に入りに追加"]
@@ -198,7 +205,7 @@ final class EMeishiUITests: XCTestCase {
         // 再度長押しして「お気に入り解除」になっていることを確認
         // コンテキストメニューが閉じるのを少し待つ
         sleep(1)
-        cardText.press(forDuration: 1.5)
+        card.press(forDuration: 1.5)
         XCTAssertTrue(app.buttons["お気に入り解除"].waitForExistence(timeout: 3))
 
         // メニューを閉じる（背景タップ）
@@ -208,9 +215,9 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testContextMenuDeleteShowsConfirmation() throws {
         // カードを長押し
-        let cardText = app.staticTexts["鈴木 一郎"]
-        XCTAssertTrue(cardText.waitForExistence(timeout: 5))
-        cardText.press(forDuration: 1.5)
+        let card = cardRow("鈴木 一郎")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 1.5)
 
         // 削除をタップ
         let deleteButton = app.buttons["削除"]
@@ -225,7 +232,7 @@ final class EMeishiUITests: XCTestCase {
         app.buttons["キャンセル"].tap()
 
         // カードがまだ存在する
-        XCTAssertTrue(app.staticTexts["鈴木 一郎"].waitForExistence(timeout: 3))
+        XCTAssertTrue(cardRow("鈴木 一郎").waitForExistence(timeout: 3))
     }
 
     // MARK: - 一括削除
@@ -241,6 +248,10 @@ final class EMeishiUITests: XCTestCase {
         let selectAllButton = app.buttons["selectAllButton"]
         XCTAssertTrue(selectAllButton.waitForExistence(timeout: 3))
         selectAllButton.tap()
+
+        // 選択件数テキストが表示されるのを待つ（選択状態の反映を確認）
+        let countText = app.staticTexts["selectionCountText"]
+        XCTAssertTrue(countText.waitForExistence(timeout: 3))
 
         // 一括削除ボタンをタップ
         let bulkDeleteButton = app.buttons["bulkDeleteButton"]
@@ -295,11 +306,14 @@ final class EMeishiUITests: XCTestCase {
         searchField.tap()
         searchField.typeText("山田")
 
+        // 検索結果が反映されるのを待つ
+        XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: 3))
+
         // ナビゲーションタイトルに件数が含まれることを確認
-        // 「名刺（3件）」のような表示
+        // 「名刺（1件）」のような表示
         let predicate = NSPredicate(format: "label CONTAINS '名刺（'")
         let titleWithCount = app.navigationBars.staticTexts.matching(predicate)
-        XCTAssertTrue(titleWithCount.firstMatch.waitForExistence(timeout: 3),
+        XCTAssertTrue(titleWithCount.firstMatch.waitForExistence(timeout: 5),
                       "検索時にナビゲーションタイトルに件数が表示されるべき")
     }
 }
