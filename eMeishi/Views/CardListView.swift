@@ -643,40 +643,42 @@ private struct SectionIndexView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let availableHeight = geo.size.height - 16 // 上下パディング分を差し引く
+            let availableHeight = max(0, geo.size.height - 16) // 上下パディング分を差し引く（負値防止）
             let visible = Self.thinned(filteredItems, for: availableHeight)
-            let itemH = visible.isEmpty ? 0 : min(availableHeight / CGFloat(visible.count), 20)
-            VStack(spacing: 0) {
-                ForEach(visible, id: \.char) { item in
-                    Text(item.char)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color.primary.opacity(0.5))
-                        .frame(width: 14, height: itemH)
+            let itemH = (visible.isEmpty || availableHeight < 1) ? 0 : min(availableHeight / CGFloat(visible.count), 20)
+            if itemH > 0 {
+                VStack(spacing: 0) {
+                    ForEach(visible, id: \.char) { item in
+                        Text(item.char)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(Color.primary.opacity(0.5))
+                            .frame(width: 14, height: itemH)
+                    }
                 }
-            }
-            .frame(maxHeight: .infinity, alignment: .center)
-            .padding(.leading, 4)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        feedbackGenerator.prepare()
-                        let paddingTop = (geo.size.height - itemH * CGFloat(visible.count)) / 2
-                        let adjustedY = value.location.y - paddingTop
-                        let idx = max(0, min(Int(adjustedY / itemH), visible.count - 1))
-                        let item = visible[idx]
-                        if lastChar != item.char {
-                            lastChar = item.char
-                            feedbackGenerator.selectionChanged()
-                            if let id = nearestId(for: item.sectionId) {
-                                proxy.scrollTo(id, anchor: .top)
+                .frame(maxHeight: .infinity, alignment: .center)
+                .padding(.leading, 4)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            feedbackGenerator.prepare()
+                            let paddingTop = (geo.size.height - itemH * CGFloat(visible.count)) / 2
+                            let adjustedY = value.location.y - paddingTop
+                            let idx = max(0, min(Int(adjustedY / itemH), visible.count - 1))
+                            let item = visible[idx]
+                            if lastChar != item.char {
+                                lastChar = item.char
+                                feedbackGenerator.selectionChanged()
+                                if let id = nearestId(for: item.sectionId) {
+                                    proxy.scrollTo(id, anchor: .top)
+                                }
                             }
                         }
-                    }
-                    .onEnded { _ in
-                        lastChar = nil
-                    }
-            )
+                        .onEnded { _ in
+                            lastChar = nil
+                        }
+                )
+            }
         }
         .frame(width: 20)
         .padding(.vertical, 8)
