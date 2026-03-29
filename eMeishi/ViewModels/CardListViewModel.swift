@@ -313,42 +313,41 @@ class CardListViewModel: ObservableObject {
         return "その他"
     }
 
-    // 名前順グループ化（ascending で昇降順を切り替え）
-    private func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
+    // 50音・アルファベット順の共通グループ化ロジック
+    private func groupBySection(_ cards: [BusinessCard], ascending: Bool,
+                                keyExtractor: (BusinessCard) -> String,
+                                trailingKey: String? = nil) -> [CardSection] {
         var buckets: [String: [BusinessCard]] = [:]
         for card in cards {
-            // ふりがながあればそちらを使ってセクション分類（ない場合は漢字）
-            let reading = card.lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
-            let name = reading.isEmpty
-                ? (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
-                : reading
-            let key = name.isEmpty ? "その他" : sectionKey(for: name)
-            buckets[key, default: []].append(card)
-        }
-        let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()
-        return order
-            .filter { buckets[$0] != nil }
-            .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
-    }
-
-    // 会社名順グループ化（会社名なしは常に末尾）
-    private func groupByCompany(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
-        let noCompanyKey = "（会社名なし）"
-        var buckets: [String: [BusinessCard]] = [:]
-        for card in cards {
-            // companySortKey（法人格除去・読み優先）でセクション分類
-            let sortKey = card.companySortKey
-            let key = sortKey.isEmpty ? noCompanyKey : sectionKey(for: sortKey)
+            let raw = keyExtractor(card)
+            let key = raw.isEmpty ? (trailingKey ?? "その他") : sectionKey(for: raw)
             buckets[key, default: []].append(card)
         }
         let order = ascending ? Self.sectionOrder : Self.sectionOrder.reversed()
         var sections = order
             .filter { buckets[$0] != nil }
             .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
-        if let noCoCards = buckets[noCompanyKey] {
-            sections.append(CardSection(id: noCompanyKey, title: noCompanyKey, cards: noCoCards))
+        if let tk = trailingKey, let trailing = buckets[tk] {
+            sections.append(CardSection(id: tk, title: tk, cards: trailing))
         }
         return sections
+    }
+
+    // 名前順グループ化
+    private func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
+        groupBySection(cards, ascending: ascending) { card in
+            let reading = card.lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
+            return reading.isEmpty
+                ? (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
+                : reading
+        }
+    }
+
+    // 会社名順グループ化（会社名なしは常に末尾）
+    private func groupByCompany(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
+        groupBySection(cards, ascending: ascending,
+                       keyExtractor: { $0.companySortKey },
+                       trailingKey: "（会社名なし）")
     }
 
     // 日時順グループ化（dateOf で createdAt / updatedAt を切り替え、ascending で昇降）
@@ -390,23 +389,13 @@ class CardListViewModel: ObservableObject {
     }
 
     func exportSelectedCSV(ids: Set<BusinessCard.ID>) {
-        let selected = selectedCards(from: ids)
-        guard !selected.isEmpty else { return }
-        do {
-            exportItem = ExportItem(url: try ExportService.shared.exportCSV(from: selected))
-        } catch {
-            errorMessage = "CSVエクスポートに失敗しました: \(error.localizedDescription)"
-        }
+        performExport(selectedCards(from: ids), label: "CSVエクスポート",
+                      export: ExportService.shared.exportCSV)
     }
 
     func exportSelectedVCard(ids: Set<BusinessCard.ID>) {
-        let selected = selectedCards(from: ids)
-        guard !selected.isEmpty else { return }
-        do {
-            exportItem = ExportItem(url: try ExportService.shared.exportVCard(from: selected))
-        } catch {
-            errorMessage = "vCardエクスポートに失敗しました: \(error.localizedDescription)"
-        }
+        performExport(selectedCards(from: ids), label: "vCardエクスポート",
+                      export: ExportService.shared.exportVCard)
     }
 
     func addTagToCards(tag: Tag, ids: Set<BusinessCard.ID>) {
@@ -437,18 +426,39 @@ class CardListViewModel: ObservableObject {
     // MARK: - エクスポート
 
     func exportCSV() {
-        do {
-            exportItem = ExportItem(url: try ExportService.shared.exportCSV(from: cards))
-        } catch {
-            errorMessage = "CSVエクスポートに失敗しました: \(error.localizedDescription)"
-        }
+        performExport(cards, label: "CSVエクスポート",
+                      export: ExportService.shared.exportCSV)
     }
 
     func exportVCard() {
+        performExport(cards, label: "vCardエクスポート",
+                      export: ExportService.shared.exportVCard)
+    }
+
+    private func performExport(_ cards: [BusinessCard], label: String,
+                               export: ([BusinessCard]) throws -> URL) {
+        guard !cards.isEmpty else { return }
         do {
-            exportItem = ExportItem(url: try ExportService.shared.exportVCard(from: cards))
+            exportItem = ExportItem(url: try export(cards))
         } catch {
-            errorMessage = "vCardエクスポートに失敗しました: \(error.localizedDescription)"
+            errorMessage = "\(label)に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - コンテキストメニューアクション
+
+    func shareVCard(card: BusinessCard) {
+        performExport([card], label: "vCardの生成",
+                      export: ExportService.shared.exportVCard)
+    }
+
+    func saveToContacts(card: BusinessCard) {
+        Task { @MainActor in
+            do {
+                try await ContactsService.shared.export(card: card)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

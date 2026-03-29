@@ -461,13 +461,13 @@ struct CardListView: View {
         }
 
         Button {
-            shareVCard(card)
+            viewModel.shareVCard(card: card)
         } label: {
             Label("vCardとして共有", systemImage: "square.and.arrow.up")
         }
 
         Button {
-            Task { await saveToContacts(card) }
+            viewModel.saveToContacts(card: card)
         } label: {
             Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
         }
@@ -479,25 +479,6 @@ struct CardListView: View {
             isShowingDeleteConfirm = true
         } label: {
             Label("削除", systemImage: "trash")
-        }
-    }
-
-    // MARK: - コンテキストメニューアクション
-
-    private func shareVCard(_ card: BusinessCard) {
-        do {
-            let url = try ExportService.shared.exportVCard(from: [card])
-            viewModel.exportItem = ExportItem(url: url)
-        } catch {
-            viewModel.errorMessage = "vCardの生成に失敗しました: \(error.localizedDescription)"
-        }
-    }
-
-    private func saveToContacts(_ card: BusinessCard) async {
-        do {
-            try await ContactsService.shared.export(card: card)
-        } catch {
-            viewModel.errorMessage = error.localizedDescription
         }
     }
 
