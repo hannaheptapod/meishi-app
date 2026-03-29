@@ -34,6 +34,26 @@ final class EMeishiUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
     }
 
+    // タイムアウト定数
+    private static let defaultTimeout: TimeInterval = 5
+    private static let shortTimeout: TimeInterval = 3
+
+    /// 選択モードに入る（共通ヘルパー）
+    @MainActor
+    private func enterSelectionMode() {
+        let selectButton = app.buttons["selectButton"]
+        XCTAssertTrue(selectButton.waitForExistence(timeout: Self.defaultTimeout))
+        selectButton.tap()
+        XCTAssertTrue(app.buttons["doneButton"].waitForExistence(timeout: Self.shortTimeout))
+    }
+
+    /// コンテキストメニューを表示する（共通ヘルパー）
+    @MainActor
+    private func showContextMenu(for element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout: Self.defaultTimeout))
+        element.press(forDuration: 1.5)
+    }
+
     // MARK: - 起動・一覧表示
 
     @MainActor
@@ -70,58 +90,40 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testEnterSelectionMode() throws {
-        let selectButton = app.buttons["selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
-        selectButton.tap()
-
-        // 完了ボタンが表示される
-        let doneButton = app.buttons["doneButton"]
-        XCTAssertTrue(doneButton.waitForExistence(timeout: 3))
+        enterSelectionMode()
 
         // すべて選択ボタンが表示される
-        let selectAllButton = app.buttons["selectAllButton"]
-        XCTAssertTrue(selectAllButton.exists)
+        XCTAssertTrue(app.buttons["selectAllButton"].exists)
 
         // ガイドテキストが表示される
-        let guideText = app.staticTexts["selectionGuideText"]
-        XCTAssertTrue(guideText.exists)
+        XCTAssertTrue(app.staticTexts["selectionGuideText"].exists)
 
         // 一括削除ボタンが表示される
-        let bulkDeleteButton = app.buttons["bulkDeleteButton"]
-        XCTAssertTrue(bulkDeleteButton.exists)
+        XCTAssertTrue(app.buttons["bulkDeleteButton"].exists)
     }
 
     @MainActor
     func testExitSelectionMode() throws {
-        // 選択モードに入る
-        let selectButton = app.buttons["selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
-        selectButton.tap()
+        enterSelectionMode()
 
         // 完了ボタンで抜ける
-        let doneButton = app.buttons["doneButton"]
-        XCTAssertTrue(doneButton.waitForExistence(timeout: 3))
-        doneButton.tap()
+        app.buttons["doneButton"].tap()
 
         // 選択ボタンが再び表示される
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: Self.shortTimeout))
     }
 
     @MainActor
     func testSelectAllAndDeselectAll() throws {
-        // 選択モードに入る
-        let selectButton = app.buttons["selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
-        selectButton.tap()
+        enterSelectionMode()
 
         // すべて選択
         let selectAllButton = app.buttons["selectAllButton"]
-        XCTAssertTrue(selectAllButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(selectAllButton.waitForExistence(timeout: Self.shortTimeout))
         selectAllButton.tap()
 
         // 選択件数テキストが表示される
-        let countText = app.staticTexts["selectionCountText"]
-        XCTAssertTrue(countText.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["selectionCountText"].waitForExistence(timeout: Self.shortTimeout))
 
         // 全解除ボタンに変わっている
         XCTAssertTrue(app.buttons["selectAllButton"].label == "全解除")
@@ -130,19 +132,12 @@ final class EMeishiUITests: XCTestCase {
         app.buttons["selectAllButton"].tap()
 
         // ガイドテキストに戻る
-        let guideText = app.staticTexts["selectionGuideText"]
-        XCTAssertTrue(guideText.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["selectionGuideText"].waitForExistence(timeout: Self.shortTimeout))
     }
 
     @MainActor
     func testSelectionModeHidesDeleteIcons() throws {
-        // 選択モードに入る
-        let selectButton = app.buttons["selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
-        selectButton.tap()
-
-        // 完了ボタンが出たことを確認（選択モード中）
-        XCTAssertTrue(app.buttons["doneButton"].waitForExistence(timeout: 3))
+        enterSelectionMode()
 
         // 赤丸の削除ボタンが表示されていないことを確認
         // .onDelete による削除ボタンは "Delete" アクセシビリティラベルを持つ
@@ -187,13 +182,11 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testLongPressShowsContextMenu() throws {
-        // カードを長押し
         let card = cardRow("山田 太郎")
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.press(forDuration: 1.5)
+        showContextMenu(for: card)
 
         // コンテキストメニューの項目が表示される
-        XCTAssertTrue(app.buttons["お気に入りに追加"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["お気に入りに追加"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(app.buttons["編集"].exists)
         XCTAssertTrue(app.buttons["vCardとして共有"].exists)
         XCTAssertTrue(app.buttons["連絡先に保存"].exists)
@@ -202,21 +195,19 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testContextMenuFavoriteToggle() throws {
-        // カードを長押し
         let card = cardRow("山田 太郎")
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.press(forDuration: 1.5)
+        showContextMenu(for: card)
 
         // お気に入りに追加
         let favoriteButton = app.buttons["お気に入りに追加"]
-        XCTAssertTrue(favoriteButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(favoriteButton.waitForExistence(timeout: Self.shortTimeout))
         favoriteButton.tap()
 
         // 再度長押しして「お気に入り解除」になっていることを確認
-        // コンテキストメニューが閉じるのを少し待つ
-        sleep(1)
-        card.press(forDuration: 1.5)
-        XCTAssertTrue(app.buttons["お気に入り解除"].waitForExistence(timeout: 3))
+        // コンテキストメニューが閉じるのを待つ
+        XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))
+        showContextMenu(for: card)
+        XCTAssertTrue(app.buttons["お気に入り解除"].waitForExistence(timeout: Self.shortTimeout))
 
         // メニューを閉じる（背景タップ）
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
@@ -226,52 +217,45 @@ final class EMeishiUITests: XCTestCase {
     func testContextMenuDeleteShowsConfirmation() throws {
         // カードを長押し（リスト上位のカードを使用：Landscape対応）
         let card = cardRow("山田 花子")
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.press(forDuration: 1.5)
+        showContextMenu(for: card)
 
         // コンテキストメニューの削除をタップ
         let deleteButton = app.buttons["削除"]
-        XCTAssertTrue(deleteButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: Self.shortTimeout))
         deleteButton.tap()
 
         // 確認ダイアログ（confirmationDialog）がシートとして表示される
-        sleep(1)
-        XCTAssertTrue(confirmationDialogIsPresented(),
+        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: Self.shortTimeout),
                       "削除の確認ダイアログが表示されるべき")
 
         // シート外タップで閉じる
         dismissConfirmationDialog()
 
         // カードがまだ存在する
-        XCTAssertTrue(cardRow("山田 花子").waitForExistence(timeout: 3))
+        XCTAssertTrue(cardRow("山田 花子").waitForExistence(timeout: Self.shortTimeout))
     }
 
     // MARK: - 一括削除
 
     @MainActor
     func testBulkDeleteConfirmation() throws {
-        // 選択モードに入る
-        let selectButton = app.buttons["selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
-        selectButton.tap()
+        enterSelectionMode()
 
         // すべて選択
         let selectAllButton = app.buttons["selectAllButton"]
-        XCTAssertTrue(selectAllButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(selectAllButton.waitForExistence(timeout: Self.shortTimeout))
         selectAllButton.tap()
 
         // 選択件数テキストが表示されるのを待つ（選択状態の反映を確認）
-        let countText = app.staticTexts["selectionCountText"]
-        XCTAssertTrue(countText.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["selectionCountText"].waitForExistence(timeout: Self.shortTimeout))
 
         // 一括削除ボタンをタップ
         let bulkDeleteButton = app.buttons["bulkDeleteButton"]
-        XCTAssertTrue(bulkDeleteButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(bulkDeleteButton.waitForExistence(timeout: Self.shortTimeout))
         bulkDeleteButton.tap()
 
         // 確認ダイアログ（confirmationDialog）がシートとして表示される
-        sleep(1)
-        XCTAssertTrue(confirmationDialogIsPresented(),
+        XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: Self.shortTimeout),
                       "一括削除の確認ダイアログが表示されるべき")
 
         // シート外タップで閉じる

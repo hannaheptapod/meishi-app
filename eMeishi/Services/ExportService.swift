@@ -1,5 +1,20 @@
 import Foundation
 
+// エクスポート処理のエラー型
+enum ExportError: LocalizedError {
+    case csvWriteFailed(Error)
+    case vcardWriteFailed(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .csvWriteFailed(let e):
+            return "CSVの書き出しに失敗しました: \(e.localizedDescription)"
+        case .vcardWriteFailed(let e):
+            return "vCardの書き出しに失敗しました: \(e.localizedDescription)"
+        }
+    }
+}
+
 // CSV・vCard（.vcf）エクスポートサービス
 class ExportService {
 
@@ -21,7 +36,11 @@ class ExportService {
         // BOM付きUTF-8 でExcel等での文字化けを防ぐ
         var data = Data([0xEF, 0xBB, 0xBF])
         data.append(contentsOf: csv.utf8)
-        try data.write(to: url)
+        do {
+            try data.write(to: url)
+        } catch {
+            throw ExportError.csvWriteFailed(error)
+        }
         return url
     }
 
@@ -64,7 +83,11 @@ class ExportService {
     func exportVCard(from cards: [BusinessCard]) throws -> URL {
         let vcf = vCardString(from: cards)
         let url = temporaryFileURL(name: "meishi_export", ext: "vcf")
-        try vcf.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try vcf.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            throw ExportError.vcardWriteFailed(error)
+        }
         return url
     }
 
