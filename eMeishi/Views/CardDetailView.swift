@@ -3,7 +3,7 @@ import SwiftUI
 // 名刺詳細画面
 struct CardDetailView: View {
 
-    let card: BusinessCard
+    @ObservedObject var card: BusinessCard
 
     @EnvironmentObject private var listViewModel: CardListViewModel
     @State private var isShowingEditForm = false

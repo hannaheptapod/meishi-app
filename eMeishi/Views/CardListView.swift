@@ -504,7 +504,7 @@ struct CardListView: View {
 
 private struct CardRowView: View {
 
-    let card: BusinessCard
+    @ObservedObject var card: BusinessCard
 
     var body: some View {
         HStack(spacing: 12) {
