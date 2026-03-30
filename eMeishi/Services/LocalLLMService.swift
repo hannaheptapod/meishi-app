@@ -97,15 +97,32 @@ class LocalLLMService: ObservableObject {
         guard isModelAvailable else { return }
 
         let config = MLModelConfiguration()
-        config.computeUnits = .all
+        // .all だと ANE が int32 入力に対応できず CPU フォールバックで極端に遅い
+        // .cpuAndGPU で GPU を優先的に使用し、int32 互換性を確保
+        config.computeUnits = .cpuAndGPU
 
         if prefillModel == nil {
             prefillModel = try MLModel(contentsOf: prefillModelURL, configuration: config)
-            print("[LocalLLM] Prefill モデルロード完了")
+            // モデルの入出力仕様をログ出力（デバッグ用）
+            let desc = prefillModel!.modelDescription
+            for (name, feat) in desc.inputDescriptionsByName {
+                print("[LocalLLM] Prefill input: \(name) type=\(feat.type.rawValue) multiArrayConstraint=\(String(describing: feat.multiArrayConstraint))")
+            }
+            for (name, feat) in desc.outputDescriptionsByName {
+                print("[LocalLLM] Prefill output: \(name) type=\(feat.type.rawValue)")
+            }
+            print("[LocalLLM] Prefill モデルロード完了 (cpuAndGPU)")
         }
         if decodeModel == nil {
             decodeModel = try MLModel(contentsOf: decodeModelURL, configuration: config)
-            print("[LocalLLM] Decode モデルロード完了")
+            let desc = decodeModel!.modelDescription
+            for (name, feat) in desc.inputDescriptionsByName {
+                print("[LocalLLM] Decode input: \(name) type=\(feat.type.rawValue)")
+            }
+            for (name, feat) in desc.outputDescriptionsByName {
+                print("[LocalLLM] Decode output: \(name) type=\(feat.type.rawValue)")
+            }
+            print("[LocalLLM] Decode モデルロード完了 (cpuAndGPU)")
         }
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
@@ -117,16 +134,25 @@ class LocalLLMService: ObservableObject {
     /// ハイブリッド分類: ルールベース（空間情報活用）で確実なフィールドを先に抽出し、
     /// 未分類行のみLLMに送って名前・役職・部署を判定する。
     /// モデル未ロード・推論失敗時は nil を返す（呼び出し元はフォールバックへ進む）。
+    ///
+    /// 推論方式: 単一パス分類（1行1回の forward pass でカテゴリ判定）
+    /// - 自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）
+    /// - 未分類行数 × 1回の forward pass のみ（通常2-4回）
     func classify(lines: [RecognizedLine]) async -> CardFieldClassifier.ParsedCard? {
         // アプリ再起動後に未ロードの場合はここでロードする
         if prefillModel == nil || decodeModel == nil || tokenizer == nil {
             await MainActor.run { isInferencing = true }
             // モデルファイルの存在を再チェック（Finder で追加された場合に対応）
             isModelAvailable = checkModelFiles()
-            try? loadModelIfNeeded()
+            do {
+                try loadModelIfNeeded()
+            } catch {
+                print("[LocalLLM] モデルロードエラー: \(error)")
+            }
         }
         guard let pModel = prefillModel, let dModel = decodeModel, let tok = tokenizer else {
             await MainActor.run { isInferencing = false }
+            print("[LocalLLM] モデル未ロード（prefill=\(prefillModel != nil), decode=\(decodeModel != nil), tok=\(tokenizer != nil)）")
             return nil
         }
 
@@ -139,45 +165,35 @@ class LocalLLMService: ObservableObject {
 
         // 未分類行が空ならLLM不要（全フィールドがルールで解決済み）
         guard !ruleResult.unclassifiedLines.isEmpty else {
+            print("[LocalLLM] 全フィールドがルールベースで解決済み。LLM不要")
             return baseParsed
         }
 
-        // --- Step 2: 未分類行のみをLLMに送る ---
-        let prompt   = buildChatMLPrompt(
-            unclassifiedLines: ruleResult.unclassifiedLines,
-            knownCompany: baseParsed.company
-        )
-        let inputIds = tok.encode(prompt)
-
         let timeoutSeconds: TimeInterval = 10
         let deadline = Date().addingTimeInterval(timeoutSeconds)
-
-        print("[LocalLLM] 推論開始。入力トークン数: \(inputIds.count)")
         let startTime = Date()
 
+        print("[LocalLLM] 単一パス分類開始。未分類行: \(ruleResult.unclassifiedLines.count)行")
+
+        // --- Step 2: 単一パス分類（1行1回の forward pass） ---
         do {
-            let output = try runGeneration(
+            let llmResult = try classifyByLine(
                 prefillModel: pModel, decodeModel: dModel,
-                tokenizer: tok, inputIds: inputIds, deadline: deadline
+                tokenizer: tok,
+                lines: ruleResult.unclassifiedLines,
+                deadline: deadline
             )
             let elapsed = Date().timeIntervalSince(startTime)
-            print("[LocalLLM] 推論完了。\(String(format: "%.1f", elapsed))秒")
-
-            // プロンプトで {"lastName":" までプリフィル済みなので先頭に補完
-            let jsonOutput = jsonPrefill + output
-            guard let llmResult = parseJSON(jsonOutput) else {
-                print("[LocalLLM] JSONパース失敗。生出力: \(output.prefix(200))")
-                return baseParsed
-            }
+            print("[LocalLLM] 分類完了。\(String(format: "%.1f", elapsed))秒")
 
             // --- Step 3: ルールベース結果とLLM結果をマージ ---
             return mergeResults(base: baseParsed, llm: llmResult)
         } catch InferenceError.timeout {
             let elapsed = Date().timeIntervalSince(startTime)
-            print("[LocalLLM] 推論タイムアウト（\(String(format: "%.1f", elapsed))秒）")
+            print("[LocalLLM] 分類タイムアウト（\(String(format: "%.1f", elapsed))秒）")
             return baseParsed
         } catch {
-            print("[LocalLLM] 推論エラー: \(error.localizedDescription)")
+            print("[LocalLLM] 分類エラー: \(error)")
             return baseParsed
         }
     }
@@ -194,125 +210,129 @@ class LocalLLMService: ObservableObject {
         return merged
     }
 
-    // MARK: - テキスト生成ループ（Prefill/Decode 分割方式）
+    // MARK: - 単一パス分類（自動回帰生成を廃止）
 
-    /// Prefill → Decode の2段階 autoregressive 生成。
-    /// KV キャッシュなし → 各ステップで全シーケンスを再処理（O(n²)）のため、
-    /// 生成トークン数を最小限に抑えることが最重要の最適化ポイント。
+    /// 各未分類行に対して1回の forward pass でカテゴリ（名前/役職/部署/会社）を判定。
     ///
-    /// Decode ステップでは Decode モデルを使用:
-    ///   - causalMask 構築不要（内部で自動構築）→ Swift 側のメモリ確保・充填コスト削減
-    ///   - Decode モデルの logits 出力が不正な場合は Prefill モデルにフォールバック
-    private let maxContextLength = 1024
+    /// 自動回帰生成（15ステップ × 全シーケンス再処理 = O(n²)）を完全廃止し、
+    /// 行数分の単一 forward pass（各 ~25トークン）のみで分類する。
+    ///
+    /// 計算量: O(行数 × プロンプト長) ≈ O(3 × 25) = 75トークン相当
+    /// 旧方式: O(15 × (60+15)/2) ≈ O(562) トークン相当（7.5倍の削減）
+    private enum LineCategory: String {
+        case name, title, department, company, unknown
+    }
 
-    private func runGeneration(prefillModel: MLModel,
-                               decodeModel: MLModel,
-                               tokenizer: Qwen25Tokenizer,
-                               inputIds: [Int],
-                               deadline: Date) throws -> String {
-        let promptLen    = inputIds.count
-        var allIds       = inputIds   // プロンプト + 生成済みトークンの全体
-        var generatedIds = [Int]()
-        let maxNewTokens = 15     // 短縮: {"lastName":"...","firstName":"...",...} に十分
-        // プロンプトで `{` を含むプリフィル済み
-        var openBraces   = 1
-        var jsonStarted  = true
+    private func classifyByLine(prefillModel: MLModel,
+                                decodeModel: MLModel,
+                                tokenizer: Qwen25Tokenizer,
+                                lines: [String],
+                                deadline: Date) throws -> CardFieldClassifier.ParsedCard {
+        var result = CardFieldClassifier.ParsedCard()
 
-        // --- Prefill: プロンプト全体を一括処理（causalMask 付き） ---
-        if Date() > deadline { throw InferenceError.timeout }
-
-        let prefillStart = CFAbsoluteTimeGetCurrent()
-        let prefillLogits = try forwardPrefill(
-            model: prefillModel, ids: inputIds, seqLen: promptLen
-        )
-        let prefillMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000
-        print("[LocalLLM] Prefill: \(String(format: "%.0f", prefillMs))ms (\(promptLen) tokens)")
-
-        guard let firstToken = argmaxLastToken(logits: prefillLogits) else {
-            return ""
-        }
-        if firstToken == Qwen25Tokenizer.SpecialToken.imEnd
-        || firstToken == Qwen25Tokenizer.SpecialToken.eot { return "" }
-        generatedIds.append(firstToken)
-        allIds.append(firstToken)
-
-        // 最初のトークンでブレース追跡
-        for ch in tokenizer.decode([firstToken]) {
-            if ch == "{" { openBraces += 1; jsonStarted = true }
-            else if ch == "}" && jsonStarted { openBraces -= 1 }
-        }
-        if jsonStarted && openBraces <= 0 {
-            return tokenizer.decode(generatedIds)
-        }
-
-        // --- Decode: Decode モデルで次トークンを予測 ---
-        // Decode モデルは causalMask 不要 → mask 確保・充填のオーバーヘッドを完全削除
-        // Decode モデルの出力形状を最初のステップで検証し、不正なら Prefill にフォールバック
+        // まず Decode モデルを試す（causalMask 不要で高速）
+        // Decode モデルの出力が不正なら Prefill にフォールバック
         var useDecodeModel = true
-        var decodeSteps    = 0
-        let decodeStart    = CFAbsoluteTimeGetCurrent()
 
-        while generatedIds.count < maxNewTokens {
+        for (i, line) in lines.enumerated() {
             if Date() > deadline { throw InferenceError.timeout }
-            guard allIds.count < maxContextLength else { break }
+
+            // 分類用の最小プロンプト（~25トークン）
+            let prompt = buildClassificationPrompt(line: line)
+            let ids = tokenizer.encode(prompt)
 
             let stepStart = CFAbsoluteTimeGetCurrent()
             let logits: MLMultiArray
 
+            // Decode モデルを優先（mask 構築不要）
             if useDecodeModel {
-                let decLogits = try forwardDecode(
-                    model: decodeModel, ids: allIds, seqLen: allIds.count
-                )
-                // 最初のステップで vocab サイズを検証
-                if decodeSteps == 0 {
+                do {
+                    let decLogits = try forwardDecode(model: decodeModel, ids: ids, seqLen: ids.count)
                     let lastDim = decLogits.shape.last?.intValue ?? 0
-                    if lastDim < 1000 {
-                        // Decode モデルの出力が不正 → 以降 Prefill モデルを使用
-                        print("[LocalLLM] Decode logits invalid (shape=\(decLogits.shape)), switching to Prefill")
+                    if i == 0 && lastDim < 1000 {
+                        print("[LocalLLM] Decode 出力不正 (shape=\(decLogits.shape))→Prefill使用")
                         useDecodeModel = false
-                        logits = try forwardPrefill(
-                            model: prefillModel, ids: allIds, seqLen: allIds.count
-                        )
+                        logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
                     } else {
-                        print("[LocalLLM] Decode model OK (vocab=\(lastDim))")
+                        if i == 0 { print("[LocalLLM] Decode model OK (vocab=\(lastDim))") }
                         logits = decLogits
                     }
-                } else {
-                    logits = decLogits
+                } catch {
+                    print("[LocalLLM] Decode エラー: \(error)→Prefill使用")
+                    useDecodeModel = false
+                    logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
                 }
             } else {
-                logits = try forwardPrefill(
-                    model: prefillModel, ids: allIds, seqLen: allIds.count
-                )
+                logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
             }
-
-            guard let nextToken = argmaxLastToken(logits: logits) else { break }
-            if nextToken == Qwen25Tokenizer.SpecialToken.imEnd
-            || nextToken == Qwen25Tokenizer.SpecialToken.eot { break }
-            generatedIds.append(nextToken)
-            allIds.append(nextToken)
-            decodeSteps += 1
 
             let stepMs = (CFAbsoluteTimeGetCurrent() - stepStart) * 1000
-            if decodeSteps <= 3 || decodeSteps % 5 == 0 {
-                let mode = useDecodeModel ? "Dec" : "Pre"
-                print("[LocalLLM] Step \(decodeSteps) [\(mode)]: \(String(format: "%.0f", stepMs))ms (\(allIds.count) tokens)")
-            }
+            let modelName = useDecodeModel ? "Dec" : "Pre"
 
-            // { } をカウントしてJSONが閉じたら即終了
-            for ch in tokenizer.decode([nextToken]) {
-                if ch == "{" { openBraces += 1; jsonStarted = true }
-                else if ch == "}" && jsonStarted { openBraces -= 1 }
+            guard let tokenId = argmaxLastToken(logits: logits) else {
+                print("[LocalLLM] 行\(i+1) [\(modelName)] \(String(format: "%.0f", stepMs))ms: argmax失敗 '\(line)'")
+                continue
             }
-            if jsonStarted && openBraces <= 0 { break }
+            let decoded = tokenizer.decode([tokenId]).lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // 最初のトークンの先頭文字でカテゴリ判定
+            let category: LineCategory
+            if decoded.hasPrefix("n") || decoded.hasPrefix("名") { category = .name }
+            else if decoded.hasPrefix("t") || decoded.hasPrefix("役") { category = .title }
+            else if decoded.hasPrefix("d") || decoded.hasPrefix("部") { category = .department }
+            else if decoded.hasPrefix("c") || decoded.hasPrefix("会") { category = .company }
+            else { category = .unknown }
+
+            print("[LocalLLM] 行\(i+1) [\(modelName)] \(String(format: "%.0f", stepMs))ms: '\(line)' → \(category.rawValue) (token='\(decoded)')")
+
+            switch category {
+            case .name:
+                let (last, first) = splitJapaneseName(line)
+                if result.lastName.isEmpty { result.lastName = last }
+                if result.firstName.isEmpty { result.firstName = first }
+            case .title:
+                if result.title.isEmpty { result.title = line.trimmingCharacters(in: .whitespaces) }
+            case .department:
+                if result.department.isEmpty { result.department = line.trimmingCharacters(in: .whitespaces) }
+            case .company:
+                if result.company.isEmpty { result.company = line.trimmingCharacters(in: .whitespaces) }
+            case .unknown:
+                // 不明な行は名前の可能性が高い（ルールベースで他は捕捉済み）
+                if result.lastName.isEmpty {
+                    let (last, first) = splitJapaneseName(line)
+                    result.lastName = last
+                    result.firstName = first
+                    print("[LocalLLM] → unknown を名前として扱う: \(last) \(first)")
+                }
+            }
         }
 
-        let totalDecMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000
-        let mode = useDecodeModel ? "Decode" : "Prefill"
-        print("[LocalLLM] 生成完了: \(decodeSteps)ステップ [\(mode)] \(String(format: "%.0f", totalDecMs))ms")
-
-        return tokenizer.decode(generatedIds)
+        return result
     }
+
+    /// 分類用の最小 ChatML プロンプト（~25トークン）
+    /// 1行を入力し、カテゴリを1トークンで回答させる
+    private func buildClassificationPrompt(line: String) -> String {
+        return "<|im_start|>system\n1word<|im_end|>\n<|im_start|>user\n\"\(line)\" on card is: name/title/department/company<|im_end|>\n<|im_start|>assistant\n"
+    }
+
+    /// 日本語名を姓・名に分割（スペース区切り、日本の慣習で姓が先）
+    private func splitJapaneseName(_ text: String) -> (lastName: String, firstName: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        // 半角スペースで分割
+        let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
+        if parts.count >= 2 { return (parts[0], parts[1]) }
+        // 全角スペースで分割
+        let fwParts = trimmed.split(separator: "\u{3000}", maxSplits: 1).map(String.init)
+        if fwParts.count >= 2 { return (fwParts[0], fwParts[1]) }
+        // 分割不能 → 全体を姓に
+        return (trimmed, "")
+    }
+
+    // MARK: - 自動回帰生成（レガシー・単一パス分類が失敗した場合の保険）
+
+    private let maxContextLength = 1024
 
     // MARK: - Forward Pass（Prefill）
 
