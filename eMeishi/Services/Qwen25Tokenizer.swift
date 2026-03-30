@@ -70,18 +70,26 @@ final class Qwen25Tokenizer {
         }
         print("[Tokenizer] vocab エントリ数: \(rawVocab.count)")
 
-        guard let rawMerges = model["merges"] as? [String] else {
+        // merges: 2つの形式に対応
+        //   形式A（Qwen2.5）: ["tok1 tok2", ...] — スペース区切り文字列の配列
+        //   形式B（Qwen3）:   [["tok1", "tok2"], ...] — 2要素配列の配列
+        let rawMerges: [String]
+        if let m = model["merges"] as? [String] {
+            rawMerges = m
+            print("[Tokenizer] merges 形式A (文字列配列): \(m.count)件")
+        } else if let m = model["merges"] as? [[String]] {
+            rawMerges = m.compactMap { pair in
+                pair.count == 2 ? "\(pair[0]) \(pair[1])" : nil
+            }
+            print("[Tokenizer] merges 形式B (配列の配列→変換): \(rawMerges.count)件")
+        } else {
             if let m = model["merges"] {
                 print("[Tokenizer] merges の型が不正: \(type(of: m))")
-                if let arr = m as? [Any], let first = arr.first {
-                    print("[Tokenizer] merges[0] type: \(type(of: first)) value: \(first)")
-                }
             } else {
                 print("[Tokenizer] merges キーが存在しない")
             }
             throw Err.invalidFormat
         }
-        print("[Tokenizer] merges エントリ数: \(rawMerges.count)")
 
         // added_tokens（特殊トークン）を vocab に追加
         var v = rawVocab
