@@ -76,6 +76,8 @@ struct CardFieldClassifier {
         var result = ParsedCard()
         var unclassified: [RecognizedLine] = []
 
+        print("[Classifier] === Pass1 開始 (\(lines.count)行) ===")
+
         // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
         for line in lines {
             let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -83,43 +85,66 @@ struct CardFieldClassifier {
 
             if result.email.isEmpty, let email = extractEmail(from: trimmed) {
                 result.email = email
+                print("[Classifier] email: '\(trimmed)'")
             } else if let phone = extractPhone(from: trimmed) {
                 result.phones.append(phone)
+                print("[Classifier] phone: '\(trimmed)'")
             } else if result.website.isEmpty, let url = extractURL(from: trimmed) {
                 result.website = url
+                print("[Classifier] website: '\(trimmed)'")
             } else if result.address.isEmpty, isAddress(trimmed) {
                 result.address = trimmed
+                print("[Classifier] address: '\(trimmed)'")
+            } else if isAddress(trimmed) {
+                // 2つ目以降の住所行は既に address が埋まっているので連結
+                result.address += " " + trimmed
+                print("[Classifier] address(追加): '\(trimmed)'")
             } else if result.company.isEmpty, isCompany(trimmed) {
                 result.company = trimmed.trimmingCharacters(in: .whitespaces)
+                print("[Classifier] company: '\(trimmed)'")
             } else if isDepartment(trimmed) {
                 result.department = result.department.isEmpty
                     ? trimmed
                     : result.department + " " + trimmed
+                print("[Classifier] department: '\(trimmed)'")
             } else if result.title.isEmpty, isJobTitle(trimmed) {
                 result.title = trimmed
+                print("[Classifier] title: '\(trimmed)'")
             } else {
                 unclassified.append(line)
+                print("[Classifier] 未分類: '\(trimmed)'")
             }
         }
+
+        print("[Classifier] Pass1結果: email=\(result.email.isEmpty ? "×" : "○") phone=\(result.phones.count)件 web=\(result.website.isEmpty ? "×" : "○") addr=\(result.address.isEmpty ? "×" : "○") co=\(result.company.isEmpty ? "×" : "○") dept=\(result.department.isEmpty ? "×" : "○") title=\(result.title.isEmpty ? "×" : "○")")
 
         // --- Pass2: 空間情報を使った名前スコアリング ---
         // スコアが十分高い場合はここで名前を確定し、LLMに委ねない
         if !unclassified.isEmpty {
             let scores = unclassified.map { personNameScore(for: $0, candidates: unclassified) }
+            for (idx, line) in unclassified.enumerated() {
+                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("[Classifier] Pass2スコア: '\(t)' = \(String(format: "%.3f", scores[idx]))")
+            }
             if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
                scores[bestIdx] > 0.4 {
+                let bestText = unclassified[bestIdx].text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("[Classifier] 名前確定(>\(0.4)): '\(bestText)' (score=\(String(format: "%.3f", scores[bestIdx])))")
                 // 高確信度（0.4超）: ルールベースで名前を確定
                 unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
+                print("[Classifier] 名前解決後: lastName='\(result.lastName)' firstName='\(result.firstName)'")
                 // フリガナ行を除去
                 unclassified.removeAll { isFuriganaLine($0) }
+            } else {
+                print("[Classifier] 名前スコア不足 → LLMに委譲")
             }
-            // 低確信度の場合は名前未確定のまま未分類行としてLLMに委ねる
         }
 
         // 未分類行からテキストのみ抽出して返す
         let unclassifiedTexts = unclassified.map {
             $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        print("[Classifier] 最終未分類: \(unclassifiedTexts)")
         return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
     }
 
