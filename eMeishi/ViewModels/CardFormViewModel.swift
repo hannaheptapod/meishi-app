@@ -184,6 +184,7 @@ class CardFormViewModel: ObservableObject {
         let prompt = """
             以下は名刺から読み取ったテキストです。各フィールドに分類してください。
             姓と名は必ず分けてください。
+            重要: テキストに明記されていない情報は絶対に推測せず、空文字列にしてください。
             \(rawText)
             """
         let response = try await session.respond(to: prompt, generating: ParsedCard.self)
@@ -373,14 +374,14 @@ class CardFormViewModel: ObservableObject {
 @available(iOS 26.0, *)
 @Generable
 struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）")          var lastName: String
-    @Guide(description: "名（ファーストネーム）")          var firstName: String
-    @Guide(description: "会社名")                          var company: String
-    @Guide(description: "部署名（営業部・zzz課など）")    var department: String
-    @Guide(description: "役職（部長・Directorなど）")      var title: String
-    @Guide(description: "電話番号")                        var phone: String
-    @Guide(description: "メールアドレス")                  var email: String
-    @Guide(description: "住所")                            var address: String
-    @Guide(description: "WebサイトURL")                   var website: String
+    @Guide(description: "姓（ファミリーネーム）。不明な場合は空文字列")          var lastName: String
+    @Guide(description: "名（ファーストネーム）。不明な場合は空文字列")          var firstName: String
+    @Guide(description: "会社名。不明な場合は空文字列")                          var company: String
+    @Guide(description: "部署名。不明な場合は空文字列")                          var department: String
+    @Guide(description: "役職。不明な場合は空文字列")                            var title: String
+    @Guide(description: "電話番号。不明な場合は空文字列")                        var phone: String
+    @Guide(description: "メールアドレス。不明な場合は空文字列")                  var email: String
+    @Guide(description: "住所。不明な場合は空文字列")                            var address: String
+    @Guide(description: "WebサイトURL。不明な場合は空文字列")                   var website: String
 }
 #endif
