@@ -801,7 +801,7 @@ struct HybridPromptTests {
             unclassifiedLines: ["山田 太郎"],
             knownCompany: ""
         )
-        #expect(!prompt.contains("判明済み"), "会社名が空の場合はヒントが含まれない")
+        #expect(!prompt.contains("company="), "会社名が空の場合はヒントが含まれない")
     }
 
     @Test func hybridPromptNoLeadingSpaces() {
@@ -843,8 +843,8 @@ struct ChatMLPromptTests {
     @Test func promptEndsWithJSONPrefill() {
         let prompt = service.buildChatMLPrompt(lines: ["テスト"])
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(trimmed.hasSuffix("{"),
-                "プロンプトは JSON プリフィル '{' で終わる必要がある")
+        #expect(trimmed.hasSuffix("{\"lastName\":\""),
+                "プロンプトは JSON プリフィル '{\"lastName\":\"' で終わる必要がある")
         #expect(trimmed.contains("/no_think"),
                 "プロンプトに /no_think（思考モード無効化）が含まれる必要がある")
     }

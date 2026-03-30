@@ -80,7 +80,7 @@ Tier 3: CardFieldClassifier（正規表現・常時利用可能）
 - `automatic`（デフォルト）/ `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
 - **全Tier共通の前段処理（ハイブリッド方式）**：`CardFieldClassifier.classifyStructuredFields` で Pass1（正規表現：email・phone・URL・住所・会社・部署・役職を抽出）+ Pass2（OCR座標情報を使った名前スコアリング：フリガナ近接・フォントサイズ・位置情報で確信度判定、>0.4 で名前確定）を実行。未分類行のみを各Tierの LLM に送り、結果をマージする。ルールベース確定結果を常に優先
 - **Tier 1**：ハイブリッド前段処理 → 未分類行のみ `@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。既知フィールドをプロンプトコンテキストとして渡し幻覚を防止。email/phone/address/website はルールベース結果を常に優先
-- **Tier 2**：ハイブリッド前段処理 → 未分類行のみ ChatML プロンプトで LLM に名前・役職・部署を問う → 結果マージ。Qwen3の思考モード無効化（`/no_think`）。Prefill モデル統一方式: 全ステップで Prefill モデルを使用（causalMask 付き・可変長最適化・KV キャッシュなし）。12秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=30`・`{` プリフィル
+- **Tier 2**：ハイブリッド前段処理 → 未分類行のみ ChatML プロンプトで LLM に名前・役職・部署を問う → 結果マージ。Qwen3の思考モード無効化（`/no_think`）。Prefill/Decode 分割方式: Prefill で初回一括処理、Decode モデルで逐次生成（causalMask 不要・内部自動構築）。Decode 出力不正時は Prefill にフォールバック。10秒タイムアウト・JSON括弧カウント早期終了・`maxNewTokens=15`・`{"lastName":"` プリフィル
 - **Tier 3**：`classify(lines:)` による全フィールド分類（Pass1 + Pass2 + 残り行から会社・役職補完）。LLM不使用・常時利用可能
 
 ---
@@ -183,7 +183,7 @@ meishi-app/
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
 - ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
 - カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
-- Qwen3-0.6B CoreML Prefill/Decode 分割推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM名前・役職判定・12秒タイムアウト・Prefill モデル統一（causalMask付き全トークン再処理）・BPEトークナイザー・早期終了ロジック・`/no_think` 思考モード無効化）
+- Qwen3-0.6B CoreML Prefill/Decode 分割推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM名前・役職判定・10秒タイムアウト・Prefill初回一括処理→Decodeモデル逐次生成（mask不要）・Decode出力不正時Prefillフォールバック・`{"lastName":"`プリフィル・`maxNewTokens=15`・BPEトークナイザー・早期終了ロジック・`/no_think` 思考モード無効化）
 - モデルファイル二重パス: Documents/LocalLLM/（開発用・Finder/iTunes で転送）→ Application Support/LocalLLM/（CloudKit ダウンロード）の優先順で検索
 - CloudKit Public Database 経由のモデル配布（Prefill/Decode 各モデル + 共有 weight チャンク分割・CKAsset・iCloudアカウント不要）
 - iTunes ファイル共有（UIFileSharingEnabled）で Documents ディレクトリへの開発用モデル配置に対応

@@ -149,7 +149,7 @@ class LocalLLMService: ObservableObject {
         )
         let inputIds = tok.encode(prompt)
 
-        let timeoutSeconds: TimeInterval = 12
+        let timeoutSeconds: TimeInterval = 10
         let deadline = Date().addingTimeInterval(timeoutSeconds)
 
         print("[LocalLLM] 推論開始。入力トークン数: \(inputIds.count)")
@@ -163,8 +163,8 @@ class LocalLLMService: ObservableObject {
             let elapsed = Date().timeIntervalSince(startTime)
             print("[LocalLLM] 推論完了。\(String(format: "%.1f", elapsed))秒")
 
-            // プロンプトで `{` をプリフィル済みなので先頭に補完
-            let jsonOutput = "{" + output
+            // プロンプトで {"lastName":" までプリフィル済みなので先頭に補完
+            let jsonOutput = jsonPrefill + output
             guard let llmResult = parseJSON(jsonOutput) else {
                 print("[LocalLLM] JSONパース失敗。生出力: \(output.prefix(200))")
                 return baseParsed
@@ -196,10 +196,13 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - テキスト生成ループ（Prefill/Decode 分割方式）
 
-    /// Prefill モデルのみで autoregressive 生成を行う。
-    /// KV キャッシュがないため各ステップで全シーケンスを再処理するが、
-    /// Prefill モデルは可変長入力に最適化されており Decode モデルより高速。
-    /// causalMask を明示的に渡すことで正しいアテンションを保証する。
+    /// Prefill → Decode の2段階 autoregressive 生成。
+    /// KV キャッシュなし → 各ステップで全シーケンスを再処理（O(n²)）のため、
+    /// 生成トークン数を最小限に抑えることが最重要の最適化ポイント。
+    ///
+    /// Decode ステップでは Decode モデルを使用:
+    ///   - causalMask 構築不要（内部で自動構築）→ Swift 側のメモリ確保・充填コスト削減
+    ///   - Decode モデルの logits 出力が不正な場合は Prefill モデルにフォールバック
     private let maxContextLength = 1024
 
     private func runGeneration(prefillModel: MLModel,
@@ -210,17 +213,20 @@ class LocalLLMService: ObservableObject {
         let promptLen    = inputIds.count
         var allIds       = inputIds   // プロンプト + 生成済みトークンの全体
         var generatedIds = [Int]()
-        let maxNewTokens = 30
-        // プロンプトで `{` をプリフィル済みなので、最初から開きブレース1つ分を追跡
+        let maxNewTokens = 15     // 短縮: {"lastName":"...","firstName":"...",...} に十分
+        // プロンプトで `{` を含むプリフィル済み
         var openBraces   = 1
         var jsonStarted  = true
 
-        // --- Prefill: プロンプト全体を一括処理 ---
+        // --- Prefill: プロンプト全体を一括処理（causalMask 付き） ---
         if Date() > deadline { throw InferenceError.timeout }
 
+        let prefillStart = CFAbsoluteTimeGetCurrent()
         let prefillLogits = try forwardPrefill(
             model: prefillModel, ids: inputIds, seqLen: promptLen
         )
+        let prefillMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000
+        print("[LocalLLM] Prefill: \(String(format: "%.0f", prefillMs))ms (\(promptLen) tokens)")
 
         guard let firstToken = argmaxLastToken(logits: prefillLogits) else {
             return ""
@@ -239,22 +245,59 @@ class LocalLLMService: ObservableObject {
             return tokenizer.decode(generatedIds)
         }
 
-        // --- Decode: Prefill モデルで全シーケンスを毎回渡して次トークンを予測 ---
-        // Prefill モデルは causalMask 付きで可変長に最適化されているため、
-        // Decode モデルより高速に full-sequence forward が可能
+        // --- Decode: Decode モデルで次トークンを予測 ---
+        // Decode モデルは causalMask 不要 → mask 確保・充填のオーバーヘッドを完全削除
+        // Decode モデルの出力形状を最初のステップで検証し、不正なら Prefill にフォールバック
+        var useDecodeModel = true
+        var decodeSteps    = 0
+        let decodeStart    = CFAbsoluteTimeGetCurrent()
+
         while generatedIds.count < maxNewTokens {
             if Date() > deadline { throw InferenceError.timeout }
             guard allIds.count < maxContextLength else { break }
 
-            let decLogits = try forwardPrefill(
-                model: prefillModel, ids: allIds, seqLen: allIds.count
-            )
+            let stepStart = CFAbsoluteTimeGetCurrent()
+            let logits: MLMultiArray
 
-            guard let nextToken = argmaxLastToken(logits: decLogits) else { break }
+            if useDecodeModel {
+                let decLogits = try forwardDecode(
+                    model: decodeModel, ids: allIds, seqLen: allIds.count
+                )
+                // 最初のステップで vocab サイズを検証
+                if decodeSteps == 0 {
+                    let lastDim = decLogits.shape.last?.intValue ?? 0
+                    if lastDim < 1000 {
+                        // Decode モデルの出力が不正 → 以降 Prefill モデルを使用
+                        print("[LocalLLM] Decode logits invalid (shape=\(decLogits.shape)), switching to Prefill")
+                        useDecodeModel = false
+                        logits = try forwardPrefill(
+                            model: prefillModel, ids: allIds, seqLen: allIds.count
+                        )
+                    } else {
+                        print("[LocalLLM] Decode model OK (vocab=\(lastDim))")
+                        logits = decLogits
+                    }
+                } else {
+                    logits = decLogits
+                }
+            } else {
+                logits = try forwardPrefill(
+                    model: prefillModel, ids: allIds, seqLen: allIds.count
+                )
+            }
+
+            guard let nextToken = argmaxLastToken(logits: logits) else { break }
             if nextToken == Qwen25Tokenizer.SpecialToken.imEnd
             || nextToken == Qwen25Tokenizer.SpecialToken.eot { break }
             generatedIds.append(nextToken)
             allIds.append(nextToken)
+            decodeSteps += 1
+
+            let stepMs = (CFAbsoluteTimeGetCurrent() - stepStart) * 1000
+            if decodeSteps <= 3 || decodeSteps % 5 == 0 {
+                let mode = useDecodeModel ? "Dec" : "Pre"
+                print("[LocalLLM] Step \(decodeSteps) [\(mode)]: \(String(format: "%.0f", stepMs))ms (\(allIds.count) tokens)")
+            }
 
             // { } をカウントしてJSONが閉じたら即終了
             for ch in tokenizer.decode([nextToken]) {
@@ -263,6 +306,10 @@ class LocalLLMService: ObservableObject {
             }
             if jsonStarted && openBraces <= 0 { break }
         }
+
+        let totalDecMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000
+        let mode = useDecodeModel ? "Decode" : "Prefill"
+        print("[LocalLLM] 生成完了: \(decodeSteps)ステップ [\(mode)] \(String(format: "%.0f", totalDecMs))ms")
 
         return tokenizer.decode(generatedIds)
     }
@@ -329,7 +376,7 @@ class LocalLLMService: ObservableObject {
         // Float16 ポインタで直接書き込み（NSNumber 変換を回避）
         let ptr = mask.dataPointer.assumingMemoryBound(to: UInt16.self)
         let allowBits: UInt16 = 0x0000        // Float16: 0.0
-        let blockBits: UInt16 = 0xF354        // Float16: -30000.0
+        let blockBits: UInt16 = 0xF753        // Float16: -30000.0
 
         // まず全体を blockVal で埋める
         let totalElements = queryLen * keyLen
@@ -432,19 +479,25 @@ class LocalLLMService: ObservableObject {
     // MARK: - プロンプト構築（ChatML 形式）
 
     /// ハイブリッド方式用: 未分類行のみを対象に名前・役職・部署を問う最小プロンプト
-    /// - 英語で記述しトークン数を削減（日本語はトークン効率が悪い）
+    /// - プロンプトの各トークンが全デコードステップの計算量に影響するため極限まで短縮
     /// - Qwen3 の思考モード無効化（/no_think）
-    /// - assistant ターンで `{` をプリフィルしJSON出力を即座に開始
+    /// - assistant ターンで `{"lastName":"` までプリフィルし生成トークン数を最小化
+    ///
+    /// 設計意図: KVキャッシュなしモデルでは各デコードステップで全トークンを再処理する
+    /// → プロンプト10トークン短縮 × 15ステップ = 150トークン分の計算削減
+    /// → プリフィル3トークン追加 = デコードステップ3回分の完全削減
+    let jsonPrefill = "{\"lastName\":\""
+
     func buildChatMLPrompt(unclassifiedLines: [String], knownCompany: String) -> String {
         let rawText = unclassifiedLines.joined(separator: "\n")
-        let knownHint = knownCompany.isEmpty ? "" : "\nKnown: company=\(knownCompany)"
-        return "<|im_start|>system\nJSON only<|im_end|>\n<|im_start|>user\nBusiness card text. Extract: lastName,firstName,company,department,title. Empty string if unknown.\(knownHint)\n\n\(rawText)<|im_end|>\n<|im_start|>assistant\n/no_think\n{"
+        let hint = knownCompany.isEmpty ? "" : " company=\(knownCompany)"
+        return "<|im_start|>system\nJSON<|im_end|>\n<|im_start|>user\nCard:\n\(rawText)\nGet:lastName,firstName,title,department\(hint)<|im_end|>\n<|im_start|>assistant\n/no_think\n\(jsonPrefill)"
     }
 
     /// 旧API互換: 全行を渡すプロンプト（テスト用に残す）
     func buildChatMLPrompt(lines: [String]) -> String {
         let rawText = lines.joined(separator: "\n")
-        return "<|im_start|>system\nJSON only<|im_end|>\n<|im_start|>user\nBusiness card text. Extract: lastName,firstName,company,department,title,phone,email,address,website. Empty string if unknown.\n\n\(rawText)<|im_end|>\n<|im_start|>assistant\n/no_think\n{"
+        return "<|im_start|>system\nJSON<|im_end|>\n<|im_start|>user\nCard:\n\(rawText)\nGet:lastName,firstName,company,department,title,phone,email,address,website<|im_end|>\n<|im_start|>assistant\n/no_think\n\(jsonPrefill)"
     }
 
     // MARK: - JSON パース
