@@ -187,6 +187,14 @@ class LocalLLMService: ObservableObject {
             print("[LocalLLM] 分類完了。\(String(format: "%.1f", elapsed))秒")
 
             // --- Step 3: ルールベース結果とLLM結果をマージ ---
+            // LLM結果が全て空（全行 unknown）ならルールベース結果をそのまま返す
+            let llmHasContent = !llmResult.lastName.isEmpty || !llmResult.firstName.isEmpty
+                || !llmResult.title.isEmpty || !llmResult.department.isEmpty
+                || !llmResult.company.isEmpty
+            if !llmHasContent {
+                print("[LocalLLM] LLM結果が空 → ルールベース結果を使用")
+                return baseParsed
+            }
             return mergeResults(base: baseParsed, llm: llmResult)
         } catch InferenceError.timeout {
             let elapsed = Date().timeIntervalSince(startTime)
@@ -274,13 +282,9 @@ class LocalLLMService: ObservableObject {
             case .company:
                 if result.company.isEmpty { result.company = line.trimmingCharacters(in: .whitespaces) }
             case .unknown:
-                // 不明な行は名前の可能性が高い（ルールベースで他は捕捉済み）
-                if result.lastName.isEmpty {
-                    let (last, first) = splitJapaneseName(line)
-                    result.lastName = last
-                    result.firstName = first
-                    print("[LocalLLM] → unknown を名前として扱う: \(last) \(first)")
-                }
+                // unknown はスキップ（ルールベースが既に名前・住所等を検出済み）
+                // LLM が分類できなかった行を名前として扱うと正しい結果を壊す
+                break
             }
         }
 
