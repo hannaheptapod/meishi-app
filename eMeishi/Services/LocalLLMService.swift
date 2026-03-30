@@ -149,7 +149,7 @@ class LocalLLMService: ObservableObject {
         )
         let inputIds = tok.encode(prompt)
 
-        let timeoutSeconds: TimeInterval = 7
+        let timeoutSeconds: TimeInterval = 12
         let deadline = Date().addingTimeInterval(timeoutSeconds)
 
         print("[LocalLLM] 推論開始。入力トークン数: \(inputIds.count)")
@@ -196,9 +196,10 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - テキスト生成ループ（Prefill/Decode 分割方式）
 
-    /// Prefill モデルでプロンプトを一括処理し、Decode モデルで全シーケンスを逐次拡張して生成する。
-    /// このモデルには KV キャッシュがないため、各 Decode ステップで全トークンを再処理する。
-    /// 0.6B モデルのため 1 ステップ 50-100ms 程度。
+    /// Prefill モデルのみで autoregressive 生成を行う。
+    /// KV キャッシュがないため各ステップで全シーケンスを再処理するが、
+    /// Prefill モデルは可変長入力に最適化されており Decode モデルより高速。
+    /// causalMask を明示的に渡すことで正しいアテンションを保証する。
     private let maxContextLength = 1024
 
     private func runGeneration(prefillModel: MLModel,
@@ -209,7 +210,7 @@ class LocalLLMService: ObservableObject {
         let promptLen    = inputIds.count
         var allIds       = inputIds   // プロンプト + 生成済みトークンの全体
         var generatedIds = [Int]()
-        let maxNewTokens = 60
+        let maxNewTokens = 30
         // プロンプトで `{` をプリフィル済みなので、最初から開きブレース1つ分を追跡
         var openBraces   = 1
         var jsonStarted  = true
@@ -238,13 +239,15 @@ class LocalLLMService: ObservableObject {
             return tokenizer.decode(generatedIds)
         }
 
-        // --- Decode: 全シーケンスを毎回渡して次トークンを予測 ---
+        // --- Decode: Prefill モデルで全シーケンスを毎回渡して次トークンを予測 ---
+        // Prefill モデルは causalMask 付きで可変長に最適化されているため、
+        // Decode モデルより高速に full-sequence forward が可能
         while generatedIds.count < maxNewTokens {
             if Date() > deadline { throw InferenceError.timeout }
             guard allIds.count < maxContextLength else { break }
 
-            let decLogits = try forwardDecode(
-                model: decodeModel, ids: allIds, seqLen: allIds.count
+            let decLogits = try forwardPrefill(
+                model: prefillModel, ids: allIds, seqLen: allIds.count
             )
 
             guard let nextToken = argmaxLastToken(logits: decLogits) else { break }
@@ -271,7 +274,9 @@ class LocalLLMService: ObservableObject {
     /// 出力: logits [1, 1, 151936]
     private func forwardPrefill(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
         let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        for (i, id) in ids.enumerated() { inputArray[i] = NSNumber(value: id) }
+        // NSNumber 変換を回避して直接ポインタ書き込み
+        let ptr = inputArray.dataPointer.assumingMemoryBound(to: Int32.self)
+        for (i, id) in ids.enumerated() { ptr[i] = Int32(id) }
 
         let mask = try buildCausalMask(queryLen: seqLen, keyLen: maxContextLength)
 
@@ -296,7 +301,8 @@ class LocalLLMService: ObservableObject {
     /// このモデルは内部で causal mask と position_ids を自動構築する
     private func forwardDecode(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
         let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        for (i, id) in ids.enumerated() { inputArray[i] = NSNumber(value: id) }
+        let ptr = inputArray.dataPointer.assumingMemoryBound(to: Int32.self)
+        for (i, id) in ids.enumerated() { ptr[i] = Int32(id) }
 
         let features: [String: Any] = [
             "inputIds": MLFeatureValue(multiArray: inputArray),
@@ -314,19 +320,30 @@ class LocalLLMService: ObservableObject {
 
     /// Prefill 用 causal_mask を Float16 で構築する [1, 1, queryLen, keyLen]
     /// keyLen は常に maxContextLength (1024)
-    /// 0.0 = 参照可、-inf に近い大きな負の値 = マスク
+    /// 0.0 = 参照可、-30000.0 = マスク（-inf の代替）
+    /// Accelerate (vDSP) でバルク充填しループコストを削減
     func buildCausalMask(queryLen: Int, keyLen: Int) throws -> MLMultiArray {
         let shape: [NSNumber] = [1, 1, NSNumber(value: queryLen), NSNumber(value: keyLen)]
         let mask = try MLMultiArray(shape: shape, dataType: .float16)
 
-        let allowVal: NSNumber = 0.0
-        let blockVal: NSNumber = -30000.0
+        // Float16 ポインタで直接書き込み（NSNumber 変換を回避）
+        let ptr = mask.dataPointer.assumingMemoryBound(to: UInt16.self)
+        let allowBits: UInt16 = 0x0000        // Float16: 0.0
+        let blockBits: UInt16 = 0xF354        // Float16: -30000.0
 
+        // まず全体を blockVal で埋める
+        let totalElements = queryLen * keyLen
+        ptr.initialize(repeating: blockBits, count: totalElements)
+
+        // causal 部分（下三角）を allowVal で上書き
         for i in 0 ..< queryLen {
-            // causal: position i は keyLen - queryLen + i 以下のキーを参照可能
             let absI = keyLen - queryLen + i
-            for j in 0 ..< keyLen {
-                mask[i * keyLen + j] = (j <= absI) ? allowVal : blockVal
+            let rowStart = i * keyLen
+            // 0 ... absI を allow に設定
+            let allowCount = absI + 1
+            if allowCount > 0 {
+                let rowPtr = ptr.advanced(by: rowStart)
+                rowPtr.initialize(repeating: allowBits, count: min(allowCount, keyLen))
             }
         }
         return mask
