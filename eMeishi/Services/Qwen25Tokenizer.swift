@@ -31,13 +31,57 @@ final class Qwen25Tokenizer {
     // MARK: - 初期化
 
     init(url: URL) throws {
-        let data = try Data(contentsOf: url)
-        guard
-            let root     = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let model    = root["model"]        as? [String: Any],
-            let rawVocab = model["vocab"]       as? [String: Int],
-            let rawMerges = model["merges"]     as? [String]
-        else { throw Err.invalidFormat }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            print("[Tokenizer] ファイル読み込み失敗: \(url.path) - \(error)")
+            throw Err.invalidFormat
+        }
+        print("[Tokenizer] ファイル読み込み完了: \(data.count) bytes from \(url.lastPathComponent)")
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "non-utf8"
+            print("[Tokenizer] JSONパース失敗。先頭200B: \(preview)")
+            throw Err.invalidFormat
+        }
+        print("[Tokenizer] ルートキー: \(Array(root.keys).sorted())")
+
+        guard let model = root["model"] as? [String: Any] else {
+            print("[Tokenizer] 'model'キーが見つからない")
+            throw Err.invalidFormat
+        }
+        print("[Tokenizer] modelキー: \(Array(model.keys).sorted())")
+
+        // vocab: [String: Int] — NSNumber→Int ブリッジ失敗に備えて手動変換も試みる
+        let rawVocab: [String: Int]
+        if let v = model["vocab"] as? [String: Int] {
+            rawVocab = v
+        } else if let v = model["vocab"] as? [String: NSNumber] {
+            print("[Tokenizer] vocab を NSNumber→Int で変換")
+            rawVocab = v.mapValues { $0.intValue }
+        } else {
+            if let v = model["vocab"] {
+                print("[Tokenizer] vocab の型が不正: \(type(of: v))")
+            } else {
+                print("[Tokenizer] vocab キーが存在しない")
+            }
+            throw Err.invalidFormat
+        }
+        print("[Tokenizer] vocab エントリ数: \(rawVocab.count)")
+
+        guard let rawMerges = model["merges"] as? [String] else {
+            if let m = model["merges"] {
+                print("[Tokenizer] merges の型が不正: \(type(of: m))")
+                if let arr = m as? [Any], let first = arr.first {
+                    print("[Tokenizer] merges[0] type: \(type(of: first)) value: \(first)")
+                }
+            } else {
+                print("[Tokenizer] merges キーが存在しない")
+            }
+            throw Err.invalidFormat
+        }
+        print("[Tokenizer] merges エントリ数: \(rawMerges.count)")
 
         // added_tokens（特殊トークン）を vocab に追加
         var v = rawVocab
