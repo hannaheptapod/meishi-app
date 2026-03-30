@@ -230,61 +230,37 @@ class LocalLLMService: ObservableObject {
                                 deadline: Date) throws -> CardFieldClassifier.ParsedCard {
         var result = CardFieldClassifier.ParsedCard()
 
-        // まず Decode モデルを試す（causalMask 不要で高速）
-        // Decode モデルの出力が不正なら Prefill にフォールバック
-        var useDecodeModel = true
+        // Prefill モデルを使用（causalMask 付きで正しいアテンション保証）
+        // Decode モデルは causalMask なしで全行 '!' を返す問題があるため不使用
 
         for (i, line) in lines.enumerated() {
             if Date() > deadline { throw InferenceError.timeout }
 
-            // 分類用の最小プロンプト（~25トークン）
+            // 分類用プロンプト
             let prompt = buildClassificationPrompt(line: line)
             let ids = tokenizer.encode(prompt)
 
             let stepStart = CFAbsoluteTimeGetCurrent()
-            let logits: MLMultiArray
-
-            // Decode モデルを優先（mask 構築不要）
-            if useDecodeModel {
-                do {
-                    let decLogits = try forwardDecode(model: decodeModel, ids: ids, seqLen: ids.count)
-                    let lastDim = decLogits.shape.last?.intValue ?? 0
-                    if i == 0 && lastDim < 1000 {
-                        print("[LocalLLM] Decode 出力不正 (shape=\(decLogits.shape))→Prefill使用")
-                        useDecodeModel = false
-                        logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
-                    } else {
-                        if i == 0 { print("[LocalLLM] Decode model OK (vocab=\(lastDim))") }
-                        logits = decLogits
-                    }
-                } catch {
-                    print("[LocalLLM] Decode エラー: \(error)→Prefill使用")
-                    useDecodeModel = false
-                    logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
-                }
-            } else {
-                logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
-            }
-
+            let logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
             let stepMs = (CFAbsoluteTimeGetCurrent() - stepStart) * 1000
-            let modelName = useDecodeModel ? "Dec" : "Pre"
 
             guard let tokenId = argmaxLastToken(logits: logits) else {
-                print("[LocalLLM] 行\(i+1) [\(modelName)] \(String(format: "%.0f", stepMs))ms: argmax失敗 '\(line)'")
+                print("[LocalLLM] 行\(i+1) [Pre] \(String(format: "%.0f", stepMs))ms: argmax失敗 '\(line)'")
                 continue
             }
             let decoded = tokenizer.decode([tokenId]).lowercased()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 最初のトークンの先頭文字でカテゴリ判定
+            // カテゴリ判定: 先頭文字 + 日本語キーワードの両方に対応
             let category: LineCategory
-            if decoded.hasPrefix("n") || decoded.hasPrefix("名") { category = .name }
-            else if decoded.hasPrefix("t") || decoded.hasPrefix("役") { category = .title }
-            else if decoded.hasPrefix("d") || decoded.hasPrefix("部") { category = .department }
-            else if decoded.hasPrefix("c") || decoded.hasPrefix("会") { category = .company }
+            if decoded.hasPrefix("n") || decoded.hasPrefix("名") || decoded.hasPrefix("person") { category = .name }
+            else if decoded.hasPrefix("t") || decoded.hasPrefix("役") || decoded.hasPrefix("position") { category = .title }
+            else if decoded.hasPrefix("d") || decoded.hasPrefix("部") || decoded.hasPrefix("sect") { category = .department }
+            else if decoded.hasPrefix("c") || decoded.hasPrefix("会") || decoded.hasPrefix("org") { category = .company }
+            else if decoded.hasPrefix("a") || decoded.hasPrefix("住") || decoded.hasPrefix("addr") { category = .unknown } // 住所はルールベースが処理済みのはず
             else { category = .unknown }
 
-            print("[LocalLLM] 行\(i+1) [\(modelName)] \(String(format: "%.0f", stepMs))ms: '\(line)' → \(category.rawValue) (token='\(decoded)')")
+            print("[LocalLLM] 行\(i+1) [Pre] \(String(format: "%.0f", stepMs))ms (\(ids.count)tok): '\(line)' → \(category.rawValue) (token='\(decoded)' id=\(tokenId))")
 
             switch category {
             case .name:
@@ -311,10 +287,11 @@ class LocalLLMService: ObservableObject {
         return result
     }
 
-    /// 分類用の最小 ChatML プロンプト（~25トークン）
-    /// 1行を入力し、カテゴリを1トークンで回答させる
+    /// 分類用 ChatML プロンプト
+    /// Qwen3 に1行のカテゴリを1トークンで回答させる
+    /// /no_think で思考モード無効化し、選択肢を明示してトークン制約する
     private func buildClassificationPrompt(line: String) -> String {
-        return "<|im_start|>system\n1word<|im_end|>\n<|im_start|>user\n\"\(line)\" on card is: name/title/department/company<|im_end|>\n<|im_start|>assistant\n"
+        return "<|im_start|>system\nClassify the business card field. Reply with exactly one word.<|im_end|>\n<|im_start|>user\nWhat type of field is this on a Japanese business card?\n\"\(line)\"\nOptions: name, title, department, company, address, other<|im_end|>\n<|im_start|>assistant\n/no_think\n"
     }
 
     /// 日本語名を姓・名に分割（スペース区切り、日本の慣習で姓が先）
