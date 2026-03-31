@@ -1035,4 +1035,67 @@ struct DuplicateCheckerLegalEntityTests {
 
         #expect(!pairs.isEmpty)
     }
+
+    // MARK: - 長音処理テスト
+
+    @Test func readingsMatchToleratesLongVowelDifference() {
+        // こへい vs こうへい（長音の有無）
+        #expect(NameReadingGenerator.readingsMatch("こへい", "こうへい"))
+        #expect(NameProcessor.readingsMatch("こへい", "こうへい"))
+
+        // おた vs おうた
+        #expect(NameReadingGenerator.readingsMatch("おた", "おうた"))
+
+        // 完全一致
+        #expect(NameReadingGenerator.readingsMatch("たなか", "たなか"))
+
+        // 全く異なる読みは不一致
+        #expect(!NameReadingGenerator.readingsMatch("やまだ", "たなか"))
+    }
+
+    @Test func normalizeRomajiHandlesOhConsonant() {
+        // oh + 子音 → ouh
+        #expect(NameReadingGenerator.normalizeRomaji("ohta") == "ouhta")
+        #expect(NameReadingGenerator.normalizeRomaji("yohko") == "youhko")
+
+        // 語末の oh → ou
+        #expect(NameReadingGenerator.normalizeRomaji("itoh") == "itou")
+        #expect(NameReadingGenerator.normalizeRomaji("satoh") == "satou")
+
+        // oh + 母音はそのまま（例: ohashi）
+        #expect(NameReadingGenerator.normalizeRomaji("ohashi") == "ohashi")
+
+        // NameProcessor 側も同様
+        #expect(NameProcessor.normalizeRomaji("ohta") == "ouhta")
+        #expect(NameProcessor.normalizeRomaji("itoh") == "itou")
+    }
+
+    @Test func preferReadingUsesReferenceForLongVowels() {
+        // 長音の違いだけなら参照読みを優先
+        #expect(NameReadingGenerator.preferReading(romaji: "こへい", reference: "こうへい") == "こうへい")
+        #expect(NameProcessor.preferReading(romaji: "こへい", reference: "こうへい") == "こうへい")
+
+        // 完全一致なら参照を返す
+        #expect(NameReadingGenerator.preferReading(romaji: "たなか", reference: "たなか") == "たなか")
+
+        // 異なる読みならローマ字を優先（珍しい名前）
+        #expect(NameReadingGenerator.preferReading(romaji: "ひふみ", reference: "いちにさん") == "ひふみ")
+
+        // 参照が空ならローマ字を返す
+        #expect(NameReadingGenerator.preferReading(romaji: "こへい", reference: "") == "こへい")
+    }
+
+    @Test func inferReadingFromEmailPreservesLongVowels() {
+        // メールアドレスからの読み推定で長音が保持されること
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "kohei.tanaka@example.com",
+            lastName: "田中",
+            firstName: "康平"
+        )
+        #expect(result != nil)
+        if let r = result {
+            // 参照読み（こうへい）が優先されること
+            #expect(r.firstNameReading == "こうへい")
+        }
+    }
 }
