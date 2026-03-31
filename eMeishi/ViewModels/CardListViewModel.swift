@@ -1,6 +1,7 @@
 import Foundation
 import CoreData
 import Combine
+import SwiftUI
 
 // ソートキー（4種）
 enum CardSortKey: String, CaseIterable, Identifiable {
@@ -89,6 +90,7 @@ class CardListViewModel: ObservableObject {
 
         fetchCards()
         fetchTags()
+        assignInitialSortOrderIfNeeded()
 
         // 閾値が変わったら重複検出を再実行
         SettingsStore.shared.$duplicateThreshold
@@ -171,7 +173,10 @@ class CardListViewModel: ObservableObject {
 
     func fetchTags() {
         let request = Tag.fetchRequest()
-        request.sortDescriptors = [NSSortDescriptor(keyPath: \Tag.name, ascending: true)]
+        request.sortDescriptors = [
+            NSSortDescriptor(keyPath: \Tag.sortOrder, ascending: true),
+            NSSortDescriptor(keyPath: \Tag.name, ascending: true),
+        ]
         do {
             allTags = try context.fetch(request)
         } catch {
@@ -184,6 +189,7 @@ class CardListViewModel: ObservableObject {
         tag.id = UUID()
         tag.name = name
         tag.colorHex = colorHex
+        tag.sortOrder = Int16(allTags.count)
         tag.createdAt = Date()
         do {
             try context.save()
@@ -214,6 +220,28 @@ class CardListViewModel: ObservableObject {
         } catch {
             errorMessage = "タグの削除に失敗しました: \(error.localizedDescription)"
         }
+    }
+
+    func moveTag(from source: IndexSet, to destination: Int) {
+        var reordered = allTags
+        reordered.move(fromOffsets: source, toOffset: destination)
+        for (index, tag) in reordered.enumerated() {
+            tag.sortOrder = Int16(index)
+        }
+        save()
+        fetchTags()
+    }
+
+    /// マイグレーション後の初回起動時に既存タグへ sortOrder を採番
+    func assignInitialSortOrderIfNeeded() {
+        guard !allTags.isEmpty else { return }
+        let allZero = allTags.allSatisfy { $0.sortOrder == 0 }
+        guard allZero, allTags.count > 1 else { return }
+        for (index, tag) in allTags.enumerated() {
+            tag.sortOrder = Int16(index)
+        }
+        save()
+        fetchTags()
     }
 
     func toggleTagFilter(_ tag: Tag) {

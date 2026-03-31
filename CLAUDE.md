@@ -108,7 +108,7 @@ meishi-app/
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
-│   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更）
+│   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更・並べ替え）
 │   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・モデル管理
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -126,7 +126,7 @@ meishi-app/
 │   │   ├── CardFieldClassifier.swift
 │   │   └── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
 │   ├── Resources/
-│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）・v4（isFavorite+Tag追加）の4バージョン
+│   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）・v4（isFavorite+Tag追加）・v5（Tag.sortOrder追加）の5バージョン
 │   ├── AppIcon.icon/                           # アプリアイコン
 │   └── Assets.xcassets                         # アクセントカラー
 ├── eMeishiTests/
@@ -138,7 +138,7 @@ meishi-app/
 
 ---
 
-## CoreData スキーマ（v4 現在）
+## CoreData スキーマ（v5 現在）
 
 ### エンティティ：`BusinessCard`
 
@@ -171,10 +171,11 @@ meishi-app/
 | id | UUID | 主キー |
 | name | String | タグ名 |
 | colorHex | String | 表示色（16進数・デフォルト #007AFF） |
+| sortOrder | Int16 | **表示順（v5で追加）・デフォルト 0** |
 | createdAt | Date | 作成日時 |
 | cards | Relationship | BusinessCard への多対多リレーション（inverse: tags） |
 
-- スキーマは `BusinessCard 4.xcdatamodel`（v4）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 → v3 → v4 を自動対応
+- スキーマは `BusinessCard 5.xcdatamodel`（v5）が現在のモデル。軽量マイグレーション（`NSMigratePersistentStoresAutomaticallyOption` + `NSInferMappingModelAutomaticallyOption`）で v1 → v2 → v3 → v4 → v5 を自動対応
 - **スキーマを変更する場合：** `.xcdatamodeld` に新バージョンを追加し、軽量マイグレーション可能な変更（属性追加・省略可能化など）にとどめる。破壊的変更は Custom Migration が必要
 
 ---
@@ -197,7 +198,7 @@ meishi-app/
 - 閉じるボタン・検索UI改善
 - ふりがなフィールド（姓読み・名読み）：OCR時に名刺上のフリガナ行があれば自動取得、なければ CFStringTokenizer で自動生成。フォームで手動修正可能。名前順ソート・検索でも利用
 - お気に入り機能：スワイプ操作 or 詳細画面の★ボタンでトグル。一覧でお気に入りのみフィルタ可能。★アイコンで視覚表示
-- タグ機能：ユーザー定義タグ（名前・色）を作成し名刺に複数紐づけ。タグ管理画面で追加・削除。一覧画面でタグフィルタ（AND条件）。フォーム画面でタグ選択。詳細画面でタグ表示
+- タグ機能：ユーザー定義タグ（名前・色）を作成し名刺に複数紐づけ。タグ管理画面で追加・削除・ドラッグ＆ドロップ並べ替え（sortOrder）。一覧画面でタグフィルタ（AND条件）。フォーム画面でタグ選択。詳細画面でタグ表示
 - 長押しコンテキストメニュー（ピークメニュー）：一覧画面でカードを長押しするとプレビュー付きメニュー表示（お気に入り・編集・vCard共有・連絡先保存・削除）
 - 選択モード：一覧画面左上の「選択」ボタンで複数選択モード。一括削除・CSV/vCardエクスポート・一括タグ付けに対応。全選択/全解除・件数表示あり
 - 触覚フィードバック：お気に入り切替時に UIImpactFeedbackGenerator で振動フィードバック

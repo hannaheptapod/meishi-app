@@ -15,6 +15,7 @@ extension Tag {
     @NSManaged public var id: UUID?
     @NSManaged public var name: String?
     @NSManaged public var colorHex: String?
+    @NSManaged public var sortOrder: Int16
     @NSManaged public var createdAt: Date?
     @NSManaged public var cards: NSSet?
 

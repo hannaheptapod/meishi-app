@@ -43,6 +43,18 @@ struct SettingsView: View {
             } message: {
                 Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
             }
+            .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
+                Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
+            } message: {
+                Text("この操作は取り消せません。")
+            }
+#if DEBUG
+            .confirmationDialog("サンプル名刺を50件追加しますか？", isPresented: $showSeedConfirm, titleVisibility: .visible) {
+                Button("挿入") { listViewModel.seedSampleData() }
+            } message: {
+                Text("既存のデータは削除されません。")
+            }
+#endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -250,11 +262,6 @@ struct SettingsView: View {
             } label: {
                 Label("すべての名刺を削除", systemImage: "trash")
             }
-            .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-                Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
-            } message: {
-                Text("この操作は取り消せません。")
-            }
             if let err = listViewModel.errorMessage {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
@@ -270,15 +277,6 @@ struct SettingsView: View {
                 showSeedConfirm = true
             } label: {
                 Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
-            }
-            .confirmationDialog(
-                "サンプル名刺を50件追加しますか？",
-                isPresented: $showSeedConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("挿入") { listViewModel.seedSampleData() }
-            } message: {
-                Text("既存のデータは削除されません。")
             }
         }
     }
