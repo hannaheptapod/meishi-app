@@ -36,7 +36,9 @@ struct DuplicateChecker {
     private func evaluate(_ a: BusinessCard, _ b: BusinessCard) -> DuplicatePair? {
         // フルネームと会社名の類似度を組み合わせてスコアを算出
         let nameSim    = similarity(a.fullName, b.fullName)
-        let companySim = similarity(a.company ?? "", b.company ?? "")
+        let companyA = LegalEntityTerms.stripKanji(from: a.company ?? "")
+        let companyB = LegalEntityTerms.stripKanji(from: b.company ?? "")
+        let companySim = similarity(companyA, companyB)
 
         // 氏名が完全一致 or 氏名と会社名の加重平均が閾値以上
         let score: Double

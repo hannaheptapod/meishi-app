@@ -72,5 +72,34 @@ struct PersistenceController {
         }
         // 別スレッドからの変更を自動マージ
         container.viewContext.automaticallyMergesChangesFromParent = true
+
+        // 既存データの companyReading から法人格を除去（一度だけ実行）
+        if !inMemory {
+            Self.migrateCompanyReadings(context: container.viewContext)
+        }
+    }
+
+    /// 既存データの companyReading に法人格が含まれていれば除去する
+    private static func migrateCompanyReadings(context: NSManagedObjectContext) {
+        let key = "didMigrateCompanyReadingLegalEntity"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let request = BusinessCard.fetchRequest()
+        guard let cards = try? context.fetch(request) else { return }
+
+        var changed = false
+        for card in cards {
+            guard let reading = card.companyReading, !reading.isEmpty else { continue }
+            let stripped = LegalEntityTerms.stripReading(from: reading)
+            if stripped != reading {
+                card.companyReading = stripped
+                changed = true
+            }
+        }
+
+        if changed {
+            try? context.save()
+        }
+        UserDefaults.standard.set(true, forKey: key)
     }
 }

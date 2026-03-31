@@ -348,10 +348,13 @@ class CardFormViewModel: ObservableObject {
         let firstR   = parsed.firstNameReading.isEmpty
             ? Self.generateReading(from: parsed.firstName)
             : parsed.firstNameReading
-        // 会社名読みは法人格を除いた読みで保存する
-        let companyR = parsed.companyReading.isEmpty
-            ? BusinessCard.stripLegalEntityReading(from: Self.generateReading(from: parsed.company))
-            : parsed.companyReading
+        // 会社名読みは法人格を除いた読みで保存する（OCR/LLM由来でも除去する）
+        let companyR: String = {
+            let raw = parsed.companyReading.isEmpty
+                ? Self.generateReading(from: parsed.company)
+                : parsed.companyReading
+            return BusinessCard.stripLegalEntityReading(from: raw)
+        }()
         apply(lastName: parsed.lastName, lastNameReading: lastR,
               firstName: parsed.firstName, firstNameReading: firstR,
               company: parsed.company, companyReading: companyR,
@@ -437,7 +440,15 @@ class CardFormViewModel: ObservableObject {
         target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
         target.company        = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.companyReading = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 会社名読み：空なら自動生成、いずれの場合も法人格を除去して保存
+        let companyReadingRaw = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
+        let companyReadingFinal: String = {
+            let raw = companyReadingRaw.isEmpty
+                ? Self.generateReading(from: company.trimmingCharacters(in: .whitespacesAndNewlines))
+                : companyReadingRaw
+            return BusinessCard.stripLegalEntityReading(from: raw)
+        }()
+        target.companyReading = companyReadingFinal
         target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)

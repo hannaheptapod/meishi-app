@@ -71,7 +71,7 @@ extension BusinessCard {
         return "\(last)\(first)"
     }
 
-    /// 会社名ソート用キー：読みがあればそのまま使用（法人格は読みに含まれない）、なければ漢字名から法人格を除去して返す
+    /// 会社名ソート用キー：読みがあればそのまま使用（保存時に法人格除去済み）、なければ漢字名から法人格を除去して返す
     public var companySortKey: String {
         let base = companyReading?.trimmingCharacters(in: .whitespaces) ?? ""
         if !base.isEmpty { return base }
@@ -80,38 +80,12 @@ extension BusinessCard {
 
     // 法人格（ひらがな表記）を読みから除去する（CardFormViewModel での自動生成時に使用）
     static func stripLegalEntityReading(from text: String) -> String {
-        let terms = [
-            "かぶしきがいしゃ", "ごうどうがいしゃ", "ゆうげんがいしゃ",
-            "ごうめいがいしゃ", "ごうしがいしゃ",
-            "いっぱんしゃだんほうじん", "こうえきしゃだんほうじん",
-            "いっぱんざいだんほうじん", "こうえきざいだんほうじん",
-            "いりょうほうじん", "がっこうほうじん", "しゃかいふくしほうじん",
-            "べんごしほうじん", "ぜいりしほうじん", "どくりつぎょうせいほうじん",
-            "とくていひえいりかつどうほうじん",
-        ]
-        var s = text
-        for t in terms {
-            if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }
-            if s.hasSuffix(t) { s = String(s.dropLast(t.count)); break }
-        }
-        return s.trimmingCharacters(in: .whitespaces)
+        LegalEntityTerms.stripReading(from: text)
     }
 
     // 法人格（漢字表記）をソートキーから除去（companyReading 未設定時のフォールバック用）
     static func stripLegalEntityKanji(from text: String) -> String {
-        let terms = [
-            "株式会社", "合同会社", "有限会社", "合名会社", "合資会社",
-            "一般社団法人", "公益社団法人", "一般財団法人", "公益財団法人",
-            "医療法人", "学校法人", "社会福祉法人", "弁護士法人", "税理士法人",
-            "独立行政法人", "特定非営利活動法人",
-            "Inc.", "LLC", "Ltd.", "Corp.", "Co., Ltd.", "GmbH",
-        ]
-        var s = text
-        for t in terms {
-            if s.hasPrefix(t) { s = String(s.dropFirst(t.count)); break }
-            if s.hasSuffix(t) { s = String(s.dropLast(t.count)); break }
-        }
-        return s.trimmingCharacters(in: .whitespaces)
+        LegalEntityTerms.stripKanji(from: text)
     }
 
     /// 「姓読み 名読み」形式の読み仮名を返す
