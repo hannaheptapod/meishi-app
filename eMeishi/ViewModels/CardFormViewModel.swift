@@ -144,17 +144,158 @@ class CardFormViewModel: ObservableObject {
         isProcessingOCR = false
     }
 
+    // MARK: - 統一パイプライン
+
+    /// 全 Tier 共通の分類パイプライン。
+    ///
+    /// 1. ルールベース前段処理（classifyStructuredFields）— 全 Tier 共通・1回だけ実行
+    /// 2. 未分類行を LLM バックエンドに送信（Foundation Models / Qwen / なし）
+    /// 3. LLM 結果を OCR テキストで照合バリデーション — 全 Tier 共通
+    /// 4. ルールベース結果と LLM 結果をマージ — 全 Tier 共通
+    private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async {
+        // --- Step 1: ルールベース前段処理（全 Tier 共通） ---
+        let ruleResult = classifier.classifyStructuredFields(lines: lines)
+        var result = ruleResult.parsed
+        let ocrTexts = lines.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        // 未分類行が空ならルールベース結果のみで完了
+        guard !ruleResult.unclassifiedLines.isEmpty else {
+            print("[Pipeline] 全フィールドがルールベースで解決済み")
+            apply(result)
+            return
+        }
+
+        // --- Step 2: LLM バックエンドで未分類行を分類 ---
+        let llmResult: CardFieldClassifier.ParsedCard? = await runLLMBackend(
+            llmBackend,
+            unclassifiedLines: ruleResult.unclassifiedLines,
+            baseParsed: result
+        )
+
+        // --- Step 3: LLM 結果の OCR テキスト照合バリデーション + マージ（全 Tier 共通） ---
+        if let llm = llmResult {
+            if !llm.lastName.isEmpty && result.lastName.isEmpty { result.lastName = llm.lastName }
+            if !llm.firstName.isEmpty && result.firstName.isEmpty { result.firstName = llm.firstName }
+
+            // department/title/company は OCR テキストに存在するか照合（ハルシネーション防止）
+            if !llm.department.isEmpty && result.department.isEmpty {
+                if existsInOCR(llm.department, ocrTexts: ocrTexts) {
+                    result.department = llm.department
+                } else {
+                    print("[Pipeline] 部署ハルシネーション除去: '\(llm.department)'")
+                }
+            }
+            if !llm.title.isEmpty && result.title.isEmpty {
+                if existsInOCR(llm.title, ocrTexts: ocrTexts) {
+                    result.title = llm.title
+                } else {
+                    print("[Pipeline] 役職ハルシネーション除去: '\(llm.title)'")
+                }
+            }
+            if !llm.company.isEmpty && result.company.isEmpty {
+                if existsInOCR(llm.company, ocrTexts: ocrTexts) {
+                    result.company = llm.company
+                } else {
+                    print("[Pipeline] 会社名ハルシネーション除去: '\(llm.company)'")
+                }
+            }
+        }
+
+        apply(result)
+    }
+
+    /// LLM バックエンドの種別
+    private enum LLMBackend {
+        case foundationModels
+        case qwen
+        case none  // Tier 3: ルールベースのみ
+    }
+
+    /// LLM バックエンド固有の推論を実行。ルールベース処理は呼び出し元で完了済み。
+    private func runLLMBackend(
+        _ backend: LLMBackend,
+        unclassifiedLines: [String],
+        baseParsed: CardFieldClassifier.ParsedCard
+    ) async -> CardFieldClassifier.ParsedCard? {
+        switch backend {
+        case .foundationModels:
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *) {
+                return await runFoundationModelsLLM(
+                    unclassifiedLines: unclassifiedLines,
+                    baseParsed: baseParsed
+                )
+            }
+            #endif
+            return nil
+
+        case .qwen:
+            return await LocalLLMService.shared.classifyUnclassifiedLines(unclassifiedLines)
+
+        case .none:
+            return nil
+        }
+    }
+
+    #if canImport(FoundationModels)
+    /// Foundation Models 固有の推論（未分類行のみ処理）
+    @available(iOS 26.0, *)
+    private func runFoundationModelsLLM(
+        unclassifiedLines: [String],
+        baseParsed: CardFieldClassifier.ParsedCard
+    ) async -> CardFieldClassifier.ParsedCard? {
+        let unclassifiedText = unclassifiedLines.joined(separator: "\n")
+        var contextHints: [String] = []
+        if !baseParsed.company.isEmpty { contextHints.append("会社名: \(baseParsed.company)") }
+        if !baseParsed.department.isEmpty { contextHints.append("部署: \(baseParsed.department)") }
+        if !baseParsed.title.isEmpty { contextHints.append("役職: \(baseParsed.title)") }
+        let contextBlock = contextHints.isEmpty ? "" : "\n既に判明している情報:\n\(contextHints.joined(separator: "\n"))\n"
+
+        let session = LanguageModelSession()
+        let prompt = """
+            以下は名刺から読み取ったテキストのうち、まだ分類できていない行です。各フィールドに分類してください。
+            姓と名は必ず分けてください。
+            重要: テキストに明記されていない情報は絶対に推測せず、空文字列にしてください。
+            特に部署名・役職はテキストに明記されている場合のみ設定し、推測は禁止です。
+            \(contextBlock)
+            未分類テキスト:
+            \(unclassifiedText)
+            """
+        do {
+            let response = try await session.respond(to: prompt, generating: ParsedCard.self)
+            let p = response.content
+            // Foundation Models の出力を CardFieldClassifier.ParsedCard に変換
+            var llm = CardFieldClassifier.ParsedCard()
+            llm.lastName = p.lastName
+            llm.firstName = p.firstName
+            llm.company = p.company
+            llm.department = p.department
+            llm.title = p.title
+            return llm
+        } catch {
+            print("[FoundationModels] 推論エラー: \(error)")
+            return nil
+        }
+    }
+    #endif
+
+    /// LLM出力値がOCRテキストに存在するか照合する
+    private func existsInOCR(_ value: String, ocrTexts: [String]) -> Bool {
+        guard !value.isEmpty else { return true }
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let joined = ocrTexts.joined(separator: "\n")
+        return joined.contains(v) || ocrTexts.contains { $0.contains(v) || v.contains($0) }
+    }
+
+    // MARK: - Tier 別エントリポイント（統一パイプラインへのディスパッチ）
+
     #if canImport(FoundationModels)
     // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
     @available(iOS 26.0, *)
     private func populateWithFoundationModels(lines: [RecognizedLine]) async {
         switch SystemLanguageModel.default.availability {
         case .available:
-            do {
-                try await runFoundationModels(lines: lines)
-            } catch {
-                await populateWithLocalLLMOrClassifier(lines: lines)
-            }
+            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
             await populateWithLocalLLMOrClassifier(lines: lines)
         }
@@ -165,74 +306,38 @@ class CardFormViewModel: ObservableObject {
     private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
         switch SystemLanguageModel.default.availability {
         case .available:
-            do {
-                try await runFoundationModels(lines: lines)
-            } catch {
-                ocrErrorMessage = "Apple Intelligence での処理に失敗しました。標準読み取りで処理しました。"
-                populateWithClassifier(lines: lines)
-            }
+            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
             ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
-            populateWithClassifier(lines: lines)
+            await runUnifiedPipeline(lines: lines, llmBackend: .none)
         }
-    }
-
-    @available(iOS 26.0, *)
-    private func runFoundationModels(lines: [RecognizedLine]) async throws {
-        let rawText = lines.map { $0.text }.joined(separator: "\n")
-        let session = LanguageModelSession()
-        let prompt = """
-            以下は名刺から読み取ったテキストです。各フィールドに分類してください。
-            姓と名は必ず分けてください。
-            重要: テキストに明記されていない情報は絶対に推測せず、空文字列にしてください。
-            \(rawText)
-            """
-        let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-        let p = response.content
-        apply(lastName: p.lastName,
-              lastNameReading: Self.generateReading(from: p.lastName),
-              firstName: p.firstName,
-              firstNameReading: Self.generateReading(from: p.firstName),
-              company: p.company,
-              companyReading: Self.generateReading(from: p.company),
-              department: p.department, title: p.title,
-              phones: p.phone.isEmpty ? [] : [p.phone],
-              email: p.email, address: p.address, website: p.website)
     }
     #endif
 
-    // 明示指定モード: AIアシスト（ハイブリッド方式: ルールベース + LLM）
-    // LLMが失敗してもルールベース結果が返るため、完全な失敗は「モデル未ロード」のみ
+    // 明示指定モード: AIアシスト（Qwen）
     private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
         guard LocalLLMService.shared.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
-            populateWithClassifier(lines: lines)
+            await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
-            apply(parsed)
-        } else {
-            ocrErrorMessage = "AIアシストでの処理に失敗しました。標準読み取りで処理しました。"
-            populateWithClassifier(lines: lines)
-        }
+        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
-    // 自動モード: LocalLLM（ハイブリッド） → Classifier のフォールバック
+    // 自動モード: LocalLLM → Classifier のフォールバック
     private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
         if !LocalLLMService.shared.isModelAvailable {
             shouldPromptLLMDownload = true
-            populateWithClassifier(lines: lines)
+            await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        if let parsed = await LocalLLMService.shared.classify(lines: lines) {
-            apply(parsed)
-        } else {
-            populateWithClassifier(lines: lines)
-        }
+        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
     private func populateWithClassifier(lines: [RecognizedLine]) {
-        apply(classifier.classify(lines: lines))
+        // Tier 3: ルールベースのみ（統一パイプラインの llmBackend: .none と同等だが同期版）
+        let ruleResult = classifier.classifyStructuredFields(lines: lines)
+        apply(ruleResult.parsed)
     }
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー

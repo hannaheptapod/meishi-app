@@ -131,14 +131,14 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - 推論（公開API）
 
-    /// ハイブリッド分類: ルールベース（空間情報活用）で確実なフィールドを先に抽出し、
-    /// 未分類行のみLLMに送って名前・役職・部署を判定する。
-    /// モデル未ロード・推論失敗時は nil を返す（呼び出し元はフォールバックへ進む）。
+    /// 未分類行のみをLLMで分類する。
+    /// ルールベース前段処理は呼び出し元（CardFormViewModel）で実施済み。
+    /// モデル未ロード・推論失敗時は nil を返す。
     ///
     /// 推論方式: 単一パス分類（1行1回の forward pass でカテゴリ判定）
     /// - 自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）
     /// - 未分類行数 × 1回の forward pass のみ（通常2-4回）
-    func classify(lines: [RecognizedLine]) async -> CardFieldClassifier.ParsedCard? {
+    func classifyUnclassifiedLines(_ lines: [String]) async -> CardFieldClassifier.ParsedCard? {
         // アプリ再起動後に未ロードの場合はここでロードする
         if prefillModel == nil || decodeModel == nil || tokenizer == nil {
             await MainActor.run { isInferencing = true }
@@ -159,63 +159,38 @@ class LocalLLMService: ObservableObject {
         await MainActor.run { isInferencing = true }
         defer { Task { @MainActor in self.isInferencing = false } }
 
-        // --- Step 1: ルールベース（座標情報含む）で確実なフィールドを先に抽出 ---
-        let ruleResult = CardFieldClassifier().classifyStructuredFields(lines: lines)
-        let baseParsed = ruleResult.parsed
-
-        // 未分類行が空ならLLM不要（全フィールドがルールで解決済み）
-        guard !ruleResult.unclassifiedLines.isEmpty else {
-            print("[LocalLLM] 全フィールドがルールベースで解決済み。LLM不要")
-            return baseParsed
-        }
-
         let timeoutSeconds: TimeInterval = 10
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         let startTime = Date()
 
-        print("[LocalLLM] 単一パス分類開始。未分類行: \(ruleResult.unclassifiedLines.count)行")
+        print("[LocalLLM] 単一パス分類開始。未分類行: \(lines.count)行")
 
-        // --- Step 2: 単一パス分類（1行1回の forward pass） ---
         do {
             let llmResult = try classifyByLine(
                 prefillModel: pModel, decodeModel: dModel,
                 tokenizer: tok,
-                lines: ruleResult.unclassifiedLines,
+                lines: lines,
                 deadline: deadline
             )
             let elapsed = Date().timeIntervalSince(startTime)
             print("[LocalLLM] 分類完了。\(String(format: "%.1f", elapsed))秒")
 
-            // --- Step 3: ルールベース結果とLLM結果をマージ ---
-            // LLM結果が全て空（全行 unknown）ならルールベース結果をそのまま返す
             let llmHasContent = !llmResult.lastName.isEmpty || !llmResult.firstName.isEmpty
                 || !llmResult.title.isEmpty || !llmResult.department.isEmpty
                 || !llmResult.company.isEmpty
             if !llmHasContent {
-                print("[LocalLLM] LLM結果が空 → ルールベース結果を使用")
-                return baseParsed
+                print("[LocalLLM] LLM結果が空")
+                return nil
             }
-            return mergeResults(base: baseParsed, llm: llmResult)
+            return llmResult
         } catch InferenceError.timeout {
             let elapsed = Date().timeIntervalSince(startTime)
             print("[LocalLLM] 分類タイムアウト（\(String(format: "%.1f", elapsed))秒）")
-            return baseParsed
+            return nil
         } catch {
             print("[LocalLLM] 分類エラー: \(error)")
-            return baseParsed
+            return nil
         }
-    }
-
-    /// ルールベース結果にLLM結果を上書きマージする。
-    private func mergeResults(base: CardFieldClassifier.ParsedCard,
-                              llm: CardFieldClassifier.ParsedCard) -> CardFieldClassifier.ParsedCard {
-        var merged = base
-        if !llm.lastName.isEmpty  { merged.lastName  = llm.lastName }
-        if !llm.firstName.isEmpty { merged.firstName = llm.firstName }
-        if !llm.title.isEmpty     { merged.title     = llm.title }
-        if !llm.department.isEmpty { merged.department = llm.department }
-        if merged.company.isEmpty && !llm.company.isEmpty { merged.company = llm.company }
-        return merged
     }
 
     // MARK: - 単一パス分類（自動回帰生成を廃止）
@@ -295,7 +270,7 @@ class LocalLLMService: ObservableObject {
     /// Qwen3 に1行のカテゴリを1トークンで回答させる
     /// /no_think で思考モード無効化し、選択肢を明示してトークン制約する
     private func buildClassificationPrompt(line: String) -> String {
-        return "<|im_start|>system\nClassify the business card field. Reply with exactly one word.<|im_end|>\n<|im_start|>user\nWhat type of field is this on a Japanese business card?\n\"\(line)\"\nOptions: name, title, department, company, address, other<|im_end|>\n<|im_start|>assistant\n/no_think\n"
+        return "<|im_start|>system\nClassify the business card field. Reply with exactly one word. A person's name is typically 2-6 kanji characters, often with a space between family and given name.<|im_end|>\n<|im_start|>user\nWhat type of field is this on a Japanese business card?\n\"\(line)\"\nOptions: name, title, department, company, address, other<|im_end|>\n<|im_start|>assistant\n/no_think\n"
     }
 
     /// 日本語名を姓・名に分割（スペース区切り、日本の慣習で姓が先）
