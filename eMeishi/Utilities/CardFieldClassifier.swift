@@ -39,6 +39,16 @@ struct CardFieldClassifier {
         "産業", "興業", "機械", "食品", "化学", "出版", "運輸", "印刷"
     ]
 
+    /// 建物名に使われるサフィックス（住所の続きとして検出・名前スコアリングの誤判定防止用）
+    private static let buildingSuffixes = [
+        "タワー", "ビル", "ビルディング", "プラザ", "ハイツ", "マンション",
+        "パレス", "コート", "レジデンス", "ガーデン", "パーク", "ヒルズ",
+        "スクエア", "アーク", "フォレスト", "テラス", "ゲート", "アネックス",
+        "センター", "モール", "アリーナ", "ドーム", "ホール",
+        "Tower", "Building", "Plaza", "Heights", "Hills", "Square", "Park",
+        "Garden", "Terrace", "Gate", "Court", "Palace", "Residence"
+    ]
+
     private static let departmentSuffixes = [
         // 日本語部署サフィックス
         "部", "課", "室", "係", "局", "本部", "センター", "グループ", "チーム",
@@ -76,6 +86,8 @@ struct CardFieldClassifier {
         var result = ParsedCard()
         var unclassified: [RecognizedLine] = []
 
+        print("[Classifier] === Pass1 開始 (\(lines.count)行) ===")
+
         // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
         for line in lines {
             let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -83,22 +95,49 @@ struct CardFieldClassifier {
 
             if result.email.isEmpty, let email = extractEmail(from: trimmed) {
                 result.email = email
+                print("[Classifier] email: '\(trimmed)'")
             } else if let phone = extractPhone(from: trimmed) {
                 result.phones.append(phone)
+                print("[Classifier] phone: '\(trimmed)'")
             } else if result.website.isEmpty, let url = extractURL(from: trimmed) {
                 result.website = url
+                print("[Classifier] website: '\(trimmed)'")
             } else if result.address.isEmpty, isAddress(trimmed) {
                 result.address = trimmed
+                print("[Classifier] address: '\(trimmed)'")
+            } else if isAddress(trimmed) {
+                // 2つ目以降の住所行は既に address が埋まっているので連結
+                result.address += " " + trimmed
+                print("[Classifier] address(追加): '\(trimmed)'")
             } else if result.company.isEmpty, isCompany(trimmed) {
                 result.company = trimmed.trimmingCharacters(in: .whitespaces)
+                print("[Classifier] company: '\(trimmed)'")
             } else if isDepartment(trimmed) {
                 result.department = result.department.isEmpty
                     ? trimmed
                     : result.department + " " + trimmed
+                print("[Classifier] department: '\(trimmed)'")
             } else if result.title.isEmpty, isJobTitle(trimmed) {
                 result.title = trimmed
+                print("[Classifier] title: '\(trimmed)'")
             } else {
                 unclassified.append(line)
+                print("[Classifier] 未分類: '\(trimmed)'")
+            }
+        }
+
+        print("[Classifier] Pass1結果: email=\(result.email.isEmpty ? "×" : "○") phone=\(result.phones.count)件 web=\(result.website.isEmpty ? "×" : "○") addr=\(result.address.isEmpty ? "×" : "○") co=\(result.company.isEmpty ? "×" : "○") dept=\(result.department.isEmpty ? "×" : "○") title=\(result.title.isEmpty ? "×" : "○")")
+
+        // --- Pass1.5: 建物名を住所に追加 ---
+        if !result.address.isEmpty {
+            unclassified.removeAll { line in
+                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if isBuildingName(t) {
+                    result.address += " " + t
+                    print("[Classifier] address(建物名): '\(t)'")
+                    return true
+                }
+                return false
             }
         }
 
@@ -106,20 +145,29 @@ struct CardFieldClassifier {
         // スコアが十分高い場合はここで名前を確定し、LLMに委ねない
         if !unclassified.isEmpty {
             let scores = unclassified.map { personNameScore(for: $0, candidates: unclassified) }
+            for (idx, line) in unclassified.enumerated() {
+                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("[Classifier] Pass2スコア: '\(t)' = \(String(format: "%.3f", scores[idx]))")
+            }
             if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
-               scores[bestIdx] > 0.4 {
+               scores[bestIdx] > 0.35 {
+                let bestText = unclassified[bestIdx].text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("[Classifier] 名前確定(>0.35): '\(bestText)' (score=\(String(format: "%.3f", scores[bestIdx])))")
                 // 高確信度（0.4超）: ルールベースで名前を確定
                 unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
+                print("[Classifier] 名前解決後: lastName='\(result.lastName)' firstName='\(result.firstName)'")
                 // フリガナ行を除去
                 unclassified.removeAll { isFuriganaLine($0) }
+            } else {
+                print("[Classifier] 名前スコア不足 → LLMに委譲")
             }
-            // 低確信度の場合は名前未確定のまま未分類行としてLLMに委ねる
         }
 
         // 未分類行からテキストのみ抽出して返す
         let unclassifiedTexts = unclassified.map {
             $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        print("[Classifier] 最終未分類: \(unclassifiedTexts)")
         return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
     }
 
@@ -156,6 +204,18 @@ struct CardFieldClassifier {
             }
         }
 
+        // --- パス1.5：建物名を住所に追加 ---
+        if !result.address.isEmpty {
+            unclassified.removeAll { line in
+                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if isBuildingName(t) {
+                    result.address += " " + t
+                    return true
+                }
+                return false
+            }
+        }
+
         // --- パス2：未分類の行から氏名を推定し、姓と名に分割 ---
         unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
 
@@ -168,16 +228,23 @@ struct CardFieldClassifier {
         }
         unclassified.removeAll { isFuriganaLine($0) }
 
-        // まだ会社名が未設定なら残り行から補完
+        // まだ会社名が未設定なら残り行から補完（条件付き：漢字を含む妥当な長さの行のみ）
         if result.company.isEmpty, let companyLine = unclassified.first {
-            result.company = companyLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            unclassified.removeFirst()
+            let candidate = companyLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidateStripped = candidate
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "　", with: "")
+            let hasCJK = candidate.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+            let hasDigit = candidate.unicodeScalars.contains { $0.value >= 0x30 && $0.value <= 0x39 }
+            let hasURLFragment = candidate.lowercased().contains("www") || candidate.lowercased().contains("http") || candidate.contains("@")
+            let isDistinctFromName = candidate != result.lastName && candidate != (result.lastName + result.firstName)
+            if hasCJK && (2...20).contains(candidateStripped.count) && !hasDigit && !hasURLFragment && isDistinctFromName {
+                result.company = candidate
+                unclassified.removeFirst()
+            }
         }
 
-        // 役職も未設定なら残り行から補完
-        if result.title.isEmpty, let titleLine = unclassified.first {
-            result.title = titleLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        // 役職フォールバックは削除（誤入力より空フィールドの方がマシ）
 
         return result
     }
@@ -261,6 +328,15 @@ struct CardFieldClassifier {
     private func isJobTitle(_ text: String) -> Bool {
         guard text.count >= 3 else { return false }
         return Self.jobTitleKeywords.contains { text.contains($0) }
+    }
+
+    /// 建物名の判定：建物サフィックスを含み、短すぎず長すぎない行
+    private func isBuildingName(_ text: String) -> Bool {
+        let stripped = text
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard (3...30).contains(stripped.count) else { return false }
+        return Self.buildingSuffixes.contains { text.contains($0) }
     }
 
     private func isAddress(_ text: String) -> Bool {
@@ -374,6 +450,35 @@ struct CardFieldClassifier {
 
         var score = 0.0
 
+        // --- 否定的シグナル: 名前らしくない行を早期減点 ---
+
+        // 数字を含む行は電話番号・郵便番号の断片（-0.3）
+        let hasDigit = text.unicodeScalars.contains { $0.value >= 0x30 && $0.value <= 0x39 }
+        if hasDigit { score -= 0.3 }
+
+        // URL・メール断片（-0.3）
+        let lower = text.lowercased()
+        if lower.contains(".co.") || lower.contains("www") || lower.contains("http") || lower.contains("@") {
+            score -= 0.3
+        }
+
+        // Pass1 で漏れた部署・役職キーワード（-0.3）
+        if Self.departmentSuffixes.contains(where: { text.contains($0) })
+            || Self.jobTitleKeywords.contains(where: { text.contains($0) }) {
+            score -= 0.3
+        }
+
+        // 建物名サフィックスを含む行（-0.5 — 最強の否定シグナル）
+        if Self.buildingSuffixes.contains(where: { text.contains($0) }) {
+            score -= 0.5
+        }
+
+        // カタカナが3文字以上含まれる漢字混合行は地名・建物名の可能性が高い（-0.2）
+        let katakanaCount = text.unicodeScalars.filter { (0x30A0...0x30FF).contains($0.value) }.count
+        if hasKanji && katakanaCount >= 3 {
+            score -= 0.2
+        }
+
         // 条件1: 近くにフリガナ行がある（最強シグナル +0.5）
         let myMidY = line.boundingBox.midY
         let hasFurigana = candidates.contains { other in
@@ -385,6 +490,10 @@ struct CardFieldClassifier {
 
         // 条件2: 漢字を含む適切な長さの行（+0.3）
         if hasKanji && (2...8).contains(charCount) { score += 0.3 }
+
+        // 条件2b: 純粋漢字のみの短い行（カタカナなし）は人名として典型的（+0.15）
+        let hasKatakana = text.unicodeScalars.contains { (0x30A0...0x30FF).contains($0.value) }
+        if hasKanji && !hasKatakana && (2...5).contains(charCount) { score += 0.15 }
 
         // 条件3a: CFStringTokenizer が姓名の2トークンに分割する（+0.25）
         // ただし会社名接尾辞を含む場合は除外（例: "ABC商事" → 名前ではない）
@@ -408,7 +517,17 @@ struct CardFieldClassifier {
         // 日本語を含まない短い行（英語名など）を対象に含める
         if !hasJapanese && (2...20).contains(charCount) { score += 0.1 }
 
-        return min(score, 1.0)
+        // スペース1つで2セグメントに分かれる典型的な名前パターン（+0.15）
+        let spaceParts = text.split(separator: " ", maxSplits: 2).count == 2
+            ? text.split(separator: " ", maxSplits: 2)
+            : text.split(separator: "\u{3000}", maxSplits: 2)
+        if spaceParts.count == 2,
+           (1...4).contains(spaceParts[0].count),
+           (1...4).contains(spaceParts[1].count) {
+            score += 0.15
+        }
+
+        return min(max(score, 0.0), 1.0)
     }
 
     // MARK: - フリガナ判定

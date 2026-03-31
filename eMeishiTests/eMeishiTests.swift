@@ -668,30 +668,32 @@ struct CausalMaskTests {
 
     let service = LocalLLMService.shared
 
-    // 4D プリフィルマスク: 下三角が 1 (int32)
+    // 4D プリフィルマスク: 下三角が 0 (attend)、上三角が -30000 (block)
     @Test func prefillMask4DInt32() throws {
         let mask = try service.buildCausalMask(queryLen: 3, keyLen: 3)
         #expect(mask.shape == [1, 1, 3, 3])
-        // [0,0,0,0]=1 [0,0,0,1]=0 [0,0,0,2]=0
-        // [0,0,1,0]=1 [0,0,1,1]=1 [0,0,1,2]=0
-        // [0,0,2,0]=1 [0,0,2,1]=1 [0,0,2,2]=1
-        #expect(mask[0].intValue == 1)
-        #expect(mask[1].intValue == 0)
-        #expect(mask[2].intValue == 0)
-        #expect(mask[3].intValue == 1)
-        #expect(mask[4].intValue == 1)
-        #expect(mask[5].intValue == 0)
-        #expect(mask[6].intValue == 1)
-        #expect(mask[7].intValue == 1)
-        #expect(mask[8].intValue == 1)
+        let allow = 0
+        let block = -30000
+        // [0,0,0,0]=allow  [0,0,0,1]=block  [0,0,0,2]=block
+        // [0,0,1,0]=allow  [0,0,1,1]=allow   [0,0,1,2]=block
+        // [0,0,2,0]=allow  [0,0,2,1]=allow   [0,0,2,2]=allow
+        #expect(mask[0].intValue == allow)
+        #expect(mask[1].intValue == block)
+        #expect(mask[2].intValue == block)
+        #expect(mask[3].intValue == allow)
+        #expect(mask[4].intValue == allow)
+        #expect(mask[5].intValue == block)
+        #expect(mask[6].intValue == allow)
+        #expect(mask[7].intValue == allow)
+        #expect(mask[8].intValue == allow)
     }
 
-    // 4D デコードマスク: queryLen=1 のとき全て 1 (can attend all)
+    // 4D デコードマスク: queryLen=1 のとき全て 0 (attend all)
     @Test func decodeMask4DAllOnes() throws {
         let mask = try service.buildCausalMask(queryLen: 1, keyLen: 5)
         #expect(mask.shape == [1, 1, 1, 5])
         for i in 0..<5 {
-            #expect(mask[i].intValue == 1, "デコードマスクは全て 1 である必要がある")
+            #expect(mask[i].intValue == 0, "デコードマスクは全て 0 (attend) である必要がある")
         }
     }
 }
@@ -799,7 +801,7 @@ struct HybridPromptTests {
             unclassifiedLines: ["山田 太郎"],
             knownCompany: ""
         )
-        #expect(!prompt.contains("判明済み"), "会社名が空の場合はヒントが含まれない")
+        #expect(!prompt.contains("company="), "会社名が空の場合はヒントが含まれない")
     }
 
     @Test func hybridPromptNoLeadingSpaces() {
@@ -838,11 +840,13 @@ struct ChatMLPromptTests {
         }
     }
 
-    @Test func promptEndsWithAssistantPrefix() {
+    @Test func promptEndsWithJSONPrefill() {
         let prompt = service.buildChatMLPrompt(lines: ["テスト"])
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(trimmed.hasSuffix("<|im_start|>assistant"),
-                "プロンプトは assistant プレフィクスで終わる必要がある")
+        #expect(trimmed.hasSuffix("{\"lastName\":\""),
+                "プロンプトは JSON プリフィル '{\"lastName\":\"' で終わる必要がある")
+        #expect(trimmed.contains("/no_think"),
+                "プロンプトに /no_think（思考モード無効化）が含まれる必要がある")
     }
 }
 

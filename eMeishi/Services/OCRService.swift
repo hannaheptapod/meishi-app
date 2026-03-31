@@ -107,7 +107,7 @@ class OCRService {
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
                 // 各Observationから最上位候補のテキスト・信頼度・boundingBox を取得
-                let lines: [RecognizedLine] = observations.compactMap { obs in
+                let rawLines: [RecognizedLine] = observations.compactMap { obs in
                     guard let candidate = obs.topCandidates(1).first else { return nil }
                     return RecognizedLine(
                         text: candidate.string,
@@ -115,6 +115,8 @@ class OCRService {
                         confidence: candidate.confidence
                     )
                 }
+                // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
+                let lines = Self.mergeAdjacentFragments(rawLines)
                 continuation.resume(returning: lines)
             }
 
@@ -130,6 +132,98 @@ class OCRService {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    // MARK: - 行統合
+
+    /// Vision が等間隔文字や空白区切りで分断した行を統合する。
+    ///
+    /// 名刺では名前を均等配置する慣習があり、OCR が「岸本」「仁」のように
+    /// 1つの名前を複数の observation に分割することがある。
+    /// 同一行（Y座標近接）かつ X 方向に近い短い断片を結合し、
+    /// 下流の分類ロジックに安定した行を渡す。
+    static func mergeAdjacentFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        guard lines.count > 1 else { return lines }
+
+        // インデックス管理用
+        var used = Set<Int>()
+        var result: [RecognizedLine] = []
+
+        // Y 座標降順（Vision座標系: 上が大きい → 名刺の上から処理）
+        let indexed = lines.enumerated().sorted {
+            $0.element.boundingBox.midY > $1.element.boundingBox.midY
+        }
+
+        for (i, anchor) in indexed {
+            if used.contains(i) { continue }
+            used.insert(i)
+
+            // この行と同一行の断片を収集
+            var group: [(index: Int, line: RecognizedLine)] = [(i, anchor)]
+            let anchorH = anchor.boundingBox.height
+
+            for (j, candidate) in indexed {
+                if used.contains(j) { continue }
+                let candH = candidate.boundingBox.height
+                let maxH = max(anchorH, candH)
+
+                // 同一行判定: Y 中心の差が行の高さの 60% 以内
+                guard abs(candidate.boundingBox.midY - anchor.boundingBox.midY) < maxH * 0.6 else {
+                    continue
+                }
+
+                // X 近接判定: 既にグループに入っている行との間隔をチェック
+                // グループ全体の左端〜右端を計算
+                let groupMinX = group.map { $0.line.boundingBox.minX }.min()!
+                let groupMaxX = group.map { $0.line.boundingBox.maxX }.max()!
+
+                let candMinX = candidate.boundingBox.minX
+                let candMaxX = candidate.boundingBox.maxX
+
+                // 断片間のギャップ（正値＝離れている、負値＝重なっている）
+                let gap: CGFloat
+                if candMinX > groupMaxX {
+                    gap = candMinX - groupMaxX
+                } else if candMaxX < groupMinX {
+                    gap = groupMinX - candMaxX
+                } else {
+                    gap = 0 // 重なっている
+                }
+
+                // ギャップが行の高さの 2 倍以内なら同一論理行とみなす
+                // （名刺の名前は文字間を広げることがあるが、別フィールドはもっと離れる）
+                if gap < maxH * 2.0 {
+                    // 短い断片のみ統合（長い行同士は別フィールドの可能性が高い）
+                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
+                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
+                    if anchorChars <= 4 || candChars <= 4 {
+                        used.insert(j)
+                        group.append((j, candidate))
+                    }
+                }
+            }
+
+            if group.count == 1 {
+                result.append(anchor)
+            } else {
+                // X 座標順（左→右）にソートして結合
+                let sorted = group.sorted { $0.line.boundingBox.midX < $1.line.boundingBox.midX }
+                let mergedText = sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) }.joined()
+                // 結合後の bounding box は全断片を包含する矩形
+                let minX = sorted.map { $0.line.boundingBox.minX }.min()!
+                let minY = sorted.map { $0.line.boundingBox.minY }.min()!
+                let maxX = sorted.map { $0.line.boundingBox.maxX }.max()!
+                let maxY = sorted.map { $0.line.boundingBox.maxY }.max()!
+                let mergedBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
+
+                print("[OCR] 行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + ")) → '\(mergedText)'")
+                result.append(RecognizedLine(text: mergedText, boundingBox: mergedBox, confidence: avgConfidence))
+            }
+        }
+
+        // 元の Y 座標順（上から下 = Vision Y 降順）で返す
+        return result.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
     }
 
     enum OCRError: LocalizedError {
