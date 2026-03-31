@@ -158,8 +158,19 @@ struct CardFieldClassifier {
                     result.lastNameReading = normalizeToHiragana(lastR)
                     result.firstNameReading = normalizeToHiragana(firstR)
                     print("[Classifier] フリガナ: lastR='\(result.lastNameReading)' firstR='\(result.firstNameReading)'")
+                } else if let romajiLine = unclassified.first(where: { isRomajiNameLine($0) }),
+                          let romajiReading = resolveRomajiReading(
+                              romajiLine: romajiLine,
+                              lastName: result.lastName,
+                              firstName: result.firstName
+                          ) {
+                    // フリガナ行がない場合、ローマ字行から読み仮名を推定
+                    result.lastNameReading = romajiReading.lastNameReading
+                    result.firstNameReading = romajiReading.firstNameReading
+                    print("[Classifier] ローマ字読み: lastR='\(result.lastNameReading)' firstR='\(result.firstNameReading)'")
                 }
                 unclassified.removeAll { isFuriganaLine($0) }
+                unclassified.removeAll { isRomajiNameLine($0) }
             } else {
                 print("[Classifier] 名前スコア不足 → LLMに委譲")
             }
@@ -225,10 +236,19 @@ struct CardFieldClassifier {
         if let furiganaLine = unclassified.first(where: { isFuriganaLine($0) }) {
             let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let (lastR, firstR) = splitName(rawReading)
-            result.lastNameReading  = lastR
-            result.firstNameReading = firstR
+            result.lastNameReading  = normalizeToHiragana(lastR)
+            result.firstNameReading = normalizeToHiragana(firstR)
+        } else if let romajiLine = unclassified.first(where: { isRomajiNameLine($0) }),
+                  let romajiReading = resolveRomajiReading(
+                      romajiLine: romajiLine,
+                      lastName: result.lastName,
+                      firstName: result.firstName
+                  ) {
+            result.lastNameReading = romajiReading.lastNameReading
+            result.firstNameReading = romajiReading.firstNameReading
         }
         unclassified.removeAll { isFuriganaLine($0) }
+        unclassified.removeAll { isRomajiNameLine($0) }
 
         // まだ会社名が未設定なら残り行から補完（条件付き：漢字を含む妥当な長さの行のみ）
         if result.company.isEmpty, let companyLine = unclassified.first {
@@ -438,7 +458,7 @@ struct CardFieldClassifier {
         let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return 0 }
 
-        if isFuriganaLine(line) { return 0 }
+        if isFuriganaLine(line) || isRomajiNameLine(line) { return 0 }
 
         let stripped = text
             .replacingOccurrences(of: " ",  with: "")
@@ -481,14 +501,14 @@ struct CardFieldClassifier {
             score -= 0.2
         }
 
-        // 条件1: 近くにフリガナ行がある（最強シグナル +0.5）
+        // 条件1: 近くにフリガナ行またはローマ字行がある（最強シグナル +0.5）
         let myMidY = line.boundingBox.midY
-        let hasFurigana = candidates.contains { other in
+        let hasReadingLine = candidates.contains { other in
             guard other.boundingBox != line.boundingBox else { return false }
-            return isFuriganaLine(other)
+            return (isFuriganaLine(other) || isRomajiNameLine(other))
                 && abs(other.boundingBox.midY - myMidY) < 0.15
         }
-        if hasFurigana { score += 0.5 }
+        if hasReadingLine { score += 0.5 }
 
         // 条件2: 漢字を含む適切な長さの行（+0.3）
         if hasKanji && (2...8).contains(charCount) { score += 0.3 }
@@ -541,7 +561,7 @@ struct CardFieldClassifier {
         return mutable as String
     }
 
-    /// フリガナ行の判定：ひらがな・カタカナのみで構成される短い行
+    /// フリガナ行の判定：ひらがな・カタカナ（全角/半角）のみで構成される短い行
     private func isFuriganaLine(_ line: RecognizedLine) -> Bool {
         let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let stripped = text
@@ -553,10 +573,152 @@ struct CardFieldClassifier {
         guard !hasKanji else { return false }
 
         return text.unicodeScalars.allSatisfy { s in
-            (0x3040...0x30FF).contains(s.value)
+            (0x3040...0x30FF).contains(s.value)   // ひらがな・全角カタカナ
+                || (0xFF65...0xFF9F).contains(s.value) // 半角カタカナ
                 || s.value == 0x20
                 || s.value == 0x3000
         }
+    }
+
+    /// ローマ字の氏名行かどうかを判定（ASCII英字+スペース+ピリオドのみ、2〜30文字）
+    private func isRomajiNameLine(_ line: RecognizedLine) -> Bool {
+        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = text.replacingOccurrences(of: " ", with: "")
+        guard (2...30).contains(stripped.count) else { return false }
+
+        // ASCII英字・スペース・ピリオドのみ許可
+        guard text.unicodeScalars.allSatisfy({ s in
+            (0x41...0x5A).contains(s.value)  // A-Z
+                || (0x61...0x7A).contains(s.value) // a-z
+                || s.value == 0x20  // space
+                || s.value == 0x2E  // period (for initials like "T.")
+        }) else { return false }
+
+        // 数字・@・URLフラグメントを含まないことは上記で保証済み
+        // スペースで2〜3セグメントに分かれる典型的な名前パターンを要求
+        let parts = text.split(separator: " ").filter { !$0.isEmpty }
+        guard (2...3).contains(parts.count) else { return false }
+        // 各パーツが英字で始まる（イニシャル "T." も許容）
+        return parts.allSatisfy { $0.first?.isLetter == true }
+    }
+
+    /// ローマ字行から読み仮名（ひらがな）を推定し、漢字名との照合で語順を判定する
+    private func resolveRomajiReading(
+        romajiLine: RecognizedLine,
+        lastName: String,
+        firstName: String
+    ) -> (lastNameReading: String, firstNameReading: String)? {
+        let text = romajiLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = text.split(separator: " ").map { String($0) }
+        guard parts.count >= 2 else { return nil }
+
+        // イニシャル（"T."等）を除いた実質パーツのみ取得
+        let substantialParts = parts.filter { $0.count > 2 || !$0.hasSuffix(".") }
+
+        // 各パーツをひらがなに変換
+        let readings = parts.map { romajiToHiragana($0.replacingOccurrences(of: ".", with: "")) }
+
+        // CFStringTokenizer による参照読みを生成
+        let refLast = generateReading(from: lastName)
+        let refFirst = generateReading(from: firstName)
+
+        if readings.count >= 2 {
+            // パターン1: [姓, 名]（Yamada Taro）
+            if readingsMatch(readings[0], refLast) && readingsMatch(readings[1], refFirst) {
+                return (lastNameReading: readings[0], firstNameReading: readings[1])
+            }
+            // パターン2: [名, 姓]（Taro Yamada）
+            if readingsMatch(readings[0], refFirst) && readingsMatch(readings[1], refLast) {
+                return (lastNameReading: readings[1], firstNameReading: readings[0])
+            }
+            // パターン3: イニシャル+姓（T. Yamada / Yamada T.）
+            if substantialParts.count == 1 {
+                let subReading = romajiToHiragana(substantialParts[0].replacingOccurrences(of: ".", with: ""))
+                if readingsMatch(subReading, refLast) {
+                    return (lastNameReading: subReading, firstNameReading: refFirst)
+                }
+                if readingsMatch(subReading, refFirst) {
+                    return (lastNameReading: refLast, firstNameReading: subReading)
+                }
+            }
+            // パターン4: 片方だけ一致（語順不明だが姓が一致すれば採用）
+            if readingsMatch(readings[0], refLast) {
+                return (lastNameReading: readings[0], firstNameReading: readings[1])
+            }
+            if readingsMatch(readings[1], refLast) {
+                return (lastNameReading: readings[1], firstNameReading: readings[0])
+            }
+        }
+
+        return nil
+    }
+
+    /// ローマ字をひらがなに変換する（Kunrei式→Hepburn式正規化付き）
+    private func romajiToHiragana(_ romaji: String) -> String {
+        let normalized = normalizeRomaji(romaji)
+        let mutable = NSMutableString(string: normalized)
+        CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
+        return mutable as String
+    }
+
+    /// Kunrei式 → Hepburn式の前処理
+    private func normalizeRomaji(_ romaji: String) -> String {
+        var s = romaji.lowercased()
+        let replacements: [(String, String)] = [
+            ("sha", "sha"), ("shi", "shi"), ("shu", "shu"), ("sho", "sho"),
+            ("chi", "chi"), ("tchi", "cchi"), ("tsu", "tsu"),
+            ("sya", "sha"), ("syi", "shi"), ("syu", "shu"), ("syo", "sho"),
+            ("tya", "cha"), ("tyi", "chi"), ("tyu", "chu"), ("tyo", "cho"),
+            ("zya", "ja"),  ("zyi", "ji"),  ("zyu", "ju"),  ("zyo", "jo"),
+            ("si", "shi"), ("ti", "chi"), ("tu", "tsu"), ("hu", "fu"),
+            ("zi", "ji"),  ("di", "ji"),  ("du", "zu"),
+        ]
+        for (from, to) in replacements {
+            s = s.replacingOccurrences(of: from, with: to)
+        }
+        return s
+    }
+
+    /// CFStringTokenizer のラテン転写属性からひらがな読みを生成する
+    private func generateReading(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) { return trimmed }
+
+        let cfText   = trimmed as CFString
+        let cfLocale = Locale(identifier: "ja_JP") as CFLocale
+        guard let tokenizer = CFStringTokenizerCreate(
+            kCFAllocatorDefault, cfText,
+            CFRangeMake(0, CFStringGetLength(cfText)),
+            kCFStringTokenizerUnitWord, cfLocale
+        ) else { return trimmed }
+
+        var result = ""
+        while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
+            if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
+                tokenizer, kCFStringTokenizerAttributeLatinTranscription
+            ) as? String {
+                let mutable = NSMutableString(string: latin)
+                CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
+                result += mutable as String
+            } else {
+                let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+                let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
+                if let swiftRange = Range(nsRange, in: trimmed) {
+                    result += String(trimmed[swiftRange])
+                }
+            }
+        }
+        return result
+    }
+
+    /// ひらがな読みの一致判定（先頭2文字以上一致 + 長さ差1以内）
+    private func readingsMatch(_ a: String, _ b: String) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        let prefixLen = min(2, a.count, b.count)
+        return String(a.prefix(prefixLen)) == String(b.prefix(prefixLen))
+            && abs(a.count - b.count) <= 1
     }
 
     // MARK: - NLTagger ヘルパー
