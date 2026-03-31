@@ -58,8 +58,10 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testLaunchShowsCardList() throws {
-        // ナビゲーションタイトル「名刺」が表示される
-        XCTAssertTrue(app.navigationBars.staticTexts["名刺"].waitForExistence(timeout: 5))
+        // カード一覧画面が表示される（ツールバーの選択ボタンが存在する）
+        XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 5))
+        // サンプルデータのカードが表示される
+        XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -95,8 +97,8 @@ final class EMeishiUITests: XCTestCase {
         // すべて選択ボタンが表示される
         XCTAssertTrue(app.buttons["selectAllButton"].exists)
 
-        // ガイドテキストが表示される
-        XCTAssertTrue(app.staticTexts["selectionGuideText"].exists)
+        // ナビゲーションタイトルが「項目を選択」になる
+        XCTAssertTrue(app.navigationBars.staticTexts["項目を選択"].waitForExistence(timeout: Self.shortTimeout))
 
         // 一括削除ボタンが表示される
         XCTAssertTrue(app.buttons["bulkDeleteButton"].exists)
@@ -122,8 +124,10 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(selectAllButton.waitForExistence(timeout: Self.shortTimeout))
         selectAllButton.tap()
 
-        // 選択件数テキストが表示される
-        XCTAssertTrue(app.staticTexts["selectionCountText"].waitForExistence(timeout: Self.shortTimeout))
+        // ナビゲーションタイトルに「件選択中」が表示される
+        let selectionPredicate = NSPredicate(format: "label CONTAINS '件選択中'")
+        let selectionText = app.navigationBars.staticTexts.matching(selectionPredicate).firstMatch
+        XCTAssertTrue(selectionText.waitForExistence(timeout: Self.shortTimeout))
 
         // 全解除ボタンに変わっている
         XCTAssertTrue(app.buttons["selectAllButton"].label == "全解除")
@@ -131,8 +135,8 @@ final class EMeishiUITests: XCTestCase {
         // 全解除
         app.buttons["selectAllButton"].tap()
 
-        // ガイドテキストに戻る
-        XCTAssertTrue(app.staticTexts["selectionGuideText"].waitForExistence(timeout: Self.shortTimeout))
+        // ナビゲーションタイトルが「項目を選択」に戻る
+        XCTAssertTrue(app.navigationBars.staticTexts["項目を選択"].waitForExistence(timeout: Self.shortTimeout))
     }
 
     @MainActor
@@ -171,11 +175,8 @@ final class EMeishiUITests: XCTestCase {
         // 戻る
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
-        // リスト画面に戻ったことを確認
-        XCTAssertTrue(app.navigationBars.staticTexts["名刺"].waitForExistence(timeout: 3))
-
-        // 選択モードに入ってないことを確認（選択ボタンが表示されている）
-        XCTAssertTrue(app.buttons["selectButton"].exists)
+        // リスト画面に戻ったことを確認（選択ボタンが表示される）
+        XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 3))
     }
 
     // MARK: - コンテキストメニュー（長押し）
@@ -246,8 +247,10 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(selectAllButton.waitForExistence(timeout: Self.shortTimeout))
         selectAllButton.tap()
 
-        // 選択件数テキストが表示されるのを待つ（選択状態の反映を確認）
-        XCTAssertTrue(app.staticTexts["selectionCountText"].waitForExistence(timeout: Self.shortTimeout))
+        // ナビゲーションタイトルに「件選択中」が表示されるのを待つ（選択状態の反映を確認）
+        let countPredicate = NSPredicate(format: "label CONTAINS '件選択中'")
+        let countText = app.navigationBars.staticTexts.matching(countPredicate).firstMatch
+        XCTAssertTrue(countText.waitForExistence(timeout: Self.shortTimeout))
 
         // 一括削除ボタンをタップ
         let bulkDeleteButton = app.buttons["bulkDeleteButton"]

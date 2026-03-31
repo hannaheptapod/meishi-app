@@ -63,8 +63,24 @@ struct TagManagementView: View {
                                     Text("\(tag.cardArray.count)件")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
                                 }
-                                .accessibilityElement(children: .combine)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .contextMenu {
+                                Button {
+                                    tagToEdit = tag
+                                } label: {
+                                    Label("編集", systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    tagToDelete = tag
+                                    isShowingDeleteConfirm = true
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
                             }
                         }
                         .onDelete { offsets in
@@ -73,12 +89,18 @@ struct TagManagementView: View {
                                 isShowingDeleteConfirm = true
                             }
                         }
+                        .onMove { source, destination in
+                            viewModel.moveTag(from: source, to: destination)
+                        }
                     }
                 }
             }
             .navigationTitle("タグ管理")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    EditButton()
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完了") { dismiss() }
                 }
