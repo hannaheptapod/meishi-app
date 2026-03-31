@@ -32,6 +32,17 @@ struct SettingsView: View {
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+                Button("削除", role: .destructive) {
+                    do {
+                        try llm.deleteModel()
+                    } catch {
+                        modelError = error.localizedDescription
+                    }
+                }
+            } message: {
+                Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -168,17 +179,6 @@ struct SettingsView: View {
                     Label("削除", systemImage: "trash")
                 }
             }
-        }
-        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                do {
-                    try llm.deleteModel()
-                } catch {
-                    modelError = error.localizedDescription
-                }
-            }
-        } message: {
-            Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
         }
     }
 
