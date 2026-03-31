@@ -43,7 +43,7 @@ struct CardListView: View {
                     cardList
                 }
             }
-            .navigationTitle(navigationTitleText)
+            .navigationTitle(selectionTitle)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
             .toolbar {
@@ -149,22 +149,23 @@ struct CardListView: View {
         .environmentObject(viewModel)
     }
 
-    // MARK: - ナビゲーションタイトル
+    // MARK: - 選択件数タイトル
 
-    /// フィルタ適用中は件数を表示
-    private var navigationTitleText: String {
-        if viewModel.isFilterActive || viewModel.isSearchActive {
-            return "名刺（\(viewModel.filteredCards.count)件）"
+    /// 選択モード中は件数を表示、通常時は空
+    private var selectionTitle: String {
+        guard editMode == .active else { return "" }
+        if selectedCardIDs.isEmpty {
+            return "項目を選択"
         }
-        return "名刺"
+        return "\(selectedCardIDs.count)件選択中"
     }
 
     // MARK: - 通常モードのツールバー
 
     @ToolbarContentBuilder
     private var normalToolbarContent: some ToolbarContent {
-        // 右上: 選択ボタン＋3点メニュー（HIG: Edit/Selectは trailing に配置）
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        // 右上: 選択ボタン（HIG: テキストラベルとシンボルは別グループに分離）
+        ToolbarItem(placement: .topBarTrailing) {
             if !viewModel.cards.isEmpty {
                 Button("選択") {
                     editMode = .active
@@ -172,7 +173,10 @@ struct CardListView: View {
                 }
                 .accessibilityIdentifier("selectButton")
             }
+        }
 
+        // 右上: 3点メニュー
+        ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
@@ -212,7 +216,7 @@ struct CardListView: View {
                 Label("メニュー", systemImage: "ellipsis")
             }
             .accessibilityIdentifier("ellipsisMenu")
-        }  // end ToolbarItemGroup
+        }
 
         // 左: 並び替え・フィルタ統合メニュー
         ToolbarItem(placement: .bottomBar) {
@@ -249,10 +253,9 @@ struct CardListView: View {
             } label: {
                 Label(
                     "並び替え・フィルタ",
-                    systemImage: viewModel.isFilterActive
-                        ? "line.3.horizontal.decrease.circle.fill"
-                        : "line.3.horizontal.decrease.circle"
+                    systemImage: "line.3.horizontal.decrease"
                 )
+                .symbolVariant(viewModel.isFilterActive ? .fill : .none)
             }
         }
 
@@ -288,18 +291,19 @@ struct CardListView: View {
             .accessibilityIdentifier("selectAllButton")
         }
 
-        // 右上: 完了ボタン（HIG: Edit/Done は trailing でトグル）
+        // 右上: 完了ボタン（HIG: Done は trailing + .prominent）
         ToolbarItem(placement: .topBarTrailing) {
             Button("完了") {
                 editMode = .inactive
                 selectedCardIDs = []
             }
+            .fontWeight(.semibold)
             .accessibilityIdentifier("doneButton")
         }
 
-        // 下部: 一括操作
+        // 下部: 一括操作（左: 削除 / 中央: タグ＋お気に入り / 右: エクスポート）
         ToolbarItemGroup(placement: .bottomBar) {
-            // 一括削除
+            // 削除
             Button {
                 isShowingBulkDeleteConfirm = true
             } label: {
@@ -310,22 +314,26 @@ struct CardListView: View {
 
             Spacer()
 
-            // 選択件数 or ガイドテキスト
-            if selectedCardIDs.isEmpty {
-                Text("名刺をタップして選択")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("selectionGuideText")
-            } else {
-                Text("\(selectedCardIDs.count)件選択中")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("selectionCountText")
+            // タグ
+            Button {
+                isShowingBulkTagSheet = true
+            } label: {
+                Label("タグ", systemImage: "tag")
             }
+            .disabled(selectedCardIDs.isEmpty)
+
+            // お気に入り
+            Button {
+                haptic.impactOccurred()
+                viewModel.toggleBulkFavorite(ids: selectedCardIDs)
+            } label: {
+                Label("お気に入り", systemImage: "star")
+            }
+            .disabled(selectedCardIDs.isEmpty)
 
             Spacer()
 
-            // その他アクション
+            // エクスポート
             Menu {
                 Button {
                     viewModel.exportSelectedCSV(ids: selectedCardIDs)
@@ -337,16 +345,8 @@ struct CardListView: View {
                 } label: {
                     Label("vCardエクスポート", systemImage: "person.crop.rectangle")
                 }
-                if !viewModel.allTags.isEmpty {
-                    Divider()
-                    Button {
-                        isShowingBulkTagSheet = true
-                    } label: {
-                        Label("タグを付ける", systemImage: "tag")
-                    }
-                }
             } label: {
-                Label("その他", systemImage: "ellipsis.circle")
+                Label("エクスポート", systemImage: "square.and.arrow.up")
             }
             .disabled(selectedCardIDs.isEmpty)
         }
@@ -382,8 +382,8 @@ struct CardListView: View {
                         } header: {
                             Text(section.title)
                                 .font(.subheadline)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.primary)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
                                 .textCase(nil)
                         }
                         .id(section.id)
@@ -472,6 +472,25 @@ struct CardListView: View {
             Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
         }
 
+        let cardTags = card.tags as? Set<Tag> ?? []
+        Menu {
+            ForEach(viewModel.allTags) { tag in
+                Button {
+                    viewModel.toggleTag(tag, on: card)
+                } label: {
+                    Label(tag.tagName, systemImage: cardTags.contains(tag) ? "checkmark" : "")
+                }
+            }
+            Divider()
+            Button {
+                isShowingTagManager = true
+            } label: {
+                Label("新規タグを作成", systemImage: "plus")
+            }
+        } label: {
+            Label("タグ", systemImage: "tag")
+        }
+
         Divider()
 
         Button(role: .destructive) {
@@ -486,12 +505,12 @@ struct CardListView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "rectangle.portrait.on.rectangle.portrait.slash")
-                .font(.system(size: 60))
-                .foregroundColor(.secondary)
+            Image(systemName: "tray")
+                .font(.system(size: 48))
+                .foregroundStyle(.tertiary)
             Text("名刺がありません")
-                .font(.title3)
-                .foregroundColor(.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

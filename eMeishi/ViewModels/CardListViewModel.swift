@@ -156,6 +156,17 @@ class CardListViewModel: ObservableObject {
         save()
     }
 
+    /// 選択中のカードをすべてお気に入りに追加（すでに全てお気に入りなら全解除）
+    func toggleBulkFavorite(ids: Set<BusinessCard.ID>) {
+        let targets = filteredCards.filter { ids.contains($0.id) }
+        let allFavorited = targets.allSatisfy { $0.isFavorite }
+        for card in targets {
+            card.isFavorite = !allFavorited
+            card.updatedAt = Date()
+        }
+        save()
+    }
+
     // MARK: - タグ管理
 
     func fetchTags() {
@@ -179,6 +190,17 @@ class CardListViewModel: ObservableObject {
             fetchTags()
         } catch {
             errorMessage = "タグの作成に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    func updateTag(_ tag: Tag, name: String, colorHex: String) {
+        tag.name = name
+        tag.colorHex = colorHex
+        do {
+            try context.save()
+            fetchTags()
+        } catch {
+            errorMessage = "タグの更新に失敗しました: \(error.localizedDescription)"
         }
     }
 
@@ -301,6 +323,18 @@ class CardListViewModel: ObservableObject {
             card.removeFromTags(tag)
             card.updatedAt = Date()
         }
+        save()
+    }
+
+    /// カード単体のタグトグル（コンテキストメニュー用）
+    func toggleTag(_ tag: Tag, on card: BusinessCard) {
+        let cardTags = card.tags as? Set<Tag> ?? []
+        if cardTags.contains(tag) {
+            card.removeFromTags(tag)
+        } else {
+            card.addToTags(tag)
+        }
+        card.updatedAt = Date()
         save()
     }
 

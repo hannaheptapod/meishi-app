@@ -155,8 +155,12 @@ struct CardFormView: View {
                 }
 
                 // タグ選択セクション
-                if !listViewModel.allTags.isEmpty {
-                    Section("タグ") {
+                Section("タグ") {
+                    if listViewModel.allTags.isEmpty {
+                        Text("タグがありません")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
                         FlowLayout(spacing: 6) {
                             ForEach(listViewModel.allTags) { tag in
                                 let selected = viewModel.selectedTags.contains(tag.id ?? UUID())
@@ -170,8 +174,11 @@ struct CardFormView: View {
                                     }
                                 } label: {
                                     HStack(spacing: 4) {
-                                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                        Image(systemName: selected ? "checkmark" : "")
                                             .font(.caption2)
+                                        Circle()
+                                            .fill(tag.color)
+                                            .frame(width: 8, height: 8)
                                         Text(tag.tagName)
                                             .font(.caption)
                                     }
