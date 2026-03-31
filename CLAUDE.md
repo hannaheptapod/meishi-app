@@ -233,7 +233,7 @@ meishi-app/
 
 ## 開発者メモ
 
-- **Xcodeプロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない。** 新規 Swift ファイルを追加した場合は Xcode のナビゲータに手動で追加すること
+- **Xcodeプロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない。** Xcode 16 の File System Synchronized Groups により、eMeishi/ 配下に Swift ファイルを追加すれば自動的にビルド対象になる
 - Foundation Models はシミュレータで動作しない（実機 iPhone 15 Pro以降 + Apple Intelligence有効が必要）
 - Qwen3-0.6B CoreML（Prefill/Decode 分割）はシミュレータでも動作するが低速（CPU推論・Neural Engine 不使用）
 - `LocalLLMService` のモデル検索パス: ① Documents/LocalLLM/（開発用・Finder/iTunes 転送）→ ② Application Support/LocalLLM/（CloudKit DL）。Documents 優先
