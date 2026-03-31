@@ -472,25 +472,6 @@ struct CardListView: View {
             Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
         }
 
-        let cardTags = card.tags as? Set<Tag> ?? []
-        Menu {
-            ForEach(viewModel.allTags) { tag in
-                Button {
-                    viewModel.toggleTag(tag, on: card)
-                } label: {
-                    Label(tag.tagName, systemImage: cardTags.contains(tag) ? "checkmark" : "")
-                }
-            }
-            Divider()
-            Button {
-                isShowingTagManager = true
-            } label: {
-                Label("新規タグを作成", systemImage: "plus")
-            }
-        } label: {
-            Label("タグ", systemImage: "tag")
-        }
-
         Divider()
 
         Button(role: .destructive) {
