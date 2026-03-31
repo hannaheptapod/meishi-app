@@ -123,7 +123,8 @@ meishi-app/
 │   │   └── Qwen25Tokenizer.swift               # BPE トークナイザー（Qwen3互換）
 │   ├── Utilities/
 │   │   ├── DuplicateChecker.swift
-│   │   └── CardFieldClassifier.swift
+│   │   ├── CardFieldClassifier.swift
+│   │   └── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
 │   ├── Resources/
 │   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）・v4（isFavorite+Tag追加）の4バージョン
 │   ├── AppIcon.icon/                           # アプリアイコン
