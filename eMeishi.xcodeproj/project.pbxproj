@@ -202,9 +202,9 @@
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					3979F89E2F7275F200BC90DC = {
-					DevelopmentTeam = 9SD55B8AYW;
-					ProvisioningStyle = Automatic;
 						CreatedOnToolsVersion = 26.3;
+						DevelopmentTeam = 9SD55B8AYW;
+						ProvisioningStyle = Automatic;
 					};
 					3979F8AD2F7275F300BC90DC = {
 						CreatedOnToolsVersion = 26.3;
