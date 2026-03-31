@@ -11,7 +11,7 @@ struct CardRowView: View {
             ZStack {
                 Circle()
                     .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                 Text(card.initials)
                     .font(.subheadline.bold())
                     .foregroundStyle(Color.accentColor)
@@ -43,6 +43,21 @@ struct CardRowView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if !cardTags.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(cardTags) { tag in
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(tag.color)
+                                    .frame(width: 6, height: 6)
+                                Text(tag.tagName)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -50,10 +65,18 @@ struct CardRowView: View {
         .accessibilityLabel(cardAccessibilityLabel)
     }
 
+    private var cardTags: [Tag] {
+        let set = card.tags as? Set<Tag> ?? []
+        return set.sorted { ($0.name ?? "") < ($1.name ?? "") }
+    }
+
     private var cardAccessibilityLabel: String {
         var parts = [card.fullName.isEmpty ? "名前なし" : card.fullName]
         if let company = card.company, !company.isEmpty { parts.append(company) }
         if card.isFavorite { parts.append("お気に入り") }
+        if !cardTags.isEmpty {
+            parts.append("タグ: " + cardTags.map(\.tagName).joined(separator: "、"))
+        }
         return parts.joined(separator: "、")
     }
 
