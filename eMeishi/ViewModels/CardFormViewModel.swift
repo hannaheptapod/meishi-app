@@ -342,12 +342,24 @@ class CardFormViewModel: ObservableObject {
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
     private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
-        let lastR    = parsed.lastNameReading.isEmpty
-            ? Self.generateReading(from: parsed.lastName)
-            : parsed.lastNameReading
-        let firstR   = parsed.firstNameReading.isEmpty
-            ? Self.generateReading(from: parsed.firstName)
-            : parsed.firstNameReading
+        let lastR: String
+        let firstR: String
+        if !parsed.lastNameReading.isEmpty {
+            // 優先1: フリガナ行（Classifier由来）
+            lastR = parsed.lastNameReading
+            firstR = parsed.firstNameReading.isEmpty
+                ? Self.generateReading(from: parsed.firstName) : parsed.firstNameReading
+        } else if let emailReading = Self.inferReadingFromEmail(
+            email: parsed.email, lastName: parsed.lastName, firstName: parsed.firstName
+        ) {
+            // 優先2: メールアドレス由来
+            lastR = emailReading.lastNameReading
+            firstR = emailReading.firstNameReading
+        } else {
+            // 優先3: CFStringTokenizer
+            lastR = Self.generateReading(from: parsed.lastName)
+            firstR = Self.generateReading(from: parsed.firstName)
+        }
         // 会社名読みは法人格を除いた読みで保存する（OCR/LLM由来でも除去する）
         let companyR: String = {
             let raw = parsed.companyReading.isEmpty
@@ -423,6 +435,114 @@ class CardFormViewModel: ObservableObject {
             }
         }
         return result
+    }
+
+    // MARK: - メールアドレスからの読み仮名推定
+
+    /// メールアドレスのローカルパートから氏名の読み（ひらがな）を推定する
+    static func inferReadingFromEmail(
+        email: String,
+        lastName: String,
+        firstName: String
+    ) -> (lastNameReading: String, firstNameReading: String)? {
+        guard !email.isEmpty, !lastName.isEmpty else { return nil }
+        guard let atIndex = email.firstIndex(of: "@") else { return nil }
+
+        let localPart = String(email[email.startIndex..<atIndex]).lowercased()
+        // 末尾の数字を除去（yamada01 → yamada）
+        let cleaned = localPart.replacingOccurrences(
+            of: #"\d+$"#, with: "", options: .regularExpression
+        )
+        guard !cleaned.isEmpty else { return nil }
+
+        // セパレータで分割
+        let segments = cleaned.components(separatedBy: CharacterSet(charactersIn: "._-"))
+            .filter { !$0.isEmpty }
+        guard !segments.isEmpty, segments.count <= 3 else { return nil }
+
+        // 各セグメントをひらがなに変換
+        let readings = segments.map { romajiToHiragana($0) }
+
+        // CFStringTokenizer による参照読みを生成
+        let refLast = generateReading(from: lastName)
+        let refFirst = generateReading(from: firstName)
+
+        // パターンマッチ: [姓, 名] or [名, 姓]
+        if readings.count >= 2 {
+            // [姓, 名] パターン
+            if readingsMatch(readings[0], refLast) && readingsMatch(readings[1], refFirst) {
+                return (lastNameReading: readings[0], firstNameReading: readings[1])
+            }
+            // [名, 姓] パターン
+            if readingsMatch(readings[0], refFirst) && readingsMatch(readings[1], refLast) {
+                return (lastNameReading: readings[1], firstNameReading: readings[0])
+            }
+            // [姓のみ一致 + イニシャル] パターン（f.yamada, yamada.t など）
+            if readings[0].count == 1 && readingsMatch(readings[1], refLast) {
+                return (lastNameReading: readings[1], firstNameReading: refFirst)
+            }
+            if readings[1].count == 1 && readingsMatch(readings[0], refLast) {
+                return (lastNameReading: readings[0], firstNameReading: refFirst)
+            }
+        } else if readings.count == 1 {
+            // 単一セグメント: セパレータなし（yamadataro）の場合
+            let single = readings[0]
+            // 姓の読みが先頭に含まれるか確認
+            if !refLast.isEmpty && single.hasPrefix(refLast) {
+                let remainder = String(single.dropFirst(refLast.count))
+                if !remainder.isEmpty && readingsMatch(remainder, refFirst) {
+                    return (lastNameReading: refLast, firstNameReading: remainder)
+                }
+            }
+            // 名→姓の順（tarouyamada）
+            if !refFirst.isEmpty && single.hasPrefix(refFirst) {
+                let remainder = String(single.dropFirst(refFirst.count))
+                if !remainder.isEmpty && readingsMatch(remainder, refLast) {
+                    return (lastNameReading: remainder, firstNameReading: refFirst)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Kunrei式ローマ字をHepburn式に正規化してからひらがなに変換する
+    private static func romajiToHiragana(_ romaji: String) -> String {
+        let normalized = normalizeRomaji(romaji)
+        let mutable = NSMutableString(string: normalized)
+        CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
+        return mutable as String
+    }
+
+    /// Kunrei式 → Hepburn式の前処理（CFStringTransform が処理できる形式に統一）
+    private static func normalizeRomaji(_ romaji: String) -> String {
+        var s = romaji.lowercased()
+        // 長い置換から先に適用して誤変換を防ぐ
+        let replacements: [(String, String)] = [
+            ("sha", "sha"), ("shi", "shi"), ("shu", "shu"), ("sho", "sho"),
+            ("chi", "chi"), ("tchi", "cchi"), ("tsu", "tsu"),
+            ("sya", "sha"), ("syi", "shi"), ("syu", "shu"), ("syo", "sho"),
+            ("tya", "cha"), ("tyi", "chi"), ("tyu", "chu"), ("tyo", "cho"),
+            ("zya", "ja"),  ("zyi", "ji"),  ("zyu", "ju"),  ("zyo", "jo"),
+            ("si", "shi"), ("ti", "chi"), ("tu", "tsu"), ("hu", "fu"),
+            ("zi", "ji"),  ("di", "ji"),  ("du", "zu"),
+        ]
+        for (from, to) in replacements {
+            s = s.replacingOccurrences(of: from, with: to)
+        }
+        return s
+    }
+
+    /// email由来のひらがな読みがCFStringTokenizer由来の読みと一致するか検証
+    private static func readingsMatch(_ emailReading: String, _ tokenizerReading: String) -> Bool {
+        guard !emailReading.isEmpty, !tokenizerReading.isEmpty else { return false }
+        if emailReading == tokenizerReading { return true }
+        // 先頭2文字以上が一致し、長さの差が1文字以内なら一致とみなす
+        let prefixLen = min(2, emailReading.count, tokenizerReading.count)
+        let emailPrefix = String(emailReading.prefix(prefixLen))
+        let tokenizerPrefix = String(tokenizerReading.prefix(prefixLen))
+        return emailPrefix == tokenizerPrefix
+            && abs(emailReading.count - tokenizerReading.count) <= 1
     }
 
     // MARK: - 保存

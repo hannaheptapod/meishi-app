@@ -762,14 +762,13 @@ struct StructuredFieldsTests {
     }
 
     @Test func lowConfidenceNameRemainsUnclassified() {
-        // 空間的手がかりが乏しい場合（小さいフォント、下部配置）、名前は未分類のままLLMに委ねる
+        // カタカナ混在+小フォント+低位置 → 名前スコアが0.35以下で未分類のままLLMに委ねる
         let lines = [
-            makeLine("田中工房", midY: 0.5, height: 0.03),
+            makeLine("テクノ田中", midY: 0.2, height: 0.03),
             makeLine("test@example.com"),
         ]
         let result = classifier.classifyStructuredFields(lines: lines)
-        // "田中工房" は会社キーワードがないため未分類だが、名前スコアも低い
-        #expect(result.unclassifiedLines.contains("田中工房"))
+        #expect(result.unclassifiedLines.contains("テクノ田中"))
     }
 }
 

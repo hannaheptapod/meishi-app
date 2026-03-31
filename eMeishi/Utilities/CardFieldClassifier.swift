@@ -151,7 +151,14 @@ struct CardFieldClassifier {
                 // 高確信度（0.4超）: ルールベースで名前を確定
                 unclassified = resolveNameFromUnclassified(&result, unclassified: unclassified)
                 print("[Classifier] 名前解決後: lastName='\(result.lastName)' firstName='\(result.firstName)'")
-                // フリガナ行を除去
+                // フリガナ行を氏名読み仮名として取得してから除去
+                if let furiganaLine = unclassified.first(where: { isFuriganaLine($0) }) {
+                    let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let (lastR, firstR) = splitName(rawReading)
+                    result.lastNameReading = normalizeToHiragana(lastR)
+                    result.firstNameReading = normalizeToHiragana(firstR)
+                    print("[Classifier] フリガナ: lastR='\(result.lastNameReading)' firstR='\(result.firstNameReading)'")
+                }
                 unclassified.removeAll { isFuriganaLine($0) }
             } else {
                 print("[Classifier] 名前スコア不足 → LLMに委譲")
@@ -526,6 +533,13 @@ struct CardFieldClassifier {
     }
 
     // MARK: - フリガナ判定
+
+    /// カタカナをひらがなに正規化する（ひらがなはそのまま返す）
+    private func normalizeToHiragana(_ text: String) -> String {
+        let mutable = NSMutableString(string: text)
+        CFStringTransform(mutable, nil, kCFStringTransformHiraganaKatakana, true)
+        return mutable as String
+    }
 
     /// フリガナ行の判定：ひらがな・カタカナのみで構成される短い行
     private func isFuriganaLine(_ line: RecognizedLine) -> Bool {
