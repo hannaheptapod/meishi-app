@@ -25,12 +25,7 @@ struct CardFieldClassifier {
 
     // MARK: - キーワード定数
 
-    private static let companyKeywords = [
-        "株式会社", "合同会社", "有限会社", "一般社団法人", "公益社団法人",
-        "公益財団法人", "一般財団法人", "特定非営利活動法人",
-        "Inc.", "Inc,", "LLC", "Ltd.", "Ltd,", "Corp.", "Corp,",
-        "Co., Ltd", "Co.,Ltd", "GmbH", "S.A.", "Pty"
-    ]
+    private static let companyKeywords = LegalEntityTerms.allDetectionTerms
 
     /// 会社名に使われる接尾辞（名前スコアリングの誤判定防止用）
     private static let companySuffixes = [

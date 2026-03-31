@@ -764,12 +764,12 @@ struct StructuredFieldsTests {
     @Test func lowConfidenceNameRemainsUnclassified() {
         // 空間的手がかりが乏しい場合（小さいフォント、下部配置）、名前は未分類のままLLMに委ねる
         let lines = [
-            makeLine("ABC商事", midY: 0.5, height: 0.03),
+            makeLine("田中工房", midY: 0.5, height: 0.03),
             makeLine("test@example.com"),
         ]
         let result = classifier.classifyStructuredFields(lines: lines)
-        // "ABC商事" は会社キーワードがないため未分類だが、名前スコアも低い
-        #expect(result.unclassifiedLines.contains("ABC商事"))
+        // "田中工房" は会社キーワードがないため未分類だが、名前スコアも低い
+        #expect(result.unclassifiedLines.contains("田中工房"))
     }
 }
 
@@ -915,5 +915,125 @@ struct SpecialTokenTests {
         #expect(Qwen25Tokenizer.SpecialToken.imStart == 151644)
         #expect(Qwen25Tokenizer.SpecialToken.imEnd   == 151645)
         #expect(Qwen25Tokenizer.SpecialToken.eot     == 151643)
+    }
+}
+
+// MARK: - 法人格（LegalEntityTerms）テスト
+
+struct LegalEntityTermsTests {
+
+    // MARK: - stripKanji
+
+    @Test func stripKanjiPrefix() {
+        // 前株
+        #expect(LegalEntityTerms.stripKanji(from: "株式会社テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "合同会社テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "有限会社テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "一般社団法人テスト") == "テスト")
+    }
+
+    @Test func stripKanjiSuffix() {
+        // 後株
+        #expect(LegalEntityTerms.stripKanji(from: "テスト株式会社") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "テスト合同会社") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "テスト有限会社") == "テスト")
+    }
+
+    @Test func stripKanjiAbbreviated() {
+        // 略称形
+        #expect(LegalEntityTerms.stripKanji(from: "(株)テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "テスト(株)") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "（株）テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "(有)テスト") == "テスト")
+        #expect(LegalEntityTerms.stripKanji(from: "テスト（有）") == "テスト")
+    }
+
+    @Test func stripKanjiEnglish() {
+        #expect(LegalEntityTerms.stripKanji(from: "Test Inc.") == "Test")
+        #expect(LegalEntityTerms.stripKanji(from: "Test LLC") == "Test")
+        #expect(LegalEntityTerms.stripKanji(from: "Test Co., Ltd.") == "Test")
+        #expect(LegalEntityTerms.stripKanji(from: "Test GmbH") == "Test")
+    }
+
+    @Test func stripKanjiPassthrough() {
+        // 法人格なしはそのまま
+        #expect(LegalEntityTerms.stripKanji(from: "テスト商事") == "テスト商事")
+        #expect(LegalEntityTerms.stripKanji(from: "ABC") == "ABC")
+        #expect(LegalEntityTerms.stripKanji(from: "") == "")
+    }
+
+    // MARK: - stripReading
+
+    @Test func stripReadingPrefix() {
+        #expect(LegalEntityTerms.stripReading(from: "かぶしきがいしゃてすと") == "てすと")
+        #expect(LegalEntityTerms.stripReading(from: "ごうどうがいしゃてすと") == "てすと")
+    }
+
+    @Test func stripReadingSuffix() {
+        #expect(LegalEntityTerms.stripReading(from: "てすとかぶしきがいしゃ") == "てすと")
+    }
+
+    @Test func stripReadingPassthrough() {
+        #expect(LegalEntityTerms.stripReading(from: "てすと") == "てすと")
+    }
+
+    // MARK: - allDetectionTerms
+
+    @Test func allDetectionTermsContainsAllTypes() {
+        let terms = LegalEntityTerms.allDetectionTerms
+        // 漢字
+        #expect(terms.contains("株式会社"))
+        #expect(terms.contains("合名会社"))
+        #expect(terms.contains("医療法人"))
+        // 英語
+        #expect(terms.contains("Inc."))
+        #expect(terms.contains("S.A."))
+        #expect(terms.contains("Pty"))
+        // 略称
+        #expect(terms.contains("(株)"))
+        #expect(terms.contains("（有）"))
+    }
+}
+
+// MARK: - 重複検出の法人格正規化テスト
+
+struct DuplicateCheckerLegalEntityTests {
+
+    @Test func duplicateDetectionNormalizesCompanySuffix() {
+        let ctx = makeTestContext()
+        let checker = DuplicateChecker(threshold: 0.70)
+
+        // 同一人物・前株 vs 後株
+        let a = makeCard(context: ctx, lastName: "田中", firstName: "太郎", company: "株式会社ABC")
+        let b = makeCard(context: ctx, lastName: "田中", firstName: "太郎", company: "ABC株式会社")
+        let pairs = checker.findDuplicates(in: [a, b])
+
+        #expect(!pairs.isEmpty)
+        if let pair = pairs.first {
+            // 法人格除去後の会社名が一致するため高スコア
+            #expect(pair.score >= 0.95)
+        }
+    }
+
+    @Test func duplicateDetectionNormalizesAbbreviatedSuffix() {
+        let ctx = makeTestContext()
+        let checker = DuplicateChecker(threshold: 0.70)
+
+        let a = makeCard(context: ctx, lastName: "鈴木", firstName: "花子", company: "(株)テスト")
+        let b = makeCard(context: ctx, lastName: "鈴木", firstName: "花子", company: "株式会社テスト")
+        let pairs = checker.findDuplicates(in: [a, b])
+
+        #expect(!pairs.isEmpty)
+    }
+
+    @Test func duplicateDetectionNormalizesCompanyVsNoSuffix() {
+        let ctx = makeTestContext()
+        let checker = DuplicateChecker(threshold: 0.70)
+
+        let a = makeCard(context: ctx, lastName: "佐藤", firstName: "一郎", company: "株式会社テスト")
+        let b = makeCard(context: ctx, lastName: "佐藤", firstName: "一郎", company: "テスト")
+        let pairs = checker.findDuplicates(in: [a, b])
+
+        #expect(!pairs.isEmpty)
     }
 }
