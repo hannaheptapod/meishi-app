@@ -156,6 +156,59 @@ struct CardFormView: View {
 
                 // タグ選択セクション
                 Section("タグ") {
+                    // AI提案タグ
+                    if !viewModel.suggestedTagIDs.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.caption)
+                                    .foregroundStyle(.tint)
+                                Text("AI提案")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            FlowLayout(spacing: 6) {
+                                ForEach(listViewModel.allTags.filter { viewModel.suggestedTagIDs.contains($0.id ?? UUID()) }) { tag in
+                                    HStack(spacing: 4) {
+                                        Button {
+                                            if let id = tag.id {
+                                                viewModel.acceptTagSuggestion(id)
+                                            }
+                                        } label: {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "plus")
+                                                    .font(.caption2)
+                                                Circle()
+                                                    .fill(tag.color)
+                                                    .frame(width: 8, height: 8)
+                                                Text(tag.tagName)
+                                                    .font(.caption)
+                                            }
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(tag.color.opacity(0.12))
+                                            .foregroundStyle(tag.color)
+                                            .clipShape(Capsule())
+                                            .overlay(
+                                                Capsule()
+                                                    .strokeBorder(tag.color.opacity(0.3), lineWidth: 1)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                    } else if viewModel.isLoadingTagSuggestions {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("タグを提案中...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     if listViewModel.allTags.isEmpty {
                         Text("タグがありません")
                             .font(.subheadline)

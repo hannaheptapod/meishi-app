@@ -7,12 +7,10 @@ struct SettingsView: View {
 
     @EnvironmentObject private var listViewModel: CardListViewModel
     @ObservedObject private var settings = SettingsStore.shared
-    @ObservedObject private var llm = LocalLLMService.shared
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var showDeleteAllConfirm = false
-    @State private var showDeleteModelConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
 #if DEBUG
@@ -23,10 +21,8 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 iCloudSection
-                readingSection
-                duplicateCheckSection
-                exportSection
                 securitySection
+                advancedLinkSection
                 dataSection
 #if DEBUG
                 debugSection
@@ -35,17 +31,6 @@ struct SettingsView: View {
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
-                Button("削除", role: .destructive) {
-                    do {
-                        try llm.deleteModel()
-                    } catch {
-                        modelError = error.localizedDescription
-                    }
-                }
-            } message: {
-                Text("削除すると標準読み取りに切り替わります。再ダウンロードはいつでも可能です。")
-            }
             .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
                 Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
             } message: {
@@ -98,189 +83,15 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 名刺の読み取り
+    // MARK: - 高度な設定（リンク）
 
-    private var readingSection: some View {
+    private var advancedLinkSection: some View {
         Section {
-            // 自動
-            readingMethodRow(.automatic, icon: "wand.and.sparkles") {
-                EmptyView()
+            NavigationLink {
+                AdvancedSettingsView(modelError: $modelError)
+            } label: {
+                Label("高度な設定", systemImage: "gearshape.2")
             }
-
-            // Apple Intelligence
-            if #available(iOS 18.0, *) {
-                readingMethodRow(.appleIntelligence, icon: "apple.intelligence") {
-                    appleIntelligenceStatusText
-                }
-            } else {
-                readingMethodRow(.appleIntelligence, icon: "brain") {
-                    Text("非対応").foregroundStyle(.secondary)
-                }
-            }
-
-            // AIアシスト（ダウンロード管理付き）
-            aiAssistRow
-
-            // 標準読み取り
-            readingMethodRow(.classifier, icon: "text.magnifyingglass") {
-                Text("利用可能").foregroundStyle(.secondary)
-            }
-
-            if let err = modelError {
-                Text(err).font(.caption).foregroundStyle(.red)
-            }
-
-        } header: {
-            Text("名刺の読み取り")
-        } footer: {
-            Text("撮影した名刺の文字を自動でフィールドに振り分けます。「自動」は上から順に利用できるエンジンを使用します。")
-        }
-    }
-
-    @ViewBuilder
-    private func readingMethodRow<S: View>(
-        _ method: ReadingMethod,
-        icon: String,
-        @ViewBuilder status: () -> S
-    ) -> some View {
-        HStack {
-            Label(method.displayName, systemImage: icon)
-                .symbolRenderingMode(.monochrome)
-            Spacer()
-            if settings.readingMethod != method {
-                status()
-            }
-            if settings.readingMethod == method {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
-                    .fontWeight(.semibold)
-                    .padding(.leading, 4)
-            }
-        }
-        .foregroundStyle(.primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            settings.readingMethod = method
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(method.displayName)
-        .accessibilityValue(settings.readingMethod == method ? "選択中" : "")
-    }
-
-    private var aiAssistRow: some View {
-        HStack {
-            Label("AIアシスト", systemImage: "sparkles")
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(.primary)
-            Spacer()
-
-            if settings.readingMethod != .localLLM {
-                if llm.isDownloading {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("\(Int(llm.downloadProgress * 100))%")
-                            .foregroundStyle(.secondary)
-                    }
-                } else if llm.isModelAvailable {
-                    Text("利用可能").foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 8) {
-                        Text("未取得").foregroundStyle(.secondary)
-                        Button("取得する") {
-                            Task {
-                                do {
-                                    try await llm.downloadModel()
-                                } catch {
-                                    modelError = error.localizedDescription
-                                }
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-            }
-
-            if settings.readingMethod == .localLLM {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
-                    .fontWeight(.semibold)
-                    .padding(.leading, 4)
-            }
-        }
-        .foregroundStyle(.primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            settings.readingMethod = .localLLM
-        }
-        .swipeActions(edge: .trailing) {
-            if llm.isModelAvailable {
-                Button(role: .destructive) {
-                    showDeleteModelConfirm = true
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-            }
-        }
-    }
-
-    // MARK: - 重複チェック
-
-    private var duplicateCheckSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("検出感度")
-                    Spacer()
-                    Text(thresholdLabel).foregroundStyle(.secondary)
-                }
-                Slider(value: $settings.duplicateThreshold, in: 0.5...1.0, step: 0.05)
-                    .accessibilityLabel("重複検出感度")
-                    .accessibilityValue(thresholdLabel)
-            }
-        } header: {
-            Text("重複チェック")
-        } footer: {
-            Text("「低」にするほど名前が少し違っていても重複として検出します。「高」にするほど完全一致に近い場合のみ検出します。")
-        }
-    }
-
-    @available(iOS 18.0, *)
-    private var appleIntelligenceStatusText: some View {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            return Text("利用可能").foregroundStyle(.secondary)
-        case .unavailable(.deviceNotEligible):
-            return Text("非対応").foregroundStyle(.secondary)
-        case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("オフ").foregroundStyle(.orange)
-        case .unavailable(.modelNotReady):
-            return Text("準備中").foregroundStyle(.secondary)
-        default:
-            return Text("利用不可").foregroundStyle(.secondary)
-        }
-    }
-
-    private var thresholdLabel: String {
-        switch settings.duplicateThreshold {
-        case ..<0.65: return "低"
-        case ..<0.80: return "中"
-        default:      return "高"
-        }
-    }
-
-    // MARK: - 書き出し
-
-    private var exportSection: some View {
-        Section {
-            Toggle("Excelで開けるCSV形式にする", isOn: $settings.csvIncludesBOM)
-            Picker("連絡先ファイルの形式", selection: $settings.vCardVersion) {
-                Text("vCard 3.0（標準）").tag("3.0")
-                Text("vCard 4.0").tag("4.0")
-            }
-        } header: {
-            Text("書き出し")
         }
     }
 
@@ -406,6 +217,199 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
+}
+
+// MARK: - 高度な設定画面
+
+private struct AdvancedSettingsView: View {
+
+    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var llm = LocalLLMService.shared
+    @Binding var modelError: String?
+    @State private var showDeleteModelConfirm = false
+
+    var body: some View {
+        List {
+            // AIエンジン
+            Section {
+                readingMethodRow(.automatic, icon: "wand.and.sparkles") {
+                    EmptyView()
+                }
+
+                if #available(iOS 18.0, *) {
+                    readingMethodRow(.appleIntelligence, icon: "apple.intelligence") {
+                        appleIntelligenceStatusText
+                    }
+                } else {
+                    readingMethodRow(.appleIntelligence, icon: "brain") {
+                        Text("非対応").foregroundStyle(.secondary)
+                    }
+                }
+
+                aiAssistRow
+
+                if let err = modelError {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text("AIエンジン")
+            } footer: {
+                Text("名刺の分析やAI検索に使用するエンジンを選択します。「自動」は利用できる最高精度のエンジンを使用します。")
+            }
+
+            // 重複検出
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("検出感度")
+                        Spacer()
+                        Text(thresholdLabel).foregroundStyle(.secondary)
+                    }
+                    Slider(value: $settings.duplicateThreshold, in: 0.5...1.0, step: 0.05)
+                        .accessibilityLabel("重複検出感度")
+                        .accessibilityValue(thresholdLabel)
+                }
+            } header: {
+                Text("重複チェック")
+            } footer: {
+                Text("「低」にするほど名前が少し違っていても重複として検出します。「高」にするほど完全一致に近い場合のみ検出します。")
+            }
+
+            // 書き出し
+            Section {
+                Toggle("Excelで開けるCSV形式にする", isOn: $settings.csvIncludesBOM)
+                Picker("連絡先ファイルの形式", selection: $settings.vCardVersion) {
+                    Text("vCard 3.0（標準）").tag("3.0")
+                    Text("vCard 4.0").tag("4.0")
+                }
+            } header: {
+                Text("書き出し")
+            }
+        }
+        .navigationTitle("高度な設定")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
+            Button("削除", role: .destructive) {
+                do {
+                    try llm.deleteModel()
+                } catch {
+                    modelError = error.localizedDescription
+                }
+            }
+        } message: {
+            Text("削除すると自動モードに切り替わります。再ダウンロードはいつでも可能です。")
+        }
+    }
+
+    // MARK: - 読み取り方法行
+
+    @ViewBuilder
+    private func readingMethodRow<S: View>(
+        _ method: ReadingMethod,
+        icon: String,
+        @ViewBuilder status: () -> S
+    ) -> some View {
+        HStack {
+            Label(method.displayName, systemImage: icon)
+                .symbolRenderingMode(.monochrome)
+            Spacer()
+            if settings.readingMethod != method {
+                status()
+            }
+            if settings.readingMethod == method {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold)
+                    .padding(.leading, 4)
+            }
+        }
+        .foregroundStyle(.primary)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            settings.readingMethod = method
+        }
+    }
+
+    private var aiAssistRow: some View {
+        HStack {
+            Label("AIアシスト", systemImage: "sparkles")
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.primary)
+            Spacer()
+
+            if settings.readingMethod != .localLLM {
+                if llm.isDownloading {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("\(Int(llm.downloadProgress * 100))%")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if llm.isModelAvailable {
+                    Text("利用可能").foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        Text("未取得").foregroundStyle(.secondary)
+                        Button("取得する") {
+                            Task {
+                                do {
+                                    try await llm.downloadModel()
+                                } catch {
+                                    modelError = error.localizedDescription
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            if settings.readingMethod == .localLLM {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold)
+                    .padding(.leading, 4)
+            }
+        }
+        .foregroundStyle(.primary)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            settings.readingMethod = .localLLM
+        }
+        .swipeActions(edge: .trailing) {
+            if llm.isModelAvailable {
+                Button(role: .destructive) {
+                    showDeleteModelConfirm = true
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    @available(iOS 18.0, *)
+    private var appleIntelligenceStatusText: some View {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return Text("利用可能").foregroundStyle(.secondary)
+        case .unavailable(.deviceNotEligible):
+            return Text("非対応").foregroundStyle(.secondary)
+        case .unavailable(.appleIntelligenceNotEnabled):
+            return Text("オフ").foregroundStyle(.orange)
+        case .unavailable(.modelNotReady):
+            return Text("準備中").foregroundStyle(.secondary)
+        default:
+            return Text("利用不可").foregroundStyle(.secondary)
+        }
+    }
+
+    private var thresholdLabel: String {
+        switch settings.duplicateThreshold {
+        case ..<0.65: return "低"
+        case ..<0.80: return "中"
+        default:      return "高"
+        }
+    }
 }
 
 #Preview {

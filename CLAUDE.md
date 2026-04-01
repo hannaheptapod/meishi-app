@@ -113,6 +113,7 @@ meishi-app/
 │   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更・並べ替え）
 │   │   ├── LockScreenView.swift                # 生体認証ロック画面
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
+│   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
 │   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -125,6 +126,9 @@ meishi-app/
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Prefill/Decode 分割対応・weight チャンク結合
 │   │   ├── LocalLLMService.swift               # Qwen3-0.6B CoreML Prefill/Decode 分割推論・モデル管理・Documents/AppSupport 二重パス
+│   │   ├── SearchQueryClassifier.swift         # AI自然言語検索のクエリ意図分類（時間表現+フィールド分類）
+│   │   ├── AutoTagService.swift                # AI自動タグ提案（既存タグからカード内容に該当するものを提案）
+│   │   ├── InsightsService.swift               # 人脈インサイト集計（会社別・エリア別・職種別・月別）
 │   │   └── Qwen25Tokenizer.swift               # BPE トークナイザー（Qwen3互換）
 │   ├── Utilities/
 │   │   ├── DuplicateChecker.swift
@@ -211,6 +215,10 @@ meishi-app/
 - UIテスト：`-UITestMode` 起動引数でインメモリ＋サンプルデータを使用。コンテキストメニュー・選択モード・検索・ナビゲーション等のUIテストを網羅的に実装
 - セキュリティ：Face ID / Touch ID によるアプリロック（パスコードフォールバック付き）。ロック有効/無効の切替時にも認証要求。猶予時間設定（即時/15秒/1分/5分）。App Switcher でのコンテンツ隠蔽（PrivacyOverlay）。CoreData ストアに NSFileProtectionComplete を適用（デバイスロック時にデータベース暗号化）
 - iCloud 同期：NSPersistentCloudKitContainer による CloudKit Private Database 同期。設定画面でON/OFF切替（デフォルトOFF）。変更後はアプリ再起動で反映。同一 Apple ID のデバイス間で名刺・タグデータを自動同期。オフライン時はローカルのみで動作し、オンライン復帰時に自動同期。競合解決は NSMergeByPropertyObjectTrumpMergePolicy（最後の書き込みが勝つ）
+- AI自然言語検索：「先月会った渋谷のエンジニア」のような自然言語クエリで名刺を検索。時間表現は正規表現で抽出（LLM不要）、キーワードはPrefillモデルで1回forward passしフィールド分類（name/company/title/department/address）。分類結果からCoreDataフィルタを動的生成。テキスト検索で0件時に「AI検索で探す」ボタン表示。モデル未DL時はテキスト検索にフォールバック
+- AI自動タグ提案：名刺スキャン後、既存タグから該当するものをAIが提案。各タグについて1回forward passで yes/no 分類。CardFormView のタグセクションに「AI提案」チップとして表示。タップで適用。タグ20個まで対応
+- 人脈インサイト：名刺データの自動集計（会社別・エリア別・職種別・月別推移）。CoreData集約クエリのみでLLM不使用。メニューの「インサイト」から遷移
+- AI重複検出強化：Levenshtein閾値未満（0.5〜閾値）のボーダーライン候補をAIで二次判定。会社名形式差異（「株式会社ABC」vs「ABC」）や転職ケース（同一人物・異なる会社/役職）を捕捉。「AI検出」バッジで表示
 
 ---
 
