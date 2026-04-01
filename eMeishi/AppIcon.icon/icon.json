@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000",
+    "automatic-gradient" : "extended-srgb:0.96078,0.48627,0.00000,1.00000",
     "orientation" : {
       "start" : {
         "x" : 0.5,
@@ -19,7 +19,7 @@
           "fill-specializations" : [
             {
               "value" : {
-                "solid" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+                "solid" : "extended-srgb:0.96078,0.48627,0.00000,1.00000"
               }
             },
             {
