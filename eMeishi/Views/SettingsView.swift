@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var showDeleteAllConfirm = false
     @State private var showDeleteModelConfirm = false
     @State private var modelError: String? = nil
+    @State private var isTogglingLock = false
 #if DEBUG
     @State private var showSeedConfirm = false
 #endif
@@ -24,6 +25,7 @@ struct SettingsView: View {
                 readingSection
                 duplicateCheckSection
                 exportSection
+                securitySection
                 dataSection
 #if DEBUG
                 debugSection
@@ -251,6 +253,83 @@ struct SettingsView: View {
         } header: {
             Text("書き出し")
         }
+    }
+
+    // MARK: - セキュリティ
+
+    private var securitySection: some View {
+        Section {
+            Toggle(isOn: appLockBinding) {
+                Label(appLockLabel, systemImage: appLockIcon)
+            }
+            .disabled(isTogglingLock || biometricType == .none)
+
+            if settings.isAppLockEnabled {
+                Picker("ロックまでの猶予", selection: $settings.lockGracePeriodSeconds) {
+                    Text("即時").tag(0)
+                    Text("15秒").tag(15)
+                    Text("1分").tag(60)
+                    Text("5分").tag(300)
+                }
+            }
+        } header: {
+            Text("セキュリティ")
+        } footer: {
+            if biometricType == .none {
+                Text("生体認証が設定されていません。端末の設定から Face ID または Touch ID を有効にしてください。")
+            } else {
+                Text("有効にすると、アプリを開くときに\(biometricDisplayName)での認証が必要になります。")
+            }
+        }
+    }
+
+    private var biometricType: AuthenticationService.BiometricType {
+        AuthenticationService.shared.availableBiometricType()
+    }
+
+    private var biometricDisplayName: String {
+        switch biometricType {
+        case .faceID:  return "Face ID"
+        case .touchID: return "Touch ID"
+        case .none:    return "生体認証"
+        }
+    }
+
+    private var appLockLabel: String {
+        switch biometricType {
+        case .faceID:  return "Face IDでロック"
+        case .touchID: return "Touch IDでロック"
+        case .none:    return "生体認証でロック"
+        }
+    }
+
+    private var appLockIcon: String {
+        switch biometricType {
+        case .faceID:  return "faceid"
+        case .touchID: return "touchid"
+        case .none:    return "lock"
+        }
+    }
+
+    private var appLockBinding: Binding<Bool> {
+        Binding(
+            get: { settings.isAppLockEnabled },
+            set: { newValue in
+                isTogglingLock = true
+                Task {
+                    let reason = newValue
+                        ? "アプリロックを有効にするために認証してください"
+                        : "アプリロックを無効にするために認証してください"
+                    let success = await AuthenticationService.shared.authenticate(reason: reason)
+                    await MainActor.run {
+                        if success {
+                            settings.isAppLockEnabled = newValue
+                        }
+                        isTogglingLock = false
+                    }
+                }
+            }
+        )
     }
 
     // MARK: - データ管理

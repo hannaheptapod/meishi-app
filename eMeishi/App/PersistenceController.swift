@@ -64,6 +64,11 @@ struct PersistenceController {
                                   forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber,
                                   forKey: NSInferMappingModelAutomaticallyOption)
+            // デバイスロック時にデータベースファイルを暗号化
+            if !inMemory {
+                description.setOption(FileProtectionType.complete as NSObject,
+                                      forKey: NSPersistentStoreFileProtectionKey)
+            }
         }
         container.loadPersistentStores { _, error in
             if let error = error as NSError? {

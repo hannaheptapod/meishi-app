@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="540" viewBox="148 240 728 540">
+  <defs>
+    <clipPath id="card-clip">
+      <rect x="148" y="243" width="728" height="450" rx="30"/>
+    </clipPath>
+  </defs>
+  <!-- layer_1: 最背面カード -->
+  <rect x="236" y="440" width="552" height="341" rx="30" fill="#C0C5CC"/>
+  <!-- layer_2: 中間カード -->
+  <rect x="192" y="341" width="640" height="396" rx="30" fill="#DDE1E7"/>
+  <!-- layer_3: 前面カード -->
+  <rect x="148" y="243" width="728" height="450" rx="30" fill="#ECEEF0" stroke="#D0D3D8" stroke-width="2"/>
+  <!-- layer_4: 人物＋テキスト -->
+  <g clip-path="url(#card-clip)">
+    <circle cx="357" cy="427" r="46" fill="#B0B5BC"/>
+    <path d="M 283 539 A 74 55 0 0 1 431 539 L 431 545 A 10 10 0 0 1 421 555 L 293 555 A 10 10 0 0 1 283 545 Z" fill="#B0B5BC"/>
+    <rect x="493" y="381" width="266" height="24" rx="12" fill="#B0B5BC"/>
+    <rect x="493" y="456" width="266" height="24" rx="12" fill="#B0B5BC"/>
+    <rect x="493" y="531" width="164" height="24" rx="12" fill="#B0B5BC"/>
+  </g>
+</svg>

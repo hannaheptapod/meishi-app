@@ -73,18 +73,32 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(vCardVersion, forKey: Keys.vCardVersion) }
     }
 
+    // MARK: - セキュリティ設定
+
+    /// アプリロック（Face ID / Touch ID）の有効/無効
+    @Published var isAppLockEnabled: Bool {
+        didSet { UserDefaults.standard.set(isAppLockEnabled, forKey: Keys.isAppLockEnabled) }
+    }
+
+    /// バックグラウンドからの復帰時にロックするまでの猶予（秒）
+    @Published var lockGracePeriodSeconds: Int {
+        didSet { UserDefaults.standard.set(lockGracePeriodSeconds, forKey: Keys.lockGracePeriodSeconds) }
+    }
+
     // MARK: - 初期化
 
     private init() {
         let ud = UserDefaults.standard
 
         ud.register(defaults: [
-            Keys.readingMethod:     ReadingMethod.automatic.rawValue,
-            Keys.duplicateThreshold: 0.75,
-            Keys.csvIncludesBOM:    true,
-            Keys.vCardVersion:      "3.0",
-            Keys.sortKey:           CardSortKey.createdAt.rawValue,
-            Keys.sortAscending:     false
+            Keys.readingMethod:           ReadingMethod.automatic.rawValue,
+            Keys.duplicateThreshold:      0.75,
+            Keys.csvIncludesBOM:          true,
+            Keys.vCardVersion:            "3.0",
+            Keys.sortKey:                 CardSortKey.createdAt.rawValue,
+            Keys.sortAscending:           false,
+            Keys.isAppLockEnabled:        false,
+            Keys.lockGracePeriodSeconds:  0
         ])
 
         let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
@@ -95,16 +109,20 @@ class SettingsStore: ObservableObject {
         let sortKeyRaw = ud.string(forKey: Keys.sortKey) ?? CardSortKey.createdAt.rawValue
         sortKey        = CardSortKey(rawValue: sortKeyRaw)?.rawValue ?? CardSortKey.createdAt.rawValue
         sortAscending  = ud.bool(forKey: Keys.sortAscending)
+        isAppLockEnabled       = ud.bool(forKey: Keys.isAppLockEnabled)
+        lockGracePeriodSeconds = ud.integer(forKey: Keys.lockGracePeriodSeconds)
     }
 
     // MARK: - UserDefaults キー
 
     private enum Keys {
-        static let readingMethod      = "readingMethod"
-        static let duplicateThreshold = "duplicateThreshold"
-        static let csvIncludesBOM     = "csvIncludesBOM"
-        static let vCardVersion       = "vCardVersion"
-        static let sortKey            = "sortKey"
-        static let sortAscending      = "sortAscending"
+        static let readingMethod           = "readingMethod"
+        static let duplicateThreshold      = "duplicateThreshold"
+        static let csvIncludesBOM          = "csvIncludesBOM"
+        static let vCardVersion            = "vCardVersion"
+        static let sortKey                 = "sortKey"
+        static let sortAscending           = "sortAscending"
+        static let isAppLockEnabled        = "isAppLockEnabled"
+        static let lockGracePeriodSeconds  = "lockGracePeriodSeconds"
     }
 }

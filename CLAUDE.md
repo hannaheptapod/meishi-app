@@ -57,6 +57,7 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。モデルフ�
 | 連絡先連携 | CNContactStore（Contacts framework） |
 | エクスポート | CSV・vCard（.vcf） |
 | モデル配布 | CloudKit Public Database（CloudKitModelService・CKAsset / weight.bin チャンク分割）+ Documents/LocalLLM/ ローカル配置（開発用） |
+| 生体認証 | LocalAuthentication（LAContext・Face ID / Touch ID） |
 | 設定永続化 | UserDefaults（SettingsStore） |
 
 ---
@@ -109,12 +110,15 @@ meishi-app/
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
 │   │   ├── TagManagementView.swift             # タグ管理（作成・削除・色変更・並べ替え）
-│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・モデル管理
+│   │   ├── LockScreenView.swift                # 生体認証ロック画面
+│   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
+│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
 │   │   ├── CardFormViewModel.swift
 │   │   └── SettingsStore.swift                 # UserDefaults ラッパー・ReadingMethod enum
 │   ├── Services/
+│   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
@@ -204,6 +208,7 @@ meishi-app/
 - 触覚フィードバック：お気に入り切替時に UIImpactFeedbackGenerator で振動フィードバック
 - フィルタ時カウント表示：フィルタや検索適用中にナビゲーションタイトルに件数表示
 - UIテスト：`-UITestMode` 起動引数でインメモリ＋サンプルデータを使用。コンテキストメニュー・選択モード・検索・ナビゲーション等のUIテストを網羅的に実装
+- セキュリティ：Face ID / Touch ID によるアプリロック（パスコードフォールバック付き）。ロック有効/無効の切替時にも認証要求。猶予時間設定（即時/15秒/1分/5分）。App Switcher でのコンテンツ隠蔽（PrivacyOverlay）。CoreData ストアに NSFileProtectionComplete を適用（デバイスロック時にデータベース暗号化）
 
 ---
 
@@ -226,6 +231,7 @@ meishi-app/
 
 - `NSCameraUsageDescription`：名刺を撮影するために使用
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
+- `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
 - `UIFileSharingEnabled`：Documents ディレクトリへの Finder/iTunes ファイル共有を有効化（開発用モデル配置）
 - `LSSupportsOpeningDocumentsInPlace`：ドキュメントの直接アクセスを有効化
