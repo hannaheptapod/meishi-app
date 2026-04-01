@@ -70,6 +70,7 @@ struct CardDetailView: View {
                         if let url = URL(string: "tel:\(digits)") {
                             Label {
                                 Link(phone, destination: url)
+                                    .tint(.blue)
                             } icon: {
                                 Image(systemName: "phone.fill")
                                     .foregroundStyle(.green)
@@ -83,6 +84,7 @@ struct CardDetailView: View {
                         if let url = URL(string: "mailto:\(email)") {
                             Label {
                                 Link(email, destination: url)
+                                    .tint(.blue)
                             } icon: {
                                 Image(systemName: "envelope.fill")
                                     .foregroundStyle(.blue)
@@ -109,6 +111,7 @@ struct CardDetailView: View {
                         if let url = URL(string: website) {
                             Label {
                                 Link(website, destination: url)
+                                    .tint(.blue)
                             } icon: {
                                 Image(systemName: "globe")
                                     .foregroundStyle(.indigo)
