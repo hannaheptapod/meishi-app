@@ -66,3 +66,14 @@ fastlane/test_output
 
 # Claude Code
 .claude/settings.local.json
+
+# Local tool configs
+.blitz/
+.codex/
+.mcp.json
+opencode.json
+.claude/app-store-review-agent/
+.claude/asc-skills/
+
+# Backend secrets
+backend/.dev.vars
