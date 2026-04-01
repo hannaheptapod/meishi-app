@@ -57,7 +57,11 @@ struct PersistenceController {
     let iCloudSyncEnabled: Bool
 
     init(inMemory: Bool = false) {
-        let syncEnabled = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        let userWantsSync = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+
+        // iCloud 同期が有効でも、過去に CloudKit エラーが発生していればローカル専用にフォールバック
+        let cloudKitFailed = UserDefaults.standard.bool(forKey: "cloudKitContainerUnavailable")
+        let syncEnabled = userWantsSync && !cloudKitFailed
         self.iCloudSyncEnabled = syncEnabled
 
         // iCloud 同期が有効なら NSPersistentCloudKitContainer を使用
@@ -86,7 +90,7 @@ struct PersistenceController {
             // iCloud 同期の CloudKit コンテナ設定
             if syncEnabled {
                 description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
-                    containerIdentifier: "iCloud.com.jinks.eMeishi"
+                    containerIdentifier: "iCloud.com.jinks.emeishi"
                 )
                 // リモート変更通知を有効化
                 description.setOption(true as NSNumber,
@@ -106,9 +110,28 @@ struct PersistenceController {
         // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）
         container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
 
+        // iCloud 同期有効時、CloudKit Container の可用性をバックグラウンドで確認
+        if syncEnabled {
+            Self.verifyCloudKitContainer()
+        }
+
         // 既存データの companyReading から法人格を除去（一度だけ実行）
         if !inMemory {
             Self.migrateCompanyReadings(context: container.viewContext)
+        }
+    }
+
+    /// CloudKit Container が利用可能か非同期で確認し、失敗時は次回起動からローカル専用にフォールバック
+    private static func verifyCloudKitContainer() {
+        let ckContainer = CKContainer(identifier: "iCloud.com.jinks.emeishi")
+        ckContainer.accountStatus { status, error in
+            if let error = error as? CKError, error.code == .badContainer {
+                print("[PersistenceController] CloudKit Container が未登録です — 次回起動からローカル専用で動作します")
+                UserDefaults.standard.set(true, forKey: "cloudKitContainerUnavailable")
+            } else if status == .available {
+                // Container が利用可能になったらフラグをリセット
+                UserDefaults.standard.set(false, forKey: "cloudKitContainerUnavailable")
+            }
         }
     }
 

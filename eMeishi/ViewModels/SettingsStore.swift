@@ -6,7 +6,6 @@ enum ReadingMethod: String, CaseIterable, Identifiable {
     case automatic          = "automatic"
     case appleIntelligence  = "appleIntelligence"
     case localLLM           = "localLLM"
-    case classifier         = "classifier"
 
     var id: String { rawValue }
 
@@ -15,7 +14,6 @@ enum ReadingMethod: String, CaseIterable, Identifiable {
         case .automatic:         return "自動（推奨）"
         case .appleIntelligence: return "Apple Intelligence"
         case .localLLM:          return "AIアシスト"
-        case .classifier:        return "標準読み取り"
         }
     }
 
@@ -27,8 +25,6 @@ enum ReadingMethod: String, CaseIterable, Identifiable {
             return "Apple Intelligence を使用します（iPhone 15 Pro 以降・要 Apple Intelligence 有効）"
         case .localLLM:
             return "ダウンロード済みのAIモデルを使用します（要ダウンロード）"
-        case .classifier:
-            return "ルールベースの解析を使用します。常時利用可能です"
         }
     }
 }

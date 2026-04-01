@@ -53,6 +53,18 @@ private struct DuplicatePairRow: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(scoreColor(pair.score), in: Capsule())
+                if pair.isAIDetected {
+                    HStack(spacing: 2) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                        Text("AI検出")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.tint.opacity(0.12), in: Capsule())
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .foregroundStyle(.secondary)

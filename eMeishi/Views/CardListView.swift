@@ -22,6 +22,7 @@ struct CardListView: View {
     @State private var selectedCardIDs: Set<BusinessCard.ID> = []
     @State private var isShowingBulkDeleteConfirm = false
     @State private var isShowingBulkTagSheet = false
+    @State private var isShowingAIChat = false
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -39,6 +40,10 @@ struct CardListView: View {
             Group {
                 if viewModel.cards.isEmpty {
                     emptyState
+                } else if viewModel.isSearchActive && viewModel.filteredCards.isEmpty
+                    && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // テキスト検索で0件 → AI チャット検索を提案
+                    aiSearchPrompt
                 } else {
                     cardList
                 }
@@ -46,6 +51,18 @@ struct CardListView: View {
             .navigationTitle(selectionTitle)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
+            .background {
+                SearchBarSparklesInjector(searchText: viewModel.searchText) {
+                    isShowingAIChat = true
+                }
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+            }
+            .onSubmit(of: .search) {
+                if viewModel.filteredCards.isEmpty && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    isShowingAIChat = true
+                }
+            }
             .toolbar {
                 if editMode == .active {
                     selectionToolbarContent
@@ -145,6 +162,10 @@ struct CardListView: View {
                 .environmentObject(viewModel)
             }
             .onAppear(perform: viewModel.fetchCards)
+            .sheet(isPresented: $isShowingAIChat) {
+                AISearchChatView()
+                    .environmentObject(viewModel)
+            }
         }
         .environmentObject(viewModel)
     }
@@ -207,6 +228,13 @@ struct CardListView: View {
                 Divider()
                 Button { isShowingTagManager = true } label: {
                     Label("タグ管理", systemImage: "tag")
+                }
+                if !viewModel.cards.isEmpty {
+                    NavigationLink {
+                        InsightsView()
+                    } label: {
+                        Label("インサイト", systemImage: "chart.bar")
+                    }
                 }
                 Divider()
                 Button { isShowingSettings = true } label: {
@@ -482,6 +510,33 @@ struct CardListView: View {
         }
     }
 
+    // MARK: - AI検索UI
+
+    /// テキスト検索で0件時に表示する AI チャット検索提案
+    private var aiSearchPrompt: some View {
+        VStack(spacing: 12) {
+            Button {
+                isShowingAIChat = true
+            } label: {
+                Label("AI検索で探す", systemImage: "sparkles")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.tint.opacity(0.1))
+                    .clipShape(Capsule())
+            }
+            .padding(.top, 12)
+
+            Text("AIチャットで自然言語検索できます")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.bottom, 8)
+    }
+
     // MARK: - 空状態
 
     private var emptyState: some View {
@@ -505,4 +560,89 @@ struct CardListView: View {
 
 extension UIImage: @retroactive Identifiable {
     public var id: ObjectIdentifier { ObjectIdentifier(self) }
+}
+
+// MARK: - 検索バー内 sparkles ボタン
+
+/// UISearchBar の searchTextField.rightView に sparkles ボタンを配置する
+/// searchText を受け取ることで、検索アクティブ化時に updateUIView が呼ばれる
+private struct SearchBarSparklesInjector: UIViewRepresentable {
+    var searchText: String
+    let onTap: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap) }
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        retryInject(from: v, coordinator: context.coordinator, attempts: 20)
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onTap = onTap
+        retryInject(from: uiView, coordinator: context.coordinator, attempts: 20)
+    }
+
+    private func retryInject(from view: UIView, coordinator: Coordinator, attempts: Int) {
+        guard attempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if self.inject(from: view, coordinator: coordinator) { return }
+            self.retryInject(from: view, coordinator: coordinator, attempts: attempts - 1)
+        }
+    }
+
+    @discardableResult
+    private func inject(from view: UIView, coordinator: Coordinator) -> Bool {
+        guard let window = view.window else { return false }
+
+        if let searchBar = Self.findSearchBar(in: window) {
+            let tf = searchBar.searchTextField
+            if let rv = tf.rightView, rv.tag == 8888 { return true }
+            tf.rightView = Self.makeButton(coordinator: coordinator)
+            tf.rightViewMode = .always
+            return true
+        }
+
+        if let tf = Self.findSearchTextField(in: window) {
+            if let rv = tf.rightView, rv.tag == 8888 { return true }
+            tf.rightView = Self.makeButton(coordinator: coordinator)
+            tf.rightViewMode = .always
+            return true
+        }
+
+        return false
+    }
+
+    private static func makeButton(coordinator: Coordinator) -> UIButton {
+        let btn = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        btn.setImage(UIImage(systemName: "sparkles", withConfiguration: cfg), for: .normal)
+        btn.tintColor = UIColor.tintColor
+        btn.tag = 8888
+        btn.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
+        btn.addTarget(coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
+        return btn
+    }
+
+    private static func findSearchBar(in view: UIView) -> UISearchBar? {
+        if let sb = view as? UISearchBar { return sb }
+        for child in view.subviews {
+            if let found = findSearchBar(in: child) { return found }
+        }
+        return nil
+    }
+
+    private static func findSearchTextField(in view: UIView) -> UISearchTextField? {
+        if let tf = view as? UISearchTextField { return tf }
+        for child in view.subviews {
+            if let found = findSearchTextField(in: child) { return found }
+        }
+        return nil
+    }
+
+    final class Coordinator: NSObject {
+        var onTap: () -> Void
+        init(onTap: @escaping () -> Void) { self.onTap = onTap }
+        @objc func tapped() { onTap() }
+    }
 }

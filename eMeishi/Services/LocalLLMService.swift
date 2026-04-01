@@ -31,9 +31,9 @@ class LocalLLMService: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var isInferencing:    Bool = false
 
-    private var prefillModel: MLModel? = nil
-    private var decodeModel:  MLModel? = nil
-    private var tokenizer:    Qwen25Tokenizer? = nil
+    private(set) var prefillModel: MLModel? = nil
+    private(set) var decodeModel:  MLModel? = nil
+    private(set) var tokenizer:    Qwen25Tokenizer? = nil
 
     // MARK: - ファイルパス
 
@@ -127,6 +127,23 @@ class LocalLLMService: ObservableObject {
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
         }
+    }
+
+    // MARK: - モデルロード（公開ヘルパー）
+
+    /// モデルをロードし、利用可能なら (prefillModel, tokenizer) を返す。
+    /// 利用不可の場合は nil を返す。
+    func ensureModelLoaded() -> (prefill: MLModel, tokenizer: Qwen25Tokenizer)? {
+        if prefillModel == nil || tokenizer == nil {
+            isModelAvailable = checkModelFiles()
+            do {
+                try loadModelIfNeeded()
+            } catch {
+                print("[LocalLLM] モデルロードエラー: \(error)")
+            }
+        }
+        guard let pModel = prefillModel, let tok = tokenizer else { return nil }
+        return (pModel, tok)
     }
 
     // MARK: - 推論（公開API）
@@ -295,7 +312,7 @@ class LocalLLMService: ObservableObject {
     /// Prefill モデルの forward pass（プロンプト全体を一括処理）
     /// 入力: inputIds [1, seqLen] + causalMask [1, 1, seqLen, 1024]
     /// 出力: logits [1, 1, 151936]
-    private func forwardPrefill(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
+    func forwardPrefill(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
         let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
         // NSNumber 変換を回避して直接ポインタ書き込み
         let ptr = inputArray.dataPointer.assumingMemoryBound(to: Int32.self)
@@ -372,13 +389,13 @@ class LocalLLMService: ObservableObject {
         return mask
     }
 
-    private enum InferenceError: Error { case noLogits, timeout }
+    enum InferenceError: Error { case noLogits, timeout }
 
     // MARK: - Argmax・float16変換
 
     /// ロジット配列の最後のトークン位置で argmax を取り、最大値のインデックスを返す
     /// Prefill: [1, 1, 151936]、Decode: スカラーまたは [vocab] 等の可変形状に対応
-    private func argmaxLastToken(logits: MLMultiArray) -> Int? {
+    func argmaxLastToken(logits: MLMultiArray) -> Int? {
         let shape   = logits.shape.map { $0.intValue }
         let strides = logits.strides.map { $0.intValue }
 

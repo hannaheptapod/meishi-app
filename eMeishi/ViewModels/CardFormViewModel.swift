@@ -23,6 +23,8 @@ class CardFormViewModel: ObservableObject {
     @Published var website: String = ""
     @Published var notes: String = ""
     @Published var selectedTags: Set<UUID> = []
+    @Published var suggestedTagIDs: Set<UUID> = []
+    @Published var isLoadingTagSuggestions: Bool = false
 
     // OCR処理中フラグ・エラーメッセージ
     @Published var isProcessingOCR: Bool = false
@@ -134,14 +136,63 @@ class CardFormViewModel: ObservableObject {
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
                 await populateWithLocalLLMOnly(lines: lines)
-            case .classifier:
-                populateWithClassifier(lines: lines)
             }
         } catch {
             ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
         }
 
         isProcessingOCR = false
+
+        // OCR完了後にAIタグ提案を非同期で実行
+        requestTagSuggestions()
+    }
+
+    // MARK: - AIタグ提案
+
+    /// OCR完了後に既存タグから該当するものをAIで提案する
+    func requestTagSuggestions() {
+        // 既にタグが選択されている場合（編集時）はスキップ
+        guard !isEditing, selectedTags.isEmpty else { return }
+
+        let cardInfo = AutoTagService.CardInfo(
+            company: company,
+            department: department,
+            title: title,
+            address: address,
+            email: email,
+            website: website
+        )
+        // 空の場合はスキップ
+        guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty else { return }
+
+        isLoadingTagSuggestions = true
+        Task { @MainActor in
+            defer { isLoadingTagSuggestions = false }
+
+            let tags = fetchAllTags()
+            guard !tags.isEmpty else { return }
+
+            let suggested = await AutoTagService.shared.suggestTags(cardInfo: cardInfo, tags: tags)
+            suggestedTagIDs = Set(suggested)
+        }
+    }
+
+    /// タグ一覧を取得（CardListViewModelに依存しないよう独自フェッチ）
+    private func fetchAllTags() -> [Tag] {
+        let request = Tag.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \Tag.sortOrder, ascending: true)]
+        return (try? context.fetch(request)) ?? []
+    }
+
+    /// AI提案タグを適用する
+    func acceptTagSuggestion(_ tagID: UUID) {
+        selectedTags.insert(tagID)
+        suggestedTagIDs.remove(tagID)
+    }
+
+    /// AI提案タグを却下する
+    func dismissTagSuggestion(_ tagID: UUID) {
+        suggestedTagIDs.remove(tagID)
     }
 
     // MARK: - 統一パイプライン

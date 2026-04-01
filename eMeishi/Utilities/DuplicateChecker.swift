@@ -1,4 +1,5 @@
 import Foundation
+import CoreML
 
 // 名前・会社名の類似度判定により重複候補を検出するユーティリティ
 struct DuplicateChecker {
@@ -57,6 +58,80 @@ struct DuplicateChecker {
         return DuplicatePair(cardA: a, cardB: b, score: score)
     }
 
+    // MARK: - AI重複検証
+
+    /// ボーダーライン候補（閾値未満だがスコア0.5以上）をAIで二次判定する
+    /// 会社名形式差異（「株式会社ABC」vs「ABC」）や転職ケースを捕捉
+    func findDuplicatesWithAI(in cards: [BusinessCard]) async -> [DuplicatePair] {
+        var pairs = findDuplicates(in: cards)
+
+        // ボーダーライン候補を収集（閾値の-0.25〜閾値未満）
+        let lowerBound = max(0.3, threshold - 0.25)
+        var borderlinePairs: [DuplicatePair] = []
+        for i in 0 ..< cards.count {
+            for j in (i + 1) ..< cards.count {
+                let a = cards[i]
+                let b = cards[j]
+                let nameSim = similarity(a.fullName, b.fullName)
+                let companyA = LegalEntityTerms.stripKanji(from: a.company ?? "")
+                let companyB = LegalEntityTerms.stripKanji(from: b.company ?? "")
+                let companySim = similarity(companyA, companyB)
+                let score = nameSim * 0.7 + companySim * 0.3
+                // 閾値未満だがボーダーライン
+                if score >= lowerBound && score < threshold {
+                    borderlinePairs.append(DuplicatePair(cardA: a, cardB: b, score: score))
+                }
+            }
+        }
+
+        guard !borderlinePairs.isEmpty else { return pairs }
+
+        let llm = LocalLLMService.shared
+        guard let models = llm.ensureModelLoaded() else { return pairs }
+
+        // 最大10ペアまでAI検証（レイテンシ対策）
+        for pair in borderlinePairs.prefix(10) {
+            let isMatch = verifyDuplicateWithAI(
+                card1: pair.cardA,
+                card2: pair.cardB,
+                prefill: models.prefill,
+                tokenizer: models.tokenizer
+            )
+            if isMatch {
+                var aiPair = pair
+                aiPair.isAIDetected = true
+                pairs.append(aiPair)
+            }
+        }
+
+        return pairs.sorted { $0.score > $1.score }
+    }
+
+    /// 1ペアをAIで同一人物判定
+    private func verifyDuplicateWithAI(card1: BusinessCard, card2: BusinessCard,
+                                       prefill: MLModel, tokenizer: Qwen25Tokenizer) -> Bool {
+        let summary1 = cardSummary(card1)
+        let summary2 = cardSummary(card2)
+        let prompt = "<|im_start|>system\nAre these two business cards the same person? Reply yes or no.<|im_end|>\n<|im_start|>user\nCard1: \(summary1)\nCard2: \(summary2)\nSame person?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
+
+        let ids = tokenizer.encode(prompt)
+        do {
+            let logits = try LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
+            guard let tokenId = LocalLLMService.shared.argmaxLastToken(logits: logits) else { return false }
+            let decoded = tokenizer.decode([tokenId]).lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return decoded.hasPrefix("y") || decoded.hasPrefix("はい") || decoded.hasPrefix("yes")
+        } catch {
+            return false
+        }
+    }
+
+    private func cardSummary(_ card: BusinessCard) -> String {
+        [card.fullName, card.company ?? "", card.title ?? "", card.department ?? ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     // MARK: - 文字列類似度（正規化 Levenshtein）
 
     /// 0.0（完全不一致）〜 1.0（完全一致）を返す
@@ -109,6 +184,8 @@ struct DuplicatePair: Identifiable {
     let cardB: BusinessCard
     /// 類似スコア（0.0〜1.0）
     let score: Double
+    /// AI検証で検出されたペアかどうか
+    var isAIDetected: Bool = false
 
     /// スコアをパーセント文字列で返す
     var scoreText: String {
