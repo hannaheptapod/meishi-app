@@ -246,50 +246,10 @@ struct CardListView: View {
             .accessibilityIdentifier("ellipsisMenu")
         }
 
-        // 左: 並び替え・フィルタ統合メニュー
-        ToolbarItem(placement: .bottomBar) {
-            Menu {
-                // ── フィルタ ──
-                Section("フィルタ") {
-                    Button { viewModel.toggleFavoritesFilter() } label: {
-                        Label("お気に入りのみ", systemImage: viewModel.showFavoritesOnly ? "checkmark.circle.fill" : "circle")
-                    }
-                    .menuActionDismissBehavior(.disabled)
-                    if !viewModel.allTags.isEmpty {
-                        ForEach(viewModel.allTags) { tag in
-                            Button { viewModel.toggleTagFilter(tag) } label: {
-                                Label(tag.tagName, systemImage: viewModel.selectedTagIDs.contains(tag.id ?? UUID()) ? "checkmark.circle.fill" : "circle")
-                            }
-                            .menuActionDismissBehavior(.disabled)
-                        }
-                    }
-                }
-
-                // ── 並び替え ──
-                Section("並び替え") {
-                    ForEach(CardSortKey.allCases) { key in
-                        Button { viewModel.toggleSort(key: key) } label: {
-                            if viewModel.sortKey == key {
-                                Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                            } else {
-                                Text(key.rawValue)
-                            }
-                        }
-                        .menuActionDismissBehavior(.disabled)
-                    }
-                }
-            } label: {
-                Label(
-                    "並び替え・フィルタ",
-                    systemImage: "line.3.horizontal.decrease"
-                )
-                .symbolVariant(viewModel.isFilterActive ? .fill : .none)
-            }
-        }
-
-        // 中央: 検索バー（システム提供・Liquid Glass自動適用）
-        ToolbarSpacer(.flexible, placement: .bottomBar)
+        // 左: 検索バー（システム提供・Liquid Glass自動適用）
         DefaultToolbarItem(kind: .search, placement: .bottomBar)
+
+        // 中央: スペーサー
         ToolbarSpacer(.flexible, placement: .bottomBar)
 
         // 右: 追加ボタン
@@ -421,6 +381,11 @@ struct CardListView: View {
             .listStyle(.plain)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
+            .safeAreaInset(edge: .top) {
+                if editMode == .inactive {
+                    filterSortBar
+                }
+            }
             .overlay(alignment: .trailing) {
                 if showIndex {
                     SectionIndexView(
@@ -430,6 +395,90 @@ struct CardListView: View {
                     .padding(.trailing, 0)
                 }
             }
+        }
+    }
+
+    // MARK: - フィルター・ソート統合バー
+
+    private var filterSortBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                // ── 並び替え ──
+                Menu {
+                    ForEach(CardSortKey.allCases) { key in
+                        Button { viewModel.toggleSort(key: key) } label: {
+                            if viewModel.sortKey == key {
+                                Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                            } else {
+                                Text(key.rawValue)
+                            }
+                        }
+                        .menuActionDismissBehavior(.disabled)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                            .font(.footnote)
+                        Text(viewModel.sortKey.rawValue)
+                            .font(.footnote)
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .background(Color(.secondarySystemFill))
+                    .clipShape(Capsule())
+                }
+
+                // ── 区切り + フィルタアイコン ──
+                HStack(spacing: 6) {
+                    Divider()
+                        .frame(height: 20)
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("絞り込み")
+                }
+
+                // ── お気に入りフィルタ ──
+                Button { viewModel.toggleFavoritesFilter() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                        Text("お気に入り")
+                            .font(.footnote)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .background(viewModel.showFavoritesOnly ? Color.yellow.opacity(0.2) : Color(.secondarySystemFill))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("お気に入りフィルタ")
+                .accessibilityAddTraits(viewModel.showFavoritesOnly ? .isSelected : [])
+
+                // ── タグフィルタ ──
+                ForEach(viewModel.allTags) { tag in
+                    let isSelected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
+                    Button { viewModel.toggleTagFilter(tag) } label: {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(tag.color)
+                                .frame(width: 8, height: 8)
+                            Text(tag.tagName)
+                                .font(.footnote)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 32)
+                        .background(isSelected ? tag.color.opacity(0.2) : Color(.secondarySystemFill))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("タグフィルタ: \(tag.tagName)")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
         }
     }
 
