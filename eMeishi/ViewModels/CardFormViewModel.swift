@@ -460,14 +460,14 @@ class CardFormViewModel: ObservableObject {
 @available(iOS 26.0, *)
 @Generable
 struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）。不明な場合は空文字列")          var lastName: String
-    @Guide(description: "名（ファーストネーム）。不明な場合は空文字列")          var firstName: String
-    @Guide(description: "会社名。不明な場合は空文字列")                          var company: String
-    @Guide(description: "部署名。不明な場合は空文字列")                          var department: String
-    @Guide(description: "役職。不明な場合は空文字列")                            var title: String
-    @Guide(description: "電話番号。不明な場合は空文字列")                        var phone: String
-    @Guide(description: "メールアドレス。不明な場合は空文字列")                  var email: String
-    @Guide(description: "住所。不明な場合は空文字列")                            var address: String
-    @Guide(description: "WebサイトURL。不明な場合は空文字列")                   var website: String
+    @Guide(description: "姓（ファミリーネーム）。該当なしなら空文字列「」を返す")      var lastName: String
+    @Guide(description: "名（ファーストネーム）。該当なしなら空文字列「」を返す")      var firstName: String
+    @Guide(description: "会社名。該当なしなら空文字列「」を返す")                      var company: String
+    @Guide(description: "部署名。該当なしなら空文字列「」を返す")                      var department: String
+    @Guide(description: "役職。該当なしなら空文字列「」を返す")                        var title: String
+    @Guide(description: "電話番号。該当なしなら空文字列「」を返す")                    var phone: String
+    @Guide(description: "メールアドレス。該当なしなら空文字列「」を返す")              var email: String
+    @Guide(description: "住所。該当なしなら空文字列「」を返す")                        var address: String
+    @Guide(description: "WebサイトURL。該当なしなら空文字列「」を返す")               var website: String
 }
 #endif
