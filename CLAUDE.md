@@ -58,6 +58,7 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。モデルフ�
 | エクスポート | CSV・vCard（.vcf） |
 | モデル配布 | CloudKit Public Database（CloudKitModelService・CKAsset / weight.bin チャンク分割）+ Documents/LocalLLM/ ローカル配置（開発用） |
 | 生体認証 | LocalAuthentication（LAContext・Face ID / Touch ID） |
+| iCloud 同期 | NSPersistentCloudKitContainer（CloudKit Private Database・設定でON/OFF切替） |
 | 設定永続化 | UserDefaults（SettingsStore） |
 
 ---
@@ -209,6 +210,7 @@ meishi-app/
 - フィルタ時カウント表示：フィルタや検索適用中にナビゲーションタイトルに件数表示
 - UIテスト：`-UITestMode` 起動引数でインメモリ＋サンプルデータを使用。コンテキストメニュー・選択モード・検索・ナビゲーション等のUIテストを網羅的に実装
 - セキュリティ：Face ID / Touch ID によるアプリロック（パスコードフォールバック付き）。ロック有効/無効の切替時にも認証要求。猶予時間設定（即時/15秒/1分/5分）。App Switcher でのコンテンツ隠蔽（PrivacyOverlay）。CoreData ストアに NSFileProtectionComplete を適用（デバイスロック時にデータベース暗号化）
+- iCloud 同期：NSPersistentCloudKitContainer による CloudKit Private Database 同期。設定画面でON/OFF切替（デフォルトOFF）。変更後はアプリ再起動で反映。同一 Apple ID のデバイス間で名刺・タグデータを自動同期。オフライン時はローカルのみで動作し、オンライン復帰時に自動同期。競合解決は NSMergeByPropertyObjectTrumpMergePolicy（最後の書き込みが勝つ）
 
 ---
 
@@ -235,6 +237,7 @@ meishi-app/
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
 - `UIFileSharingEnabled`：Documents ディレクトリへの Finder/iTunes ファイル共有を有効化（開発用モデル配置）
 - `LSSupportsOpeningDocumentsInPlace`：ドキュメントの直接アクセスを有効化
+- CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 
 ---
 

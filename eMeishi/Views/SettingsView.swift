@@ -22,6 +22,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                iCloudSection
                 readingSection
                 duplicateCheckSection
                 exportSection
@@ -66,6 +67,34 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - iCloud 同期
+
+    @State private var showRestartAlert = false
+
+    private var iCloudSection: some View {
+        Section {
+            Toggle(isOn: $settings.iCloudSyncEnabled) {
+                Label("iCloud同期", systemImage: "icloud")
+            }
+            .onChange(of: settings.iCloudSyncEnabled) { _ in
+                showRestartAlert = true
+            }
+        } header: {
+            Text("iCloud")
+        } footer: {
+            if settings.iCloudSyncEnabled {
+                Text("名刺データが同じApple IDのデバイス間で自動的に同期されます。データはあなたのiCloudアカウントにのみ保存され、開発者がアクセスすることはできません。設定の変更はアプリ再起動後に反映されます。")
+            } else {
+                Text("有効にすると、名刺データがあなたのiCloudに保存され、同じApple IDのデバイス間で同期されます。データは開発者を含む第三者からアクセスできません。")
+            }
+        }
+        .alert("アプリの再起動が必要です", isPresented: $showRestartAlert) {
+            Button("OK") {}
+        } message: {
+            Text("iCloud同期の設定変更はアプリを再起動すると反映されます。")
         }
     }
 
