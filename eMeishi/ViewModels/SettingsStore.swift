@@ -73,6 +73,13 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(vCardVersion, forKey: Keys.vCardVersion) }
     }
 
+    // MARK: - iCloud 同期設定
+
+    /// iCloud 同期の有効/無効（変更後はアプリの再起動が必要）
+    @Published var iCloudSyncEnabled: Bool {
+        didSet { UserDefaults.standard.set(iCloudSyncEnabled, forKey: Keys.iCloudSyncEnabled) }
+    }
+
     // MARK: - セキュリティ設定
 
     /// アプリロック（Face ID / Touch ID）の有効/無効
@@ -97,6 +104,7 @@ class SettingsStore: ObservableObject {
             Keys.vCardVersion:            "3.0",
             Keys.sortKey:                 CardSortKey.createdAt.rawValue,
             Keys.sortAscending:           false,
+            Keys.iCloudSyncEnabled:       false,
             Keys.isAppLockEnabled:        false,
             Keys.lockGracePeriodSeconds:  0
         ])
@@ -109,6 +117,7 @@ class SettingsStore: ObservableObject {
         let sortKeyRaw = ud.string(forKey: Keys.sortKey) ?? CardSortKey.createdAt.rawValue
         sortKey        = CardSortKey(rawValue: sortKeyRaw)?.rawValue ?? CardSortKey.createdAt.rawValue
         sortAscending  = ud.bool(forKey: Keys.sortAscending)
+        iCloudSyncEnabled      = ud.bool(forKey: Keys.iCloudSyncEnabled)
         isAppLockEnabled       = ud.bool(forKey: Keys.isAppLockEnabled)
         lockGracePeriodSeconds = ud.integer(forKey: Keys.lockGracePeriodSeconds)
     }
@@ -122,6 +131,7 @@ class SettingsStore: ObservableObject {
         static let vCardVersion            = "vCardVersion"
         static let sortKey                 = "sortKey"
         static let sortAscending           = "sortAscending"
+        static let iCloudSyncEnabled       = "iCloudSyncEnabled"
         static let isAppLockEnabled        = "isAppLockEnabled"
         static let lockGracePeriodSeconds  = "lockGracePeriodSeconds"
     }

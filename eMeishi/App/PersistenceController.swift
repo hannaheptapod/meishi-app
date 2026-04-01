@@ -1,6 +1,7 @@
 import CoreData
+import CloudKit
 
-// CoreData スタックの管理
+// CoreData スタックの管理（iCloud 同期対応）
 struct PersistenceController {
 
     // アプリ全体で共有するシングルトン
@@ -52,8 +53,20 @@ struct PersistenceController {
 
     let container: NSPersistentContainer
 
+    /// iCloud 同期が有効かどうか
+    let iCloudSyncEnabled: Bool
+
     init(inMemory: Bool = false) {
-        container = NSPersistentContainer(name: "BusinessCard")
+        let syncEnabled = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        self.iCloudSyncEnabled = syncEnabled
+
+        // iCloud 同期が有効なら NSPersistentCloudKitContainer を使用
+        if syncEnabled {
+            container = NSPersistentCloudKitContainer(name: "BusinessCard")
+        } else {
+            container = NSPersistentContainer(name: "BusinessCard")
+        }
+
         if inMemory {
             // テスト・プレビュー用：ディスクに書き込まない
             container.persistentStoreDescriptions.first?.url = URL(fileURLWithPath: "/dev/null")
@@ -69,6 +82,19 @@ struct PersistenceController {
                 description.setOption(FileProtectionType.complete as NSObject,
                                       forKey: NSPersistentStoreFileProtectionKey)
             }
+
+            // iCloud 同期の CloudKit コンテナ設定
+            if syncEnabled {
+                description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+                    containerIdentifier: "iCloud.com.jinks.eMeishi"
+                )
+                // リモート変更通知を有効化
+                description.setOption(true as NSNumber,
+                                      forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+            } else {
+                // 明示的に CloudKit を無効化
+                description.cloudKitContainerOptions = nil
+            }
         }
         container.loadPersistentStores { _, error in
             if let error = error as NSError? {
@@ -77,6 +103,8 @@ struct PersistenceController {
         }
         // 別スレッドからの変更を自動マージ
         container.viewContext.automaticallyMergesChangesFromParent = true
+        // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）
+        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
 
         // 既存データの companyReading から法人格を除去（一度だけ実行）
         if !inMemory {
