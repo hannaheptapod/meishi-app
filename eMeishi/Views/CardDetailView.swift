@@ -72,12 +72,13 @@ struct CardDetailView: View {
                                 Link(phone, destination: url)
                                     .tint(.blue)
                             } icon: {
-                                Image(systemName: "phone.fill")
-                                    .foregroundStyle(.green)
+                                Image(systemName: "phone")
+                                    .foregroundStyle(.secondary)
                             }
                             .accessibilityHint("タップして電話をかける")
                         } else {
-                            Label(phone, systemImage: "phone.fill")
+                            Label(phone, systemImage: "phone")
+                                .foregroundStyle(.primary, .secondary)
                         }
                     }
                     if let email = card.email, !email.isEmpty {
@@ -86,12 +87,13 @@ struct CardDetailView: View {
                                 Link(email, destination: url)
                                     .tint(.blue)
                             } icon: {
-                                Image(systemName: "envelope.fill")
-                                    .foregroundStyle(.blue)
+                                Image(systemName: "envelope")
+                                    .foregroundStyle(.secondary)
                             }
                             .accessibilityHint("タップしてメールを送る")
                         } else {
-                            Label(email, systemImage: "envelope.fill")
+                            Label(email, systemImage: "envelope")
+                                .foregroundStyle(.primary, .secondary)
                         }
                     }
                 }
@@ -104,8 +106,12 @@ struct CardDetailView: View {
             if hasAddress || hasWebsite || hasNotes {
                 Section("その他") {
                     if let address = card.address, !address.isEmpty {
-                        Label(address, systemImage: "map.fill")
-                            .foregroundStyle(.primary, .orange)
+                        Label {
+                            Text(address)
+                        } icon: {
+                            Image(systemName: "mappin.and.ellipse")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     if let website = card.website, !website.isEmpty {
                         if let url = URL(string: website) {
@@ -114,15 +120,17 @@ struct CardDetailView: View {
                                     .tint(.blue)
                             } icon: {
                                 Image(systemName: "globe")
-                                    .foregroundStyle(.indigo)
+                                    .foregroundStyle(.secondary)
                             }
                             .accessibilityHint("タップしてブラウザで開く")
                         } else {
                             Label(website, systemImage: "globe")
+                                .foregroundStyle(.primary, .secondary)
                         }
                     }
                     if let notes = card.notes, !notes.isEmpty {
                         Label(notes, systemImage: "note.text")
+                            .foregroundStyle(.primary, .secondary)
                     }
                 }
             }
