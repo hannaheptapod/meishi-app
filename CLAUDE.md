@@ -106,7 +106,8 @@ meishi-app/
 │   │   ├── CardListView.swift
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
-│   │   ├── CameraView.swift
+│   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
+│   │   ├── BatchReviewView.swift               # 連続撮影後の一括確認（CardFormViewを順番に表示）
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
@@ -194,6 +195,7 @@ meishi-app/
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
 - ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
 - カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
+- 連続撮影（バッチ撮影）：標準カメラUIで複数枚連続撮影し、撮影完了後にまとめて確認・保存。CameraBatchCapture（純UIKit・シングルトン）がカメラ表示を管理し、SwiftUIモーダルとの競合を回避。cameraOverlayViewで撮影枚数カウンター＋「完了」ボタンを標準UIに重ねる。BatchReviewViewでCardFormViewを順番に表示
 - Qwen3-0.6B CoreML Prefill/Decode 分割推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM**単一パス分類**（1行1回forward pass・自動回帰生成廃止）・Decodeモデル優先（mask不要）・Decode出力不正時Prefillフォールバック・`.cpuAndGPU`（ANE int32非互換回避）・10秒タイムアウト・BPEトークナイザー）
 - モデルファイル二重パス: Documents/LocalLLM/（開発用・Finder/iTunes で転送）→ Application Support/LocalLLM/（CloudKit ダウンロード）の優先順で検索
 - CloudKit Public Database 経由のモデル配布（Prefill/Decode 各モデル + 共有 weight チャンク分割・CKAsset・iCloudアカウント不要）
