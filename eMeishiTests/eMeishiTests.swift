@@ -1098,4 +1098,81 @@ struct DuplicateCheckerLegalEntityTests {
             #expect(r.firstNameReading == "こうへい")
         }
     }
+
+    // MARK: - カタカナ長音符ー保存テスト
+
+    @Test func generateReadingPreservesKatakanaLongVowelMark() {
+        // カタカナ会社名の ー がひらがなでも保存されること
+        #expect(NameReadingGenerator.generateReading(from: "アバナード") == "あばなーど")
+        #expect(NameReadingGenerator.generateReading(from: "グーグル") == "ぐーぐる")
+        #expect(NameReadingGenerator.generateReading(from: "ジョーンズ") == "じょーんず")
+        #expect(NameReadingGenerator.generateReading(from: "マイクロソフト") == "まいくろそふと")
+
+        // NameProcessor 側も同様
+        #expect(NameProcessor.generateReading(from: "アバナード") == "あばなーど")
+        #expect(NameProcessor.generateReading(from: "グーグル") == "ぐーぐる")
+    }
+
+    @Test func normalizeToHiraganaPreservesLongVowelMark() {
+        // OCRフリガナ行のカタカナ→ひらがな変換で ー が保存されること
+        #expect(NameProcessor.normalizeToHiragana("アバナード") == "あばなーど")
+        #expect(NameProcessor.normalizeToHiragana("ジョーンズ") == "じょーんず")
+        #expect(NameProcessor.normalizeToHiragana("タナカ タロー") == "たなか たろー")
+    }
+
+    @Test func generateReadingKanjiNamesUnaffected() {
+        // 漢字名の読み生成が影響を受けないこと（回帰テスト）
+        #expect(NameReadingGenerator.generateReading(from: "山田") == "やまだ")
+        #expect(NameReadingGenerator.generateReading(from: "佐藤") == "さとう")
+        #expect(NameProcessor.generateReading(from: "山田") == "やまだ")
+    }
+
+    // MARK: - メール推定改善テスト
+
+    @Test func readingsMatchToleratesDoubleVowel() {
+        // おう vs おお（ローマ字由来とトークナイザー由来の長音差異）
+        #expect(NameReadingGenerator.readingsMatch("おうた", "おおた"))
+        #expect(NameProcessor.readingsMatch("おうた", "おおた"))
+    }
+
+    @Test func inferReadingFromEmailOhtaPattern() {
+        // oh + 子音パターン: ohta → おうた vs CFStringTokenizer おおた
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "ohta.taro@example.com",
+            lastName: "太田",
+            firstName: "太郎"
+        )
+        #expect(result != nil)
+        if let r = result {
+            #expect(r.lastNameReading == "おおた")
+            #expect(r.firstNameReading == "たろう")
+        }
+    }
+
+    @Test func inferReadingFromEmailSingleSegmentLastName() {
+        // 1セグメントで姓のみのメールアドレス
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "yamada@example.com",
+            lastName: "山田",
+            firstName: "太郎"
+        )
+        #expect(result != nil)
+        if let r = result {
+            #expect(r.lastNameReading == "やまだ")
+        }
+    }
+
+    @Test func inferReadingFromEmailPartialMatch() {
+        // 片方のみ姓マッチ → もう一方をメール由来の名読みとして採用
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "hifumi.yamada@example.com",
+            lastName: "山田",
+            firstName: "一二三"
+        )
+        #expect(result != nil)
+        if let r = result {
+            #expect(r.lastNameReading == "やまだ")
+            #expect(r.firstNameReading == "ひふみ")
+        }
+    }
 }

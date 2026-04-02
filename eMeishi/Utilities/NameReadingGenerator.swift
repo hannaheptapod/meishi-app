@@ -10,9 +10,7 @@ enum NameReadingGenerator {
 
         // ひらがな・カタカナのみなら変換不要でそのまま返す（カタカナはひらがなへ）
         if trimmed.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) || $0.value == 0x20 || $0.value == 0x3000 }) {
-            let mutable = NSMutableString(string: trimmed)
-            CFStringTransform(mutable, nil, kCFStringTransformHiraganaKatakana, true)
-            return mutable as String
+            return katakanaToHiragana(trimmed)
         }
 
         // ASCII のみ（英語名など）はそのまま返す
@@ -28,21 +26,34 @@ enum NameReadingGenerator {
 
         var result = ""
         while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
-            if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
+            let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
+            guard let swiftRange = Range(nsRange, in: trimmed) else { continue }
+            let token = String(trimmed[swiftRange])
+
+            // カタカナトークンは直接変換（Latin転写だと ー が母音重複になるため）
+            if token.unicodeScalars.allSatisfy({ (0x30A0...0x30FF).contains($0.value) }) {
+                result += katakanaToHiragana(token)
+            } else if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
                 tokenizer, kCFStringTokenizerAttributeLatinTranscription
             ) as? String {
                 let mutable = NSMutableString(string: latin)
                 CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
                 result += mutable as String
             } else {
-                let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
-                let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
-                if let swiftRange = Range(nsRange, in: trimmed) {
-                    result += String(trimmed[swiftRange])
-                }
+                result += token
             }
         }
         return result
+    }
+
+    /// カタカナをひらがなに変換する（長音符 ー を保存する）
+    private static func katakanaToHiragana(_ text: String) -> String {
+        let placeholder: Character = "\u{FFFC}"
+        let preserved = String(text.map { $0 == "ー" ? placeholder : $0 })
+        let mutable = NSMutableString(string: preserved)
+        CFStringTransform(mutable, nil, kCFStringTransformHiraganaKatakana, true)
+        return String((mutable as String).map { $0 == placeholder ? "ー" : $0 })
     }
 
     /// メールアドレスのローカルパートから氏名の読み（ひらがな）を推定する
@@ -70,14 +81,17 @@ enum NameReadingGenerator {
         let refFirst = generateReading(from: firstName)
 
         if readings.count >= 2 {
+            // 両方マッチ（姓-名 順）
             if readingsMatch(readings[0], refLast) && readingsMatch(readings[1], refFirst) {
                 return (lastNameReading: preferReading(romaji: readings[0], reference: refLast),
                         firstNameReading: preferReading(romaji: readings[1], reference: refFirst))
             }
+            // 両方マッチ（名-姓 順）
             if readingsMatch(readings[0], refFirst) && readingsMatch(readings[1], refLast) {
                 return (lastNameReading: preferReading(romaji: readings[1], reference: refLast),
                         firstNameReading: preferReading(romaji: readings[0], reference: refFirst))
             }
+            // イニシャル + 姓
             if readings[0].count == 1 && readingsMatch(readings[1], refLast) {
                 return (lastNameReading: preferReading(romaji: readings[1], reference: refLast),
                         firstNameReading: refFirst)
@@ -85,6 +99,15 @@ enum NameReadingGenerator {
             if readings[1].count == 1 && readingsMatch(readings[0], refLast) {
                 return (lastNameReading: preferReading(romaji: readings[0], reference: refLast),
                         firstNameReading: refFirst)
+            }
+            // 片方のみ姓マッチ → もう一方をメール由来の名読みとして採用
+            if readingsMatch(readings[0], refLast) {
+                return (lastNameReading: preferReading(romaji: readings[0], reference: refLast),
+                        firstNameReading: readings[1])
+            }
+            if readingsMatch(readings[1], refLast) {
+                return (lastNameReading: preferReading(romaji: readings[1], reference: refLast),
+                        firstNameReading: readings[0])
             }
         } else if readings.count == 1 {
             let single = readings[0]
@@ -101,6 +124,11 @@ enum NameReadingGenerator {
                     return (lastNameReading: preferReading(romaji: remainder, reference: refLast),
                             firstNameReading: refFirst)
                 }
+            }
+            // 1セグメントで姓にマッチ → 姓読みのみ返す（名はCFStringTokenizerにフォールバック）
+            if readingsMatch(single, refLast) {
+                return (lastNameReading: preferReading(romaji: single, reference: refLast),
+                        firstNameReading: refFirst)
             }
         }
 
@@ -181,12 +209,15 @@ enum NameReadingGenerator {
             "え","け","せ","て","ね","へ","め","れ",
             "げ","ぜ","で","べ","ぺ","ぇ"
         ]
+        let vowels: Set<Character> = ["あ","い","う","え","お"]
         let chars = Array(reading)
         var result: [Character] = []
         for (i, ch) in chars.enumerated() {
             if i > 0 {
                 if ch == "う" && oColumnKana.contains(chars[i - 1]) { continue }
                 if ch == "い" && eColumnKana.contains(chars[i - 1]) { continue }
+                // 二重母音の縮約（おお→お 等）: ローマ字由来 おう と トークナイザー由来 おお の一致判定用
+                if vowels.contains(ch) && ch == chars[i - 1] { continue }
             }
             result.append(ch)
         }

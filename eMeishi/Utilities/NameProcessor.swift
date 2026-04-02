@@ -203,11 +203,13 @@ enum NameProcessor {
 
     // MARK: - フリガナ判定
 
-    /// カタカナをひらがなに正規化する
+    /// カタカナをひらがなに正規化する（長音符 ー を保存する）
     static func normalizeToHiragana(_ text: String) -> String {
-        let mutable = NSMutableString(string: text)
+        let placeholder: Character = "\u{FFFC}"
+        let preserved = String(text.map { $0 == "ー" ? placeholder : $0 })
+        let mutable = NSMutableString(string: preserved)
         CFStringTransform(mutable, nil, kCFStringTransformHiraganaKatakana, true)
-        return mutable as String
+        return String((mutable as String).map { $0 == placeholder ? "ー" : $0 })
     }
 
     /// フリガナ行の判定：ひらがな・カタカナ（全角/半角）のみで構成される短い行
@@ -342,6 +344,11 @@ enum NameProcessor {
         guard !trimmed.isEmpty else { return "" }
         if trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) { return trimmed }
 
+        // ひらがな・カタカナのみなら直接変換（ー 保存付き）
+        if trimmed.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) || $0.value == 0x20 || $0.value == 0x3000 }) {
+            return normalizeToHiragana(trimmed)
+        }
+
         let cfText   = trimmed as CFString
         let cfLocale = Locale(identifier: "ja_JP") as CFLocale
         guard let tokenizer = CFStringTokenizerCreate(
@@ -352,18 +359,22 @@ enum NameProcessor {
 
         var result = ""
         while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
-            if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
+            let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
+            guard let swiftRange = Range(nsRange, in: trimmed) else { continue }
+            let token = String(trimmed[swiftRange])
+
+            // カタカナトークンは直接変換（Latin転写だと ー が母音重複になるため）
+            if token.unicodeScalars.allSatisfy({ (0x30A0...0x30FF).contains($0.value) }) {
+                result += normalizeToHiragana(token)
+            } else if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
                 tokenizer, kCFStringTokenizerAttributeLatinTranscription
             ) as? String {
                 let mutable = NSMutableString(string: latin)
                 CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
                 result += mutable as String
             } else {
-                let cfRange = CFStringTokenizerGetCurrentTokenRange(tokenizer)
-                let nsRange = NSRange(location: cfRange.location, length: cfRange.length)
-                if let swiftRange = Range(nsRange, in: trimmed) {
-                    result += String(trimmed[swiftRange])
-                }
+                result += token
             }
         }
         return result
@@ -405,12 +416,15 @@ enum NameProcessor {
             "え","け","せ","て","ね","へ","め","れ",
             "げ","ぜ","で","べ","ぺ","ぇ"
         ]
+        let vowels: Set<Character> = ["あ","い","う","え","お"]
         let chars = Array(reading)
         var result: [Character] = []
         for (i, ch) in chars.enumerated() {
             if i > 0 {
                 if ch == "う" && oColumnKana.contains(chars[i - 1]) { continue }
                 if ch == "い" && eColumnKana.contains(chars[i - 1]) { continue }
+                // 二重母音の縮約（おお→お 等）: ローマ字由来 おう と トークナイザー由来 おお の一致判定用
+                if vowels.contains(ch) && ch == chars[i - 1] { continue }
             }
             result.append(ch)
         }
