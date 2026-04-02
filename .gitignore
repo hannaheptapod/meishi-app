@@ -33,6 +33,7 @@ playground.xcworkspace
 # .swiftpm
 
 .build/
+build/
 
 # CocoaPods
 #
@@ -75,5 +76,3 @@ opencode.json
 .claude/app-store-review-agent/
 .claude/asc-skills/
 
-# Backend secrets
-backend/.dev.vars
