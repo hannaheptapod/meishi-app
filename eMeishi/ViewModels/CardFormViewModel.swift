@@ -44,6 +44,11 @@ class CardFormViewModel: ObservableObject {
     private var card: BusinessCard?
     private let ocrService = OCRService()
     private let classifier = CardFieldClassifier()
+    private var ocrTask: Task<Void, Never>?
+
+    deinit {
+        ocrTask?.cancel()
+    }
 
     // MARK: - 初期化（新規作成）
 
@@ -60,12 +65,27 @@ class CardFormViewModel: ObservableObject {
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
         // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
         self.isProcessingOCR = true
-        Task { @MainActor in
+        ocrTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
             // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
             let cardImage = await ocrService.detectAndCropCard(from: image)
+            guard !Task.isCancelled else { return }
             // 補正済み画像で保存データを上書き
             self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
             await populateFromOCR(image: cardImage)
+        }
+    }
+
+    // MARK: - 初期化（切り抜き済み画像からOCR・矩形検出スキップ）
+
+    init(croppedImage: UIImage,
+         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
+        self.context = context
+        self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
+        self.isProcessingOCR = true
+        ocrTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            await populateFromOCR(image: croppedImage)
         }
     }
 
