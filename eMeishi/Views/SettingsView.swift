@@ -64,7 +64,7 @@ struct SettingsView: View {
             Toggle(isOn: $settings.iCloudSyncEnabled) {
                 Label("iCloud同期", systemImage: "icloud")
             }
-            .onChange(of: settings.iCloudSyncEnabled) { _ in
+            .onChange(of: settings.iCloudSyncEnabled) {
                 showRestartAlert = true
             }
         } header: {

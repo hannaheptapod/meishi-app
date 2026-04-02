@@ -130,7 +130,15 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
     // MARK: - オーバーレイ構築
 
     private func buildOverlay() -> UIView {
-        let screen = UIScreen.main.bounds
+        // iOS 26.0+ では UIScreen.main が非推奨のため、windowScene 経由で取得
+        let screen: CGRect
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first {
+            screen = windowScene.screen.bounds
+        } else {
+            // フォールバック: 通常は起こらないが、万が一のためデフォルト値
+            screen = CGRect(x: 0, y: 0, width: 390, height: 844)
+        }
         let overlay = PassthroughView(frame: screen)
         overlay.backgroundColor = .clear
 
