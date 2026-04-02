@@ -6,8 +6,8 @@ struct CardListView: View {
 
     @StateObject private var viewModel = CardListViewModel()
     @State private var isShowingForm = false
-    @State private var isShowingCamera = false
-    @State private var capturedImage: UIImage? = nil
+    @State private var batchImages: [UIImage] = []
+    @State private var isReviewingBatch = false
     @State private var isShowingSettings = false
     @State private var isShowingImportConfirm = false
     @State private var isShowingTagManager = false
@@ -74,12 +74,15 @@ struct CardListView: View {
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
             }
-            .fullScreenCover(isPresented: $isShowingCamera) {
-                CameraView(capturedImage: $capturedImage)
-                    .ignoresSafeArea()
-            }
-            .sheet(item: $capturedImage, onDismiss: viewModel.fetchCards) { image in
-                CardFormView(image: image, onSave: { capturedImage = nil })
+            // カメラは CameraBatchCapture（UIKit直接管理）で表示。fullScreenCover 不使用。
+            .sheet(isPresented: $isReviewingBatch, onDismiss: {
+                batchImages = []
+                viewModel.fetchCards()
+            }) {
+                BatchReviewView(images: $batchImages, onComplete: {
+                    isReviewingBatch = false
+                })
+                .environmentObject(viewModel)
             }
             .sheet(item: $viewModel.exportItem) { item in
                 ShareSheet(activityItems: [item.url])
@@ -255,7 +258,15 @@ struct CardListView: View {
         // 右: 追加ボタン
         ToolbarItem(placement: .bottomBar) {
             Button {
-                isShowingCamera = true
+                CameraBatchCapture.shared.start { images in
+                    batchImages = images
+                    if !images.isEmpty {
+                        // batchImages の更新を SwiftUI に反映させてから sheet を表示する
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isReviewingBatch = true
+                        }
+                    }
+                }
             } label: {
                 Label("追加", systemImage: "plus")
             }
@@ -606,10 +617,6 @@ struct CardListView: View {
 
 // CardRowView, SectionIndexView は Views/Components/ に定義
 // ShareSheet, ExportItem は Utilities/ に定義
-
-extension UIImage: @retroactive Identifiable {
-    public var id: ObjectIdentifier { ObjectIdentifier(self) }
-}
 
 // MARK: - 検索バー内 sparkles ボタン
 
