@@ -1,6 +1,7 @@
 import Foundation
 import CoreData
 import CoreML
+import os
 
 #if canImport(FoundationModels)
 import FoundationModels
@@ -46,10 +47,10 @@ class AISearchService {
         conversationHistory: [ChatMessage]
     ) async -> ChatMessage {
         let method = SettingsStore.shared.readingMethod
-        print("[AISearchService] 検索開始: query=「\(query)」 method=\(method.rawValue) cards=\(cards.count)件")
+        AppLogger.search.info("検索開始: query=\(query, privacy: .private) method=\(method.rawValue, privacy: .public) cards=\(cards.count, privacy: .public)件")
 
         let queryType = classifyQuery(query)
-        print("[AISearchService] クエリ種別: \(queryType)")
+        AppLogger.search.info("クエリ種別: \(String(describing: queryType), privacy: .public)")
 
         // フィールド特定可能な検索はルールベースで処理（LLM不要）
         switch queryType {
@@ -68,9 +69,9 @@ class AISearchService {
         case .appleIntelligence:
             #if canImport(FoundationModels)
             if #available(iOS 26.0, *) {
-                print("[AISearchService] Apple Intelligence で概念検索")
+                AppLogger.search.info("Apple Intelligence で概念検索")
                 if let result = await searchWithFoundationModels(query: query, cards: cards) {
-                    print("[AISearchService] 完了: \(result.matchedCardIDs.count)件マッチ")
+                    AppLogger.search.info("完了: \(result.matchedCardIDs.count, privacy: .public)件マッチ")
                     return result
                 }
             }
@@ -78,9 +79,9 @@ class AISearchService {
             return noModelAvailableMessage(query: query)
 
         case .localLLM:
-            print("[AISearchService] Qwen で概念検索")
+            AppLogger.search.info("Qwen で概念検索")
             if let result = await searchWithQwen(query: query, cards: cards) {
-                print("[AISearchService] 完了: \(result.matchedCardIDs.count)件マッチ")
+                AppLogger.search.info("完了: \(result.matchedCardIDs.count, privacy: .public)件マッチ")
                 return result
             }
             return noModelAvailableMessage(query: query)
@@ -89,9 +90,9 @@ class AISearchService {
             #if canImport(FoundationModels)
             if #available(iOS 26.0, *) {
                 if case .available = SystemLanguageModel.default.availability {
-                    print("[AISearchService] Foundation Models で概念検索")
+                    AppLogger.search.info("Foundation Models で概念検索")
                     if let result = await searchWithFoundationModels(query: query, cards: cards) {
-                        print("[AISearchService] 完了: \(result.matchedCardIDs.count)件マッチ")
+                        AppLogger.search.info("完了: \(result.matchedCardIDs.count, privacy: .public)件マッチ")
                         return result
                     }
                     return errorMessage(query: query, engine: "Apple Intelligence")
@@ -99,9 +100,9 @@ class AISearchService {
             }
             #endif
 
-            print("[AISearchService] Qwen で概念検索")
+            AppLogger.search.info("Qwen で概念検索")
             if let result = await searchWithQwen(query: query, cards: cards) {
-                print("[AISearchService] 完了: \(result.matchedCardIDs.count)件マッチ")
+                AppLogger.search.info("完了: \(result.matchedCardIDs.count, privacy: .public)件マッチ")
                 return result
             }
             return noModelAvailableMessage(query: query)
@@ -259,19 +260,19 @@ class AISearchService {
 
                 """
 
-            print("[AISearchService] カードリスト:\n\(cardList)")
+            AppLogger.search.debug("カードリスト: \(cardList, privacy: .private)")
             let prompt = "\(fewShot)\(cardList)\n\n検索:「\(query)」\n回答:"
 
             do {
                 let response = try await session.respond(to: prompt, options: options)
                 let text = String(describing: response.content).trimmingCharacters(in: .whitespacesAndNewlines)
-                print("[AISearchService] Foundation Models 応答: \(text)")
+                AppLogger.search.debug("Foundation Models 応答: \(text, privacy: .private)")
 
                 let matchedIDs = parseIndexResponse(text: text, cards: batchCards, offset: batchIdx * maxCardsPerBatch)
-                print("[AISearchService] マッチ: \(matchedIDs.count)件")
+                AppLogger.search.info("マッチ: \(matchedIDs.count, privacy: .public)件")
                 allMatchedIDs.append(contentsOf: matchedIDs)
             } catch {
-                print("[AISearchService] Foundation Models エラー: \(error)")
+                AppLogger.search.error("Foundation Models エラー: \(error)")
                 continue
             }
         }
@@ -374,7 +375,7 @@ class AISearchService {
                 return yesScore > noScore
             }
         } catch {
-            print("[AISearchService] Qwen 判定エラー: \(error)")
+            AppLogger.search.error("Qwen 判定エラー: \(error)")
             return false
         }
     }

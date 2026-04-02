@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import os
 
 // 連続撮影カメラ（UIKit のみで管理）
 // fullScreenCover を使わず、UIKit の present/dismiss だけでカメラを表示・解除する。
@@ -22,6 +23,7 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
     func start(completion: @escaping ([UIImage]) -> Void) {
         self.images = []
         self.completion = completion
+        AppLogger.camera.info("カメラ起動")
         presentPicker()
     }
 
@@ -106,6 +108,7 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
     /// オーバーレイの「完了」ボタンから呼ばれる
     @objc private func finishCapture() {
         haptic.impactOccurred()
+        AppLogger.camera.info("撮影完了: \(self.images.count, privacy: .public)枚")
         let captured = images
         let handler = completion
         images = []

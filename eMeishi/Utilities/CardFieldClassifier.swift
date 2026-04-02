@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import os
 
 // ルールベースのフィールド分類器（ファサード）
 // 実際の処理は ContactPatternExtractor / FieldDetector / NameProcessor に委譲
@@ -31,7 +32,7 @@ struct CardFieldClassifier {
         var result = ParsedCard()
         var unclassified: [RecognizedLine] = []
 
-        print("[Classifier] === Pass1 開始 (\(lines.count)行) ===")
+        AppLogger.classifier.debug("=== Pass1 開始 (\(lines.count, privacy: .public)行) ===")
 
         // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
         for line in lines {
@@ -40,37 +41,37 @@ struct CardFieldClassifier {
 
             if result.email.isEmpty, let email = ContactPatternExtractor.extractEmail(from: trimmed) {
                 result.email = email
-                print("[Classifier] email: '\(trimmed)'")
+                AppLogger.classifier.debug("email: \(trimmed, privacy: .private)")
             } else if let phone = ContactPatternExtractor.extractPhone(from: trimmed) {
                 result.phones.append(phone)
-                print("[Classifier] phone: '\(trimmed)'")
+                AppLogger.classifier.debug("phone: \(trimmed, privacy: .private)")
             } else if result.website.isEmpty, let url = ContactPatternExtractor.extractURL(from: trimmed) {
                 result.website = url
-                print("[Classifier] website: '\(trimmed)'")
+                AppLogger.classifier.debug("website: \(trimmed, privacy: .private)")
             } else if result.address.isEmpty, FieldDetector.isAddress(trimmed) {
                 result.address = trimmed
-                print("[Classifier] address: '\(trimmed)'")
+                AppLogger.classifier.debug("address: \(trimmed, privacy: .private)")
             } else if FieldDetector.isAddress(trimmed) {
                 result.address += " " + trimmed
-                print("[Classifier] address(追加): '\(trimmed)'")
+                AppLogger.classifier.debug("address(追加): \(trimmed, privacy: .private)")
             } else if result.company.isEmpty, FieldDetector.isCompany(trimmed) {
                 result.company = trimmed.trimmingCharacters(in: .whitespaces)
-                print("[Classifier] company: '\(trimmed)'")
+                AppLogger.classifier.debug("company: \(trimmed, privacy: .private)")
             } else if FieldDetector.isDepartment(trimmed) {
                 result.department = result.department.isEmpty
                     ? trimmed
                     : result.department + " " + trimmed
-                print("[Classifier] department: '\(trimmed)'")
+                AppLogger.classifier.debug("department: \(trimmed, privacy: .private)")
             } else if result.title.isEmpty, FieldDetector.isJobTitle(trimmed) {
                 result.title = trimmed
-                print("[Classifier] title: '\(trimmed)'")
+                AppLogger.classifier.debug("title: \(trimmed, privacy: .private)")
             } else {
                 unclassified.append(line)
-                print("[Classifier] 未分類: '\(trimmed)'")
+                AppLogger.classifier.debug("未分類: \(trimmed, privacy: .private)")
             }
         }
 
-        print("[Classifier] Pass1結果: email=\(result.email.isEmpty ? "×" : "○") phone=\(result.phones.count)件 web=\(result.website.isEmpty ? "×" : "○") addr=\(result.address.isEmpty ? "×" : "○") co=\(result.company.isEmpty ? "×" : "○") dept=\(result.department.isEmpty ? "×" : "○") title=\(result.title.isEmpty ? "×" : "○")")
+        AppLogger.classifier.debug("Pass1結果: email=\(result.email.isEmpty ? "×" : "○", privacy: .public) phone=\(result.phones.count, privacy: .public)件 web=\(result.website.isEmpty ? "×" : "○", privacy: .public) addr=\(result.address.isEmpty ? "×" : "○", privacy: .public) co=\(result.company.isEmpty ? "×" : "○", privacy: .public) dept=\(result.department.isEmpty ? "×" : "○", privacy: .public) title=\(result.title.isEmpty ? "×" : "○", privacy: .public)")
 
         // --- Pass1.5: 建物名を住所に追加 ---
         if !result.address.isEmpty {
@@ -78,7 +79,7 @@ struct CardFieldClassifier {
                 let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if FieldDetector.isBuildingName(t) {
                     result.address += " " + t
-                    print("[Classifier] address(建物名): '\(t)'")
+                    AppLogger.classifier.debug("address(建物名): \(t, privacy: .private)")
                     return true
                 }
                 return false
@@ -90,21 +91,21 @@ struct CardFieldClassifier {
             let scores = unclassified.map { NameProcessor.personNameScore(for: $0, candidates: unclassified) }
             for (idx, line) in unclassified.enumerated() {
                 let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("[Classifier] Pass2スコア: '\(t)' = \(String(format: "%.3f", scores[idx]))")
+                AppLogger.classifier.debug("Pass2スコア: \(t, privacy: .private) = \(String(format: "%.3f", scores[idx]), privacy: .public)")
             }
             if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
                scores[bestIdx] > 0.35 {
                 let bestText = unclassified[bestIdx].text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("[Classifier] 名前確定(>0.35): '\(bestText)' (score=\(String(format: "%.3f", scores[bestIdx])))")
+                AppLogger.classifier.debug("名前確定(>0.35): \(bestText, privacy: .private) (score=\(String(format: "%.3f", scores[bestIdx]), privacy: .public))")
                 unclassified = NameProcessor.resolveNameFromUnclassified(&result, unclassified: unclassified)
-                print("[Classifier] 名前解決後: lastName='\(result.lastName)' firstName='\(result.firstName)'")
+                AppLogger.classifier.debug("名前解決後: lastName=\(result.lastName, privacy: .private) firstName=\(result.firstName, privacy: .private)")
                 // フリガナ行を氏名読み仮名として取得
                 if let furiganaLine = unclassified.first(where: { NameProcessor.isFuriganaLine($0) }) {
                     let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     let (lastR, firstR) = NameProcessor.splitName(rawReading)
                     result.lastNameReading = NameProcessor.normalizeToHiragana(lastR)
                     result.firstNameReading = NameProcessor.normalizeToHiragana(firstR)
-                    print("[Classifier] フリガナ: lastR='\(result.lastNameReading)' firstR='\(result.firstNameReading)'")
+                    AppLogger.classifier.debug("フリガナ: lastR=\(result.lastNameReading, privacy: .private) firstR=\(result.firstNameReading, privacy: .private)")
                 } else if let romajiLine = unclassified.first(where: { NameProcessor.isRomajiNameLine($0) }),
                           let romajiReading = NameProcessor.resolveRomajiReading(
                               romajiLine: romajiLine,
@@ -113,19 +114,19 @@ struct CardFieldClassifier {
                           ) {
                     result.lastNameReading = romajiReading.lastNameReading
                     result.firstNameReading = romajiReading.firstNameReading
-                    print("[Classifier] ローマ字読み: lastR='\(result.lastNameReading)' firstR='\(result.firstNameReading)'")
+                    AppLogger.classifier.debug("ローマ字読み: lastR=\(result.lastNameReading, privacy: .private) firstR=\(result.firstNameReading, privacy: .private)")
                 }
                 unclassified.removeAll { NameProcessor.isFuriganaLine($0) }
                 unclassified.removeAll { NameProcessor.isRomajiNameLine($0) }
             } else {
-                print("[Classifier] 名前スコア不足 → LLMに委譲")
+                AppLogger.classifier.debug("名前スコア不足 → LLMに委譲")
             }
         }
 
         let unclassifiedTexts = unclassified.map {
             $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        print("[Classifier] 最終未分類: \(unclassifiedTexts)")
+        AppLogger.classifier.debug("最終未分類: \(unclassifiedTexts, privacy: .private)")
         return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
     }
 

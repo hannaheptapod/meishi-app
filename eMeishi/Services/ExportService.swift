@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // エクスポート処理のエラー型
 enum ExportError: LocalizedError {
@@ -38,7 +39,9 @@ class ExportService {
         data.append(contentsOf: csv.utf8)
         do {
             try data.write(to: url)
+            AppLogger.export.info("CSVエクスポート完了: \(cards.count, privacy: .public)件")
         } catch {
+            AppLogger.export.error("CSVエクスポート失敗: \(error)")
             throw ExportError.csvWriteFailed(error)
         }
         return url
@@ -85,7 +88,9 @@ class ExportService {
         let url = temporaryFileURL(name: "meishi_export", ext: "vcf")
         do {
             try vcf.write(to: url, atomically: true, encoding: .utf8)
+            AppLogger.export.info("vCardエクスポート完了: \(cards.count, privacy: .public)件")
         } catch {
+            AppLogger.export.error("vCardエクスポート失敗: \(error)")
             throw ExportError.vcardWriteFailed(error)
         }
         return url

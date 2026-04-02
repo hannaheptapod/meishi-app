@@ -2,6 +2,7 @@ import Foundation
 import Vision
 import UIKit
 import CoreImage
+import os
 
 // OCR で認識した1行分のデータ（テキスト・位置・信頼度）
 struct RecognizedLine {
@@ -100,9 +101,13 @@ class OCRService {
             throw OCRError.invalidImage
         }
 
+        let startTime = CFAbsoluteTimeGetCurrent()
+        AppLogger.ocr.info("OCR開始")
+
         return try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error = error {
+                    AppLogger.ocr.error("OCR失敗: \(error)")
                     continuation.resume(throwing: error)
                     return
                 }
@@ -118,6 +123,8 @@ class OCRService {
                 }
                 // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
                 let lines = Self.mergeAdjacentFragments(rawLines)
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
                 continuation.resume(returning: lines)
             }
 
@@ -130,6 +137,7 @@ class OCRService {
             do {
                 try handler.perform([request])
             } catch {
+                AppLogger.ocr.error("OCR失敗: \(error)")
                 continuation.resume(throwing: error)
             }
         }
@@ -218,7 +226,7 @@ class OCRService {
                 let mergedBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
                 let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
 
-                print("[OCR] 行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + ")) → '\(mergedText)'")
+                AppLogger.ocr.debug("行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + "), privacy: .private) → \(mergedText, privacy: .private)")
                 result.append(RecognizedLine(text: mergedText, boundingBox: mergedBox, confidence: avgConfidence))
             }
         }

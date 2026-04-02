@@ -1,6 +1,7 @@
 import Foundation
 import CoreML
 import CoreData
+import os
 
 // AI自動タグ提案サービス
 // 名刺スキャン後、既存タグから該当するものをAIが提案する
@@ -88,7 +89,7 @@ class AutoTagService {
             // "yes" / "y" / "はい" で始まれば該当
             return decoded.hasPrefix("y") || decoded.hasPrefix("はい") || decoded.hasPrefix("yes")
         } catch {
-            print("[AutoTagService] 分類エラー: \(error)")
+            AppLogger.autoTag.error("分類エラー: \(error)")
             return false
         }
     }
