@@ -15,6 +15,8 @@ struct RecognizedLine {
 // Vision Framework を使って名刺画像からテキストを抽出するサービス
 class OCRService {
 
+    private static let ciContext = CIContext()
+
     // MARK: - 矩形検出 + パースペクティブ補正
 
     // 名刺の矩形を検出してトリミング・補正した画像を返す。
@@ -75,7 +77,6 @@ class OCRService {
         filter.setValue(toCI(observation.bottomRight),   forKey: "inputBottomRight")
 
         guard let outputCIImage = filter.outputImage else { return nil }
-        let ciContext = CIContext()
         guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: outputCIImage.extent) else { return nil }
         return UIImage(cgImage: outputCGImage)
     }

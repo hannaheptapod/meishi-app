@@ -6,6 +6,7 @@ struct CardFormView: View {
 
     @StateObject private var viewModel: CardFormViewModel
     let onSave: () -> Void
+    let onSkip: (() -> Void)?
     let batchProgress: BatchProgress?
 
     @Environment(\.dismiss) private var dismiss
@@ -28,14 +29,27 @@ struct CardFormView: View {
     init(onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel())
         self.onSave = onSave
+        self.onSkip = nil
         self.batchProgress = nil
     }
 
     // MARK: - 初期化（カメラ撮影画像からOCR）
 
-    init(image: UIImage, batchProgress: BatchProgress? = nil, onSave: @escaping () -> Void) {
+    init(image: UIImage, batchProgress: BatchProgress? = nil,
+         onSave: @escaping () -> Void, onSkip: (() -> Void)? = nil) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel(image: image))
         self.onSave = onSave
+        self.onSkip = onSkip
+        self.batchProgress = batchProgress
+    }
+
+    // MARK: - 初期化（クロップ済み画像からOCR・矩形検出スキップ）
+
+    init(croppedImage: UIImage, batchProgress: BatchProgress? = nil,
+         onSave: @escaping () -> Void, onSkip: (() -> Void)? = nil) {
+        _viewModel = StateObject(wrappedValue: CardFormViewModel(croppedImage: croppedImage))
+        self.onSave = onSave
+        self.onSkip = onSkip
         self.batchProgress = batchProgress
     }
 
@@ -44,12 +58,25 @@ struct CardFormView: View {
     init(card: BusinessCard, onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel(card: card))
         self.onSave = onSave
+        self.onSkip = nil
         self.batchProgress = nil
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                // 撮影画像プレビュー
+                if let imageData = viewModel.capturedImageData,
+                   let uiImage = UIImage(data: imageData) {
+                    Section {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+
                 // OCR処理中インジケーター
                 if viewModel.isProcessingOCR {
                     Section {
@@ -290,7 +317,11 @@ struct CardFormView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                    if let onSkip = onSkip {
+                        Button("スキップ") { onSkip() }
+                    } else {
+                        Button { dismiss() } label: { Image(systemName: "xmark") }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButtonTitle) {
