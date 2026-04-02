@@ -50,9 +50,15 @@ struct BulkTagAssignView: View {
                                 Text(tag.tagName)
                                     .foregroundStyle(.primary)
                                 Spacer()
-                                Image(systemName: allAssigned ? "checkmark" : someAssigned ? "minus" : "")
-                                    .foregroundStyle(tag.color)
-                                    .fontWeight(.semibold)
+                                Group {
+                                    if allAssigned {
+                                        Image(systemName: "checkmark")
+                                    } else if someAssigned {
+                                        Image(systemName: "minus")
+                                    }
+                                }
+                                .foregroundStyle(tag.color)
+                                .fontWeight(.semibold)
                             }
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("\(tag.tagName)、\(allAssigned ? "付与済み" : someAssigned ? "一部付与" : "未付与")")
