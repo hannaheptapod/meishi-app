@@ -2,6 +2,7 @@ import Foundation
 import CoreData
 import Combine
 import SwiftUI
+import os
 
 // ソートキー（4種）
 enum CardSortKey: String, CaseIterable, Identifiable {
@@ -146,7 +147,7 @@ class CardListViewModel: ObservableObject {
             detectDuplicates()
             updateFilteredCards()
         } catch {
-            print("名刺の取得に失敗しました: \(error)")
+            AppLogger.persistence.error("名刺の取得に失敗しました: \(error)")
         }
     }
 
@@ -180,7 +181,7 @@ class CardListViewModel: ObservableObject {
         do {
             allTags = try context.fetch(request)
         } catch {
-            print("タグの取得に失敗しました: \(error)")
+            AppLogger.persistence.error("タグの取得に失敗しました: \(error)")
         }
     }
 

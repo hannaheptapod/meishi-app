@@ -2,6 +2,7 @@ import Foundation
 import CoreML
 import Accelerate
 import Combine
+import os
 
 // オンデバイス Qwen3-0.6B（4bit量子化 CoreML・Prefill/Decode 分割方式）による意味分析サービス
 // モデルソース: smkrv/Qwen3-0.6B-CoreML-4bit
@@ -103,26 +104,17 @@ class LocalLLMService: ObservableObject {
 
         if prefillModel == nil {
             prefillModel = try MLModel(contentsOf: prefillModelURL, configuration: config)
-            // モデルの入出力仕様をログ出力（デバッグ用）
             let desc = prefillModel!.modelDescription
-            for (name, feat) in desc.inputDescriptionsByName {
-                print("[LocalLLM] Prefill input: \(name) type=\(feat.type.rawValue) multiArrayConstraint=\(String(describing: feat.multiArrayConstraint))")
-            }
-            for (name, feat) in desc.outputDescriptionsByName {
-                print("[LocalLLM] Prefill output: \(name) type=\(feat.type.rawValue)")
-            }
-            print("[LocalLLM] Prefill モデルロード完了 (cpuAndGPU)")
+            AppLogger.llm.debug("Prefill inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
+            AppLogger.llm.debug("Prefill outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
+            AppLogger.llm.info("Prefill モデルロード完了 (cpuAndGPU)")
         }
         if decodeModel == nil {
             decodeModel = try MLModel(contentsOf: decodeModelURL, configuration: config)
             let desc = decodeModel!.modelDescription
-            for (name, feat) in desc.inputDescriptionsByName {
-                print("[LocalLLM] Decode input: \(name) type=\(feat.type.rawValue)")
-            }
-            for (name, feat) in desc.outputDescriptionsByName {
-                print("[LocalLLM] Decode output: \(name) type=\(feat.type.rawValue)")
-            }
-            print("[LocalLLM] Decode モデルロード完了 (cpuAndGPU)")
+            AppLogger.llm.debug("Decode inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
+            AppLogger.llm.debug("Decode outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
+            AppLogger.llm.info("Decode モデルロード完了 (cpuAndGPU)")
         }
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
@@ -139,7 +131,7 @@ class LocalLLMService: ObservableObject {
             do {
                 try loadModelIfNeeded()
             } catch {
-                print("[LocalLLM] モデルロードエラー: \(error)")
+                AppLogger.llm.error("モデルロードエラー: \(error)")
             }
         }
         guard let pModel = prefillModel, let tok = tokenizer else { return nil }
@@ -164,12 +156,12 @@ class LocalLLMService: ObservableObject {
             do {
                 try loadModelIfNeeded()
             } catch {
-                print("[LocalLLM] モデルロードエラー: \(error)")
+                AppLogger.llm.error("モデルロードエラー: \(error)")
             }
         }
         guard let pModel = prefillModel, let dModel = decodeModel, let tok = tokenizer else {
             await MainActor.run { isInferencing = false }
-            print("[LocalLLM] モデル未ロード（prefill=\(prefillModel != nil), decode=\(decodeModel != nil), tok=\(tokenizer != nil)）")
+            AppLogger.llm.warning("モデル未ロード（prefill=\(self.prefillModel != nil, privacy: .public), decode=\(self.decodeModel != nil, privacy: .public), tok=\(self.tokenizer != nil, privacy: .public)）")
             return nil
         }
 
@@ -180,7 +172,7 @@ class LocalLLMService: ObservableObject {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         let startTime = Date()
 
-        print("[LocalLLM] 単一パス分類開始。未分類行: \(lines.count)行")
+        AppLogger.llm.info("単一パス分類開始。未分類行: \(lines.count, privacy: .public)行")
 
         do {
             let llmResult = try classifyByLine(
@@ -190,22 +182,22 @@ class LocalLLMService: ObservableObject {
                 deadline: deadline
             )
             let elapsed = Date().timeIntervalSince(startTime)
-            print("[LocalLLM] 分類完了。\(String(format: "%.1f", elapsed))秒")
+            AppLogger.llm.info("分類完了。\(String(format: "%.1f", elapsed), privacy: .public)秒")
 
             let llmHasContent = !llmResult.lastName.isEmpty || !llmResult.firstName.isEmpty
                 || !llmResult.title.isEmpty || !llmResult.department.isEmpty
                 || !llmResult.company.isEmpty
             if !llmHasContent {
-                print("[LocalLLM] LLM結果が空")
+                AppLogger.llm.info("LLM結果が空")
                 return nil
             }
             return llmResult
         } catch InferenceError.timeout {
             let elapsed = Date().timeIntervalSince(startTime)
-            print("[LocalLLM] 分類タイムアウト（\(String(format: "%.1f", elapsed))秒）")
+            AppLogger.llm.warning("分類タイムアウト（\(String(format: "%.1f", elapsed), privacy: .public)秒）")
             return nil
         } catch {
-            print("[LocalLLM] 分類エラー: \(error)")
+            AppLogger.llm.error("分類エラー: \(error)")
             return nil
         }
     }
@@ -245,7 +237,7 @@ class LocalLLMService: ObservableObject {
             let stepMs = (CFAbsoluteTimeGetCurrent() - stepStart) * 1000
 
             guard let tokenId = argmaxLastToken(logits: logits) else {
-                print("[LocalLLM] 行\(i+1) [Pre] \(String(format: "%.0f", stepMs))ms: argmax失敗 '\(line)'")
+                AppLogger.llm.debug("行\(i+1, privacy: .public) [Pre] \(String(format: "%.0f", stepMs), privacy: .public)ms: argmax失敗 \(line, privacy: .private)")
                 continue
             }
             let decoded = tokenizer.decode([tokenId]).lowercased()
@@ -260,7 +252,7 @@ class LocalLLMService: ObservableObject {
             else if decoded.hasPrefix("a") || decoded.hasPrefix("住") || decoded.hasPrefix("addr") { category = .unknown } // 住所はルールベースが処理済みのはず
             else { category = .unknown }
 
-            print("[LocalLLM] 行\(i+1) [Pre] \(String(format: "%.0f", stepMs))ms (\(ids.count)tok): '\(line)' → \(category.rawValue) (token='\(decoded)' id=\(tokenId))")
+            AppLogger.llm.debug("行\(i+1, privacy: .public) [Pre] \(String(format: "%.0f", stepMs), privacy: .public)ms (\(ids.count, privacy: .public)tok): \(line, privacy: .private) → \(category.rawValue, privacy: .public) (token=\(decoded, privacy: .public) id=\(tokenId, privacy: .public))")
 
             switch category {
             case .name:

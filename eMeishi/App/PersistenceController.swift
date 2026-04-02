@@ -1,5 +1,6 @@
 import CoreData
 import CloudKit
+import os
 
 // CoreData スタックの管理（iCloud 同期対応）
 struct PersistenceController {
@@ -81,11 +82,20 @@ struct PersistenceController {
                                   forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber,
                                   forKey: NSInferMappingModelAutomaticallyOption)
-            // デバイスロック時にデータベースファイルを暗号化
+            // デバイスロック後もバックグラウンド同期を可能にするため
+            // completeUntilFirstUserAuthentication を使用
+            // （complete だとロック中にストアアクセス不可→CloudKit同期失敗）
             if !inMemory {
-                description.setOption(FileProtectionType.complete as NSObject,
+                description.setOption(FileProtectionType.completeUntilFirstUserAuthentication as NSObject,
                                       forKey: NSPersistentStoreFileProtectionKey)
             }
+
+            // Persistent History Tracking を常に有効化
+            // iCloud 同期ON時は NSPersistentCloudKitContainer が必要とし、
+            // 同期OFF時も過去に同期ONで開いたストアの互換性を維持するため必須
+            // （未設定だと Read Only モードに強制される）
+            description.setOption(true as NSNumber,
+                                  forKey: NSPersistentHistoryTrackingKey)
 
             // iCloud 同期の CloudKit コンテナ設定
             if syncEnabled {
@@ -126,7 +136,7 @@ struct PersistenceController {
         let ckContainer = CKContainer(identifier: "iCloud.com.jinks.emeishi")
         ckContainer.accountStatus { status, error in
             if let error = error as? CKError, error.code == .badContainer {
-                print("[PersistenceController] CloudKit Container が未登録です — 次回起動からローカル専用で動作します")
+                AppLogger.persistence.warning("CloudKit Container が未登録です — 次回起動からローカル専用で動作します")
                 UserDefaults.standard.set(true, forKey: "cloudKitContainerUnavailable")
             } else if status == .available {
                 // Container が利用可能になったらフラグをリセット

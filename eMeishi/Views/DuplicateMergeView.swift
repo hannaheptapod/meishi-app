@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import os
 
 // 重複ペアのマージ画面
 // 各フィールドについて A / B どちらの値を使うか選択してマージする
@@ -184,7 +185,7 @@ struct DuplicateMergeView: View {
         do {
             try context.save()
         } catch {
-            print("マージの保存に失敗しました: \(error)")
+            AppLogger.persistence.error("マージの保存に失敗しました: \(error)")
         }
 
         onComplete()

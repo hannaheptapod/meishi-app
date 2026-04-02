@@ -1,5 +1,6 @@
 import Foundation
 import Contacts
+import os
 
 // iPhoneの連絡先との連携サービス
 class ContactsService {
@@ -82,7 +83,9 @@ class ContactsService {
 
         do {
             try store.execute(request)
+            AppLogger.contacts.info("連絡先へ保存完了")
         } catch {
+            AppLogger.contacts.error("連絡先への保存に失敗: \(error)")
             throw ContactsError.saveFailed(error)
         }
     }

@@ -2,6 +2,7 @@ import Foundation
 import CoreData
 import Combine
 import UIKit
+import os
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -231,7 +232,7 @@ class CardFormViewModel: ObservableObject {
 
         // 未分類行が空ならルールベース結果のみで完了
         guard !ruleResult.unclassifiedLines.isEmpty else {
-            print("[Pipeline] 全フィールドがルールベースで解決済み")
+            AppLogger.pipeline.info("全フィールドがルールベースで解決済み")
             apply(result)
             return
         }
@@ -253,21 +254,21 @@ class CardFormViewModel: ObservableObject {
                 if existsInOCR(llm.department, ocrTexts: ocrTexts) {
                     result.department = llm.department
                 } else {
-                    print("[Pipeline] 部署ハルシネーション除去: '\(llm.department)'")
+                    AppLogger.pipeline.info("部署ハルシネーション除去: \(llm.department, privacy: .private)")
                 }
             }
             if !llm.title.isEmpty && result.title.isEmpty {
                 if existsInOCR(llm.title, ocrTexts: ocrTexts) {
                     result.title = llm.title
                 } else {
-                    print("[Pipeline] 役職ハルシネーション除去: '\(llm.title)'")
+                    AppLogger.pipeline.info("役職ハルシネーション除去: \(llm.title, privacy: .private)")
                 }
             }
             if !llm.company.isEmpty && result.company.isEmpty {
                 if existsInOCR(llm.company, ocrTexts: ocrTexts) {
                     result.company = llm.company
                 } else {
-                    print("[Pipeline] 会社名ハルシネーション除去: '\(llm.company)'")
+                    AppLogger.pipeline.info("会社名ハルシネーション除去: \(llm.company, privacy: .private)")
                 }
             }
         }
@@ -344,7 +345,7 @@ class CardFormViewModel: ObservableObject {
             llm.title = p.title
             return llm
         } catch {
-            print("[FoundationModels] 推論エラー: \(error)")
+            AppLogger.pipeline.error("Foundation Models 推論エラー: \(error)")
             return nil
         }
     }
@@ -521,7 +522,7 @@ class CardFormViewModel: ObservableObject {
         do {
             try context.save()
         } catch {
-            print("名刺の保存に失敗しました: \(error)")
+            AppLogger.persistence.error("名刺の保存に失敗しました: \(error)")
         }
     }
 }

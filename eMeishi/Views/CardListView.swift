@@ -50,7 +50,7 @@ struct CardListView: View {
             }
             .navigationTitle(selectionTitle)
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "検索")
+            .searchable(text: $viewModel.searchText, prompt: "検索")
             .background {
                 SearchBarSparklesInjector(searchText: viewModel.searchText) {
                     isShowingAIChat = true

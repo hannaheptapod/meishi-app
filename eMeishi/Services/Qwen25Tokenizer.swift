@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Qwen2.5 BPEトークナイザー
 /// HuggingFace の tokenizer.json（BPE形式）から語彙とマージルールを読み込み、
@@ -35,40 +36,30 @@ final class Qwen25Tokenizer {
         do {
             data = try Data(contentsOf: url)
         } catch {
-            print("[Tokenizer] ファイル読み込み失敗: \(url.path) - \(error)")
+            AppLogger.tokenizer.error("ファイル読み込み失敗: \(url.path, privacy: .public) - \(error)")
             throw Err.invalidFormat
         }
-        print("[Tokenizer] ファイル読み込み完了: \(data.count) bytes from \(url.lastPathComponent)")
 
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "non-utf8"
-            print("[Tokenizer] JSONパース失敗。先頭200B: \(preview)")
+            AppLogger.tokenizer.error("JSONパース失敗")
             throw Err.invalidFormat
         }
-        print("[Tokenizer] ルートキー: \(Array(root.keys).sorted())")
 
         guard let model = root["model"] as? [String: Any] else {
-            print("[Tokenizer] 'model'キーが見つからない")
+            AppLogger.tokenizer.error("'model'キーが見つからない")
             throw Err.invalidFormat
         }
-        print("[Tokenizer] modelキー: \(Array(model.keys).sorted())")
 
         // vocab: [String: Int] — NSNumber→Int ブリッジ失敗に備えて手動変換も試みる
         let rawVocab: [String: Int]
         if let v = model["vocab"] as? [String: Int] {
             rawVocab = v
         } else if let v = model["vocab"] as? [String: NSNumber] {
-            print("[Tokenizer] vocab を NSNumber→Int で変換")
             rawVocab = v.mapValues { $0.intValue }
         } else {
-            if let v = model["vocab"] {
-                print("[Tokenizer] vocab の型が不正: \(type(of: v))")
-            } else {
-                print("[Tokenizer] vocab キーが存在しない")
-            }
+            AppLogger.tokenizer.error("vocab の型が不正またはキーが存在しない")
             throw Err.invalidFormat
         }
-        print("[Tokenizer] vocab エントリ数: \(rawVocab.count)")
 
         // merges: 2つの形式に対応
         //   形式A（Qwen2.5）: ["tok1 tok2", ...] — スペース区切り文字列の配列
@@ -76,20 +67,16 @@ final class Qwen25Tokenizer {
         let rawMerges: [String]
         if let m = model["merges"] as? [String] {
             rawMerges = m
-            print("[Tokenizer] merges 形式A (文字列配列): \(m.count)件")
         } else if let m = model["merges"] as? [[String]] {
             rawMerges = m.compactMap { pair in
                 pair.count == 2 ? "\(pair[0]) \(pair[1])" : nil
             }
-            print("[Tokenizer] merges 形式B (配列の配列→変換): \(rawMerges.count)件")
         } else {
-            if let m = model["merges"] {
-                print("[Tokenizer] merges の型が不正: \(type(of: m))")
-            } else {
-                print("[Tokenizer] merges キーが存在しない")
-            }
+            AppLogger.tokenizer.error("merges の型が不正またはキーが存在しない")
             throw Err.invalidFormat
         }
+
+        AppLogger.tokenizer.info("Tokenizer loaded: vocab=\(rawVocab.count, privacy: .public) merges=\(rawMerges.count, privacy: .public)")
 
         // added_tokens（特殊トークン）を vocab に追加
         var v = rawVocab
