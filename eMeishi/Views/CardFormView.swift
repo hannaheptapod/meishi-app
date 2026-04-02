@@ -6,10 +6,17 @@ struct CardFormView: View {
 
     @StateObject private var viewModel: CardFormViewModel
     let onSave: () -> Void
+    let batchProgress: BatchProgress?
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var listViewModel: CardListViewModel
     @FocusState private var focusedField: FormField?
+
+    // 連続撮影時のバッチ進捗
+    struct BatchProgress {
+        let current: Int
+        let total: Int
+    }
 
     private enum FormField: Hashable {
         case lastName, lastNameReading, firstName, firstNameReading
@@ -21,13 +28,15 @@ struct CardFormView: View {
     init(onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel())
         self.onSave = onSave
+        self.batchProgress = nil
     }
 
     // MARK: - 初期化（カメラ撮影画像からOCR）
 
-    init(image: UIImage, onSave: @escaping () -> Void) {
+    init(image: UIImage, batchProgress: BatchProgress? = nil, onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel(image: image))
         self.onSave = onSave
+        self.batchProgress = batchProgress
     }
 
     // MARK: - 初期化（既存カードの編集）
@@ -35,6 +44,7 @@ struct CardFormView: View {
     init(card: BusinessCard, onSave: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: CardFormViewModel(card: card))
         self.onSave = onSave
+        self.batchProgress = nil
     }
 
     var body: some View {
@@ -267,7 +277,7 @@ struct CardFormView: View {
                         .onSubmit { focusedField = nil }
                 }
             }
-            .navigationTitle(viewModel.isEditing ? "名刺を編集" : "名刺を追加")
+            .navigationTitle(batchNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .alert("読み取り精度を向上しますか？", isPresented: $viewModel.shouldPromptLLMDownload) {
                 Button("ダウンロード（約300MB）") {
@@ -282,11 +292,13 @@ struct CardFormView: View {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
+                    Button(saveButtonTitle) {
                         focusedField = nil
                         viewModel.save()
                         onSave()
-                        dismiss()
+                        if batchProgress == nil {
+                            dismiss()
+                        }
                     }
                     .disabled(
                         viewModel.lastName.trimmingCharacters(in: .whitespaces).isEmpty ||
@@ -300,5 +312,19 @@ struct CardFormView: View {
                 }
             }
         }
+    }
+
+    // MARK: - バッチモード用ヘルパー
+
+    private var batchNavigationTitle: String {
+        if let bp = batchProgress {
+            return "\(bp.current)/\(bp.total) 名刺を追加"
+        }
+        return viewModel.isEditing ? "名刺を編集" : "名刺を追加"
+    }
+
+    private var saveButtonTitle: String {
+        guard let bp = batchProgress else { return "保存" }
+        return bp.current < bp.total ? "保存して次へ" : "保存"
     }
 }
