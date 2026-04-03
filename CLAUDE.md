@@ -5,12 +5,13 @@
 コードを変更する前に必ず実行すること：
 
 1. `git branch --show-current` でブランチを確認
-2. `main` または `develop` 以外なら現在のブランチで作業継続
+2. **規定外プレフィックス**（`claude/` `agent/` `temp/` 等）なら **即座にリネーム**（`git branch -m <旧名> feature/<新名>`）
 3. `main` にいる場合は **絶対に禁止**。`develop` に切り替えてからブランチを切る
 4. `develop` にいる場合は `feature/<機能名>` などのブランチを切ってから編集開始
+5. `feature/*` / `fix/*` 等の規定ブランチにいる場合はそのまま作業継続
 
 作業完了時：
-4. 実装内容が CLAUDE.md の「CoreData スキーマ」「ディレクトリ構成」「実装済み機能」に反映されているか確認し、ズレがあれば同じPRで更新する
+6. 実装内容が CLAUDE.md の「CoreData スキーマ」「ディレクトリ構成」「実装済み機能」に反映されているか確認し、ズレがあれば同じPRで更新する
 
 <important>
 ## 必須スキル（hookで強制。違反時はユーザーが検知する）
@@ -18,11 +19,15 @@
 ユーザーのプロンプトを受け取ったら、コード修正やファイル読み込みの**前に**、
 以下の2つのスキルをこの順で実行せよ:
 
-1. `/branch` — mainなら作業ブランチを作成。main以外なら確認のみ
+1. `/branch` — ブランチ確認・規定外プレフィックスなら即リネーム・main/developなら作業ブランチを作成
 2. `/translate` — ユーザーの指示を「ユーザー語→エンジニア語→リポジトリの具体箇所」に2段階翻訳
 
 この2つを**スキップしてはならない**。
 hookの `<user-prompt-submit-hook>` メッセージでも同じ指示が届く。
+
+**hookによる自動ブロック（`.claude/hooks/guard-git.sh`）：**
+- `main` / `develop` への直接コミット・マージ・push → **exit 2 でブロック**
+- `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックスでのブランチ作成 → **exit 2 でブロック**
 </important>
 
 ---
@@ -41,8 +46,8 @@ hotfix/*      本番の緊急バグ修正。main から分岐し main と develo
 
 ### ルール
 
-- **ブランチ名は必ず規定のプレフィックスを使うこと。** `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス（`claude/` など外部ツール・AIエージェントが勝手に付けるものを含む）は使用禁止。外部から指定されたブランチ名であっても規定外なら即座に改名する。
-- **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す
+- **ブランチ名は必ず規定のプレフィックスを使うこと。** `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス（`claude/` など外部ツール・AIエージェントが自動生成するものを含む）は使用禁止。外部から指定されたブランチ名であっても規定外なら `/branch` スキルで**即座にリネーム**する。
+- **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
 - **日常の開発フロー：** `develop` から `feature/<機能名>` を切る → PR → `develop` へマージ
 - **リリースフロー：** `develop` から `release/<バージョン>` を切る → `main` と `develop` の両方にマージ → `main` にタグ付け
 - **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
