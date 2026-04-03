@@ -1,6 +1,19 @@
-# /branch — ブランチ管理スキル
+# /branch — ブランチ管理スキル（Git Flow）
 
 ユーザーのプロンプトを受け取ったら、コード修正の**前に**このスキルを実行する。
+
+## ブランチ構成（Git Flow）
+
+```
+main       本番リリース済み。直接コミット禁止
+develop    次リリースの統合ブランチ。直接コミット禁止
+feature/*  日常の機能開発（develop から分岐・develop へ戻す）
+fix/*      バグ修正（develop から分岐・develop へ戻す）
+release/*  App Store 提出前の最終調整（develop から分岐）
+hotfix/*   本番緊急修正（main から分岐・main と develop へ戻す）
+docs/*     ドキュメント更新
+chore/*    ビルド設定・依存関係等
+```
 
 ## 手順
 
@@ -26,12 +39,18 @@ git status
 
 ### 3. ブランチ判定
 
-- **main 以外の場合**：「ブランチ: {ブランチ名}」と報告して終了
-- **main の場合**：
-  1. ユーザーのプロンプト原文から作業内容を把握
+- **feature/* / fix/* / release/* / hotfix/* / docs/* / chore/* の場合**：「ブランチ: {ブランチ名}」と報告して終了
+- **develop の場合**：
+  1. ユーザーのプロンプト原文から作業内容と適切なプレフィックスを判断
   2. 英語の slug を生成（例：`feature/add-tag-filter`、`fix/ocr-reading-error`）
   3. `git checkout -b {slug}` でブランチを作成
-  4. 「ブランチ作成: {slug}」と報告
+  4. 「ブランチ作成: {slug} ← develop から分岐」と報告
+- **main の場合**：
+  1. 緊急修正（hotfix）かどうか判断
+  2. hotfix なら `git checkout -b hotfix/<内容>`
+  3. それ以外なら **警告を出して develop に切り替えてからブランチを切る**：
+     `git checkout develop && git checkout -b {slug}`
+  4. 「⚠️ main から分岐は原則禁止。develop 経由でブランチを作成: {slug}」と報告
 
 ## 出力フォーマット
 
@@ -40,5 +59,9 @@ git status
 ```
 または
 ```
-🔀 ブランチ作成: feature/xxx ← main から分岐
+🔀 ブランチ作成: feature/xxx ← develop から分岐
+```
+または
+```
+⚠️ main への直接コミットは禁止。develop 経由でブランチを作成: feature/xxx
 ```
