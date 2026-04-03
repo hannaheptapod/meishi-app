@@ -9,6 +9,16 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/guard-git.sh"
+          }
+        ]
+      }
     ]
   }
 }
