@@ -611,7 +611,7 @@ struct CardListView: View {
         VStack(spacing: 16) {
             Image(systemName: "tray")
                 .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
             Text("名刺がありません")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
