@@ -88,21 +88,29 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(lockGracePeriodSeconds, forKey: Keys.lockGracePeriodSeconds) }
     }
 
+    // MARK: - 初回起動フラグ
+
+    /// Foundation Models 非対応端末向けの初回 Qwen ダウンロードプロンプトを表示済みかどうか
+    @Published var hasPromptedInitialQwenDownload: Bool {
+        didSet { UserDefaults.standard.set(hasPromptedInitialQwenDownload, forKey: Keys.hasPromptedInitialQwenDownload) }
+    }
+
     // MARK: - 初期化
 
     private init() {
         let ud = UserDefaults.standard
 
         ud.register(defaults: [
-            Keys.readingMethod:           ReadingMethod.automatic.rawValue,
-            Keys.duplicateThreshold:      0.75,
-            Keys.csvIncludesBOM:          true,
-            Keys.vCardVersion:            "3.0",
-            Keys.sortKey:                 CardSortKey.createdAt.rawValue,
-            Keys.sortAscending:           false,
-            Keys.iCloudSyncEnabled:       false,
-            Keys.isAppLockEnabled:        false,
-            Keys.lockGracePeriodSeconds:  0
+            Keys.readingMethod:                    ReadingMethod.automatic.rawValue,
+            Keys.duplicateThreshold:               0.75,
+            Keys.csvIncludesBOM:                   true,
+            Keys.vCardVersion:                     "3.0",
+            Keys.sortKey:                          CardSortKey.createdAt.rawValue,
+            Keys.sortAscending:                    false,
+            Keys.iCloudSyncEnabled:                false,
+            Keys.isAppLockEnabled:                 false,
+            Keys.lockGracePeriodSeconds:           0,
+            Keys.hasPromptedInitialQwenDownload:   false
         ])
 
         let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
@@ -113,22 +121,24 @@ class SettingsStore: ObservableObject {
         let sortKeyRaw = ud.string(forKey: Keys.sortKey) ?? CardSortKey.createdAt.rawValue
         sortKey        = CardSortKey(rawValue: sortKeyRaw)?.rawValue ?? CardSortKey.createdAt.rawValue
         sortAscending  = ud.bool(forKey: Keys.sortAscending)
-        iCloudSyncEnabled      = ud.bool(forKey: Keys.iCloudSyncEnabled)
-        isAppLockEnabled       = ud.bool(forKey: Keys.isAppLockEnabled)
-        lockGracePeriodSeconds = ud.integer(forKey: Keys.lockGracePeriodSeconds)
+        iCloudSyncEnabled                  = ud.bool(forKey: Keys.iCloudSyncEnabled)
+        isAppLockEnabled                   = ud.bool(forKey: Keys.isAppLockEnabled)
+        lockGracePeriodSeconds             = ud.integer(forKey: Keys.lockGracePeriodSeconds)
+        hasPromptedInitialQwenDownload     = ud.bool(forKey: Keys.hasPromptedInitialQwenDownload)
     }
 
     // MARK: - UserDefaults キー
 
     private enum Keys {
-        static let readingMethod           = "readingMethod"
-        static let duplicateThreshold      = "duplicateThreshold"
-        static let csvIncludesBOM          = "csvIncludesBOM"
-        static let vCardVersion            = "vCardVersion"
-        static let sortKey                 = "sortKey"
-        static let sortAscending           = "sortAscending"
-        static let iCloudSyncEnabled       = "iCloudSyncEnabled"
-        static let isAppLockEnabled        = "isAppLockEnabled"
-        static let lockGracePeriodSeconds  = "lockGracePeriodSeconds"
+        static let readingMethod                    = "readingMethod"
+        static let duplicateThreshold               = "duplicateThreshold"
+        static let csvIncludesBOM                   = "csvIncludesBOM"
+        static let vCardVersion                     = "vCardVersion"
+        static let sortKey                          = "sortKey"
+        static let sortAscending                    = "sortAscending"
+        static let iCloudSyncEnabled                = "iCloudSyncEnabled"
+        static let isAppLockEnabled                 = "isAppLockEnabled"
+        static let lockGracePeriodSeconds           = "lockGracePeriodSeconds"
+        static let hasPromptedInitialQwenDownload   = "hasPromptedInitialQwenDownload"
     }
 }

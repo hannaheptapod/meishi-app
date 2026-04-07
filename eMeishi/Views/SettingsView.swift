@@ -205,6 +205,12 @@ struct SettingsView: View {
 
     private var appInfoSection: some View {
         Section("アプリ情報") {
+            Link(destination: URL(string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html")!) {
+                Label("プライバシーポリシー", systemImage: "hand.raised")
+            }
+            Link(destination: URL(string: "https://hannaheptapod.github.io/meishi-app/support.html")!) {
+                Label("サポート", systemImage: "questionmark.circle")
+            }
             LabeledContent("バージョン", value: appVersion)
             LabeledContent("ビルド", value: buildNumber)
         }

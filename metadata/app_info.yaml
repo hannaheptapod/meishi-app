@@ -1,0 +1,10 @@
+app_name: eMeishi
+bundle_id: com.jinks.emeishi
+primary_category: BUSINESS
+secondary_category: PRODUCTIVITY
+primary_locale: ja
+privacy_policy_url: https://hannaheptapod.github.io/meishi-app/privacy-policy.html
+support_url: https://hannaheptapod.github.io/meishi-app/support.html
+marketing_url: https://hannaheptapod.github.io/meishi-app/
+age_rating: FOUR_PLUS
+pricing: FREE  # 有料機能は今後IAP追加時に設定

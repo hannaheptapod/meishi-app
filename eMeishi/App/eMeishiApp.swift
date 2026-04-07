@@ -1,5 +1,8 @@
 import SwiftUI
 import CoreData
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 @main
 struct EMeishiApp: App {
@@ -11,6 +14,8 @@ struct EMeishiApp: App {
     @State private var isUnlocked: Bool
     @State private var backgroundedAt: Date?
     @State private var showPrivacyOverlay = false
+    @State private var showQwenDownloadPrompt = false
+    @State private var showCoreDataError = false
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
     private let settings = SettingsStore.shared
@@ -49,7 +54,49 @@ struct EMeishiApp: App {
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }
+            .task {
+                guard !isUITest else { return }
+                checkAndPromptQwenDownload()
+            }
+            .alert("データベースエラー", isPresented: $showCoreDataError) {
+                Button("OK") {}
+            } message: {
+                Text("データの読み込みに失敗しました。アプリを再起動してください。問題が続く場合は、端末のストレージ空き容量を確認してください。")
+            }
+            .onAppear {
+                if persistenceController.loadError != nil {
+                    showCoreDataError = true
+                }
+            }
+            .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
+                Button("ダウンロード（約570MB）") {
+                    Task { try? await LocalLLMService.shared.downloadModel() }
+                }
+                Button("あとで", role: .cancel) {}
+            } message: {
+                Text("この端末はApple Intelligenceに対応していないため、名刺の読み取り精度を向上させるAIモデルをダウンロードできます。Wi-Fi環境でのダウンロードを推奨します。")
+            }
         }
+    }
+
+    /// Foundation Models 非対応端末で初回起動時に Qwen ダウンロードを促す
+    private func checkAndPromptQwenDownload() {
+        // 既にプロンプト表示済み、またはモデルDL済みならスキップ
+        guard !settings.hasPromptedInitialQwenDownload,
+              !LocalLLMService.shared.isModelAvailable else { return }
+
+        // Foundation Models が利用可能な端末はスキップ
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            if case .available = SystemLanguageModel.default.availability {
+                return
+            }
+        }
+        #endif
+
+        // 初回のみプロンプトを表示
+        settings.hasPromptedInitialQwenDownload = true
+        showQwenDownloadPrompt = true
     }
 
     private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {

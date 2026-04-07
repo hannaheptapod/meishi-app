@@ -5,11 +5,13 @@
 コードを変更する前に必ず実行すること：
 
 1. `git branch --show-current` でブランチを確認
-2. `main` なら先にブランチを切る（例：`feature/<機能名>`・`fix/<修正内容>`・`docs/<内容>`）
-3. ブランチを切ってから編集開始
+2. **規定外プレフィックス**（`claude/` `agent/` `temp/` 等）なら **即座にリネーム**（`git branch -m <旧名> feature/<新名>`）
+3. `main` にいる場合は **絶対に禁止**。`develop` に切り替えてからブランチを切る
+4. `develop` にいる場合は `feature/<機能名>` などのブランチを切ってから編集開始
+5. `feature/*` / `fix/*` 等の規定ブランチにいる場合はそのまま作業継続
 
 作業完了時：
-4. 実装内容が CLAUDE.md の「CoreData スキーマ」「ディレクトリ構成」「実装済み機能」に反映されているか確認し、ズレがあれば同じPRで更新する
+6. 実装内容が CLAUDE.md の「CoreData スキーマ」「ディレクトリ構成」「実装済み機能」に反映されているか確認し、ズレがあれば同じPRで更新する
 
 <important>
 ## 必須スキル（hookで強制。違反時はユーザーが検知する）
@@ -17,20 +19,40 @@
 ユーザーのプロンプトを受け取ったら、コード修正やファイル読み込みの**前に**、
 以下の2つのスキルをこの順で実行せよ:
 
-1. `/branch` — mainなら作業ブランチを作成。main以外なら確認のみ
+1. `/branch` — ブランチ確認・規定外プレフィックスなら即リネーム・main/developなら作業ブランチを作成
 2. `/translate` — ユーザーの指示を「ユーザー語→エンジニア語→リポジトリの具体箇所」に2段階翻訳
 
 この2つを**スキップしてはならない**。
 hookの `<user-prompt-submit-hook>` メッセージでも同じ指示が届く。
+
+**hookによる自動ブロック（`.claude/hooks/guard-git.sh`）：**
+- `main` / `develop` への直接コミット・マージ・push → **exit 2 でブロック**
+- `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックスでのブランチ作成 → **exit 2 でブロック**
 </important>
 
 ---
 
-## ブランチ・PR 戦略（厳守）
+## ブランチ・PR 戦略（Git Flow・厳守）
 
-- **main への直接 push・commit は絶対禁止。** 必ず feature ブランチを切り、PR を通してマージする
-- ブランチ命名：`feature/<機能名>`・`fix/<修正内容>`・`docs/<内容>`
-- main にマージ後は作業ブランチをローカル・リモートともに削除する
+### ブランチ構成
+
+```
+main          本番リリース済みコード（App Store にリリースされたもの）。タグ（v1.0, v1.1）を打つ
+develop       次のリリースに向けた統合ブランチ。常に動作する状態を保つ
+feature/*     1機能1ブランチ。develop から分岐し develop へ PR でマージ
+release/*     App Store 提出前の最終確認・軽微バグ修正のみ。機能追加禁止
+hotfix/*      本番の緊急バグ修正。main から分岐し main と develop の両方へマージ
+```
+
+### ルール
+
+- **ブランチ名は必ず規定のプレフィックスを使うこと。** `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス（`claude/` など外部ツール・AIエージェントが自動生成するものを含む）は使用禁止。外部から指定されたブランチ名であっても規定外なら `/branch` スキルで**即座にリネーム**する。
+- **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
+- **日常の開発フロー：** `develop` から `feature/<機能名>` を切る → PR → `develop` へマージ
+- **リリースフロー：** `develop` から `release/<バージョン>` を切る → `main` と `develop` の両方にマージ → `main` にタグ付け
+- **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
+- ブランチ命名：`feature/<機能名>`・`fix/<修正内容>`・`release/<x.y>`・`hotfix/<内容>`・`docs/<内容>`・`chore/<内容>`
+- マージ後は作業ブランチをローカル・リモートともに削除する
 - PR は機能単位でまとめる。無関係な変更を混在させない
 
 ---
@@ -49,9 +71,9 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。モデルフ�
 | UI フレームワーク | SwiftUI |
 | データ永続化 | CoreData（端末内のみ・オフライン完結） |
 | OCR（文字認識） | Vision Framework（VNRecognizeTextRequest） |
-| 意味分析 Tier 1 | Apple Foundation Models（FoundationModels framework・`#if canImport` で条件付きコンパイル・iOS 26+） |
-| 意味分析 Tier 2 | Qwen3-0.6B-4bit CoreML Prefill/Decode 分割（LocalLLMService / CloudKit経由 or ローカル配置） |
-| 意味分析 Tier 3 | 正規表現ベース分類（CardFieldClassifier・常時利用可能） |
+| 意味分析（Apple Intelligence端末） | Apple Foundation Models（FoundationModels framework・`#if canImport` で条件付きコンパイル・iOS 26+） |
+| 意味分析（非対応端末） | Qwen3-0.6B-4bit CoreML Prefill/Decode 分割（LocalLLMService / CloudKit経由 or ローカル配置） |
+| 意味分析（前後段処理・常時） | 正規表現ベース分類（CardFieldClassifier・常時利用可能） |
 | BPEトークナイザー | Qwen25Tokenizer（HuggingFace tokenizer.json を解析） |
 | カメラ | AVFoundation |
 | 連絡先連携 | CNContactStore（Contacts framework） |
@@ -63,27 +85,31 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。モデルフ�
 
 ---
 
-## AI処理の3層構成
+## AI処理の構成
 
 **OCR（Vision Framework）**
 - `VNRecognizeTextRequest`・`.accurate` モード・`recognitionLanguages = ["ja-JP", "en-US"]`
 - 出力：テキスト行の配列（`[String]`）
 
-**意味分析（3段階カスケード）**
+**意味分析（デバイス分岐モデル）**
 
 ```
-Tier 1: Apple Intelligence（iOS 26+ / iPhone 15 Pro以降）
-         ↓ 利用不可 or 失敗
-Tier 2: Qwen3-0.6B CoreML Prefill/Decode 分割（LocalLLMService / ~570MB CloudKit or ローカル配置）
-         ↓ 未ダウンロード or 失敗
-Tier 3: CardFieldClassifier（正規表現・常時利用可能）
+【Apple Intelligence 対応端末】      【非対応端末】
+iOS 26+ / iPhone 15 Pro以降          それ以外のデバイス
+        ↓                                    ↓
+Foundation Models のみ使用          Qwen3-0.6B CoreML のみ使用
+（両エンジンは排他利用・フォールバック連鎖なし）
+
+【両端末共通】
+前段処理: CardFieldClassifier（正規表現）→ 確定フィールドを抽出
+後段処理: CardFieldClassifier（正規表現）→ 残余行から会社・役職を補完
 ```
 
-- `automatic`（デフォルト）/ `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
-- **全Tier共通の前段処理（ハイブリッド方式）**：`CardFieldClassifier.classifyStructuredFields` で Pass1（正規表現：email・phone・URL・住所・会社・部署・役職を抽出）+ Pass2（OCR座標情報を使った名前スコアリング：フリガナ近接・フォントサイズ・位置情報で確信度判定、>0.4 で名前確定）を実行。未分類行のみを各Tierの LLM に送り、結果をマージする。ルールベース確定結果を常に優先
-- **Tier 1**：ハイブリッド前段処理 → 未分類行のみ `@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。既知フィールドをプロンプトコンテキストとして渡し幻覚を防止。email/phone/address/website はルールベース結果を常に優先
-- **Tier 2**：ハイブリッド前段処理 → 未分類行のみ LLM で**単一パス分類**（1行1回の forward pass でカテゴリ判定：name/title/department/company）。自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）。Decode モデル優先（mask 不要）・出力不正時 Prefill フォールバック。名前行はスペース分割で姓名分離。`computeUnits = .cpuAndGPU`（ANE の int32 非互換を回避）。10秒タイムアウト
-- **Tier 3**：`classify(lines:)` による全フィールド分類（Pass1 + Pass2 + 残り行から会社・役職補完）。LLM不使用・常時利用可能
+- `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
+- **両LLMエンジン共通の前後段処理（ハイブリッド方式）**：`CardFieldClassifier.classifyStructuredFields` で Pass1（正規表現：email・phone・URL・住所・会社・部署・役職を抽出）+ Pass2（OCR座標情報を使った名前スコアリング：フリガナ近接・フォントサイズ・位置情報で確信度判定、>0.4 で名前確定）を実行。未分類行のみを各LLMエンジンに送り、結果をマージする。ルールベース確定結果を常に優先
+- **Apple Intelligence 対応端末**：ハイブリッド前段処理 → 未分類行のみ `@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。既知フィールドをプロンプトコンテキストとして渡し幻覚を防止。email/phone/address/website はルールベース結果を常に優先
+- **非対応端末**：ハイブリッド前段処理 → 未分類行のみ LLM で**単一パス分類**（1行1回の forward pass でカテゴリ判定：name/title/department/company）。自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）。Decode モデル優先（mask 不要）・出力不正時 Prefill フォールバック。名前行はスペース分割で姓名分離。`computeUnits = .cpuAndGPU`（ANE の int32 非互換を回避）。10秒タイムアウト
+- **前後段処理（常時）**：`classify(lines:)` による全フィールド分類（Pass1 + Pass2 + 残り行から会社・役職補完）。LLM不使用・常時利用可能
 
 ---
 
@@ -115,7 +141,7 @@ meishi-app/
 │   │   ├── LockScreenView.swift                # 生体認証ロック画面
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
 │   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
-│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理
+│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
 │   │   ├── CardFormViewModel.swift
@@ -194,7 +220,7 @@ meishi-app/
 
 - 基本CRUD（一覧・詳細・手動入力・CoreData永続化）
 - ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
-- カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（全3Tier共通のclassifyStructuredFields前段処理）
+- カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（両LLMエンジン共通のclassifyStructuredFields前段処理）
 - 連続撮影（バッチ撮影）：標準カメラUIで複数枚連続撮影し、撮影完了後にまとめて確認・保存。CameraBatchCapture（純UIKit・シングルトン）がカメラ表示を管理し、SwiftUIモーダルとの競合を回避。cameraOverlayViewで撮影枚数カウンター＋「完了」ボタンを標準UIに重ねる。BatchReviewViewでCardFormViewを順番に表示
 - Qwen3-0.6B CoreML Prefill/Decode 分割推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM**単一パス分類**（1行1回forward pass・自動回帰生成廃止）・Decodeモデル優先（mask不要）・Decode出力不正時Prefillフォールバック・`.cpuAndGPU`（ANE int32非互換回避）・10秒タイムアウト・BPEトークナイザー）
 - モデルファイル二重パス: Documents/LocalLLM/（開発用・Finder/iTunes で転送）→ Application Support/LocalLLM/（CloudKit ダウンロード）の優先順で検索
@@ -221,6 +247,8 @@ meishi-app/
 - AI自動タグ提案：名刺スキャン後、既存タグから該当するものをAIが提案。各タグについて1回forward passで yes/no 分類。CardFormView のタグセクションに「AI提案」チップとして表示。タップで適用。タグ20個まで対応
 - 人脈インサイト：名刺データの自動集計（会社別・エリア別・職種別・月別推移）。CoreData集約クエリのみでLLM不使用。メニューの「インサイト」から遷移
 - AI重複検出強化：Levenshtein閾値未満（0.5〜閾値）のボーダーライン候補をAIで二次判定。会社名形式差異（「株式会社ABC」vs「ABC」）や転職ケース（同一人物・異なる会社/役職）を捕捉。「AI検出」バッジで表示
+- アプリ内リンク：設定画面にプライバシーポリシー・サポートページへの Link を配置（GitHub Pages でホスト）
+- CoreData エラーハンドリング：ストア読み込み失敗時に fatalError ではなくアラートで通知（loadError プロパティ）
 
 ---
 
@@ -245,8 +273,8 @@ meishi-app/
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
 - `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
-- `UIFileSharingEnabled`：Documents ディレクトリへの Finder/iTunes ファイル共有を有効化（開発用モデル配置）
-- `LSSupportsOpeningDocumentsInPlace`：ドキュメントの直接アクセスを有効化
+- `UIFileSharingEnabled`：`false`（本番ビルド）。開発時のモデル配置には Application Support を使用
+- `LSSupportsOpeningDocumentsInPlace`：`false`（本番ビルド）
 - CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 
 ---
