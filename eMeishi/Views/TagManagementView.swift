@@ -120,7 +120,7 @@ struct TagManagementView: View {
                     tagToDelete = nil
                 }
             } message: {
-                Text("「\(tagToDelete?.tagName ?? "")」を削除します。紐づく名刺からもタグが外れます。")
+                Text("「\(tagToDelete?.tagName ?? "")」を削除します。ひもづく名刺からもタグが外れます。")
             }
             .sheet(item: $tagToEdit) { tag in
                 TagEditSheet(tag: tag)
