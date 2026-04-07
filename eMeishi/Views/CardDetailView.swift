@@ -107,11 +107,18 @@ struct CardDetailView: View {
                 Section("その他") {
                     if let address = card.address, !address.isEmpty {
                         Label {
-                            Text(address)
+                            if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                               let mapURL = URL(string: "maps://?q=\(encoded)") {
+                                Link(address, destination: mapURL)
+                                    .tint(.blue)
+                            } else {
+                                Text(address)
+                            }
                         } icon: {
                             Image(systemName: "mappin.and.ellipse")
                                 .foregroundStyle(.secondary)
                         }
+                        .accessibilityHint("タップして地図アプリで開く")
                     }
                     if let website = card.website, !website.isEmpty {
                         if let url = URL(string: website) {
