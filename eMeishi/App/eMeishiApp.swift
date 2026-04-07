@@ -15,6 +15,7 @@ struct EMeishiApp: App {
     @State private var backgroundedAt: Date?
     @State private var showPrivacyOverlay = false
     @State private var showQwenDownloadPrompt = false
+    @State private var showCoreDataError = false
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
     private let settings = SettingsStore.shared
@@ -56,6 +57,16 @@ struct EMeishiApp: App {
             .task {
                 guard !isUITest else { return }
                 checkAndPromptQwenDownload()
+            }
+            .alert("データベースエラー", isPresented: $showCoreDataError) {
+                Button("OK") {}
+            } message: {
+                Text("データの読み込みに失敗しました。アプリを再起動してください。問題が続く場合は、端末のストレージ空き容量を確認してください。")
+            }
+            .onAppear {
+                if persistenceController.loadError != nil {
+                    showCoreDataError = true
+                }
             }
             .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
                 Button("ダウンロード（約570MB）") {
