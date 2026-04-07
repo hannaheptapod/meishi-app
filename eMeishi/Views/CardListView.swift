@@ -364,7 +364,11 @@ struct CardListView: View {
                         cardRow(for: card)
                     }
                     .onDelete { offsets in
-                        viewModel.deleteCards(offsets.map { viewModel.filteredCards[$0] })
+                        // 確認ダイアログを経由してから削除（HIG: 取り消せない破壊的操作は確認が必要）
+                        if let card = offsets.map({ viewModel.filteredCards[$0] }).first {
+                            cardToDelete = card
+                            isShowingDeleteConfirm = true
+                        }
                     }
                     .deleteDisabled(editMode == .active)
                 } else {
@@ -375,7 +379,11 @@ struct CardListView: View {
                                 cardRow(for: card)
                             }
                             .onDelete { offsets in
-                                viewModel.deleteCards(offsets.map { section.cards[$0] })
+                                // 確認ダイアログを経由してから削除（HIG: 取り消せない破壊的操作は確認が必要）
+                                if let card = offsets.map({ section.cards[$0] }).first {
+                                    cardToDelete = card
+                                    isShowingDeleteConfirm = true
+                                }
                             }
                             .deleteDisabled(editMode == .active)
                         } header: {
