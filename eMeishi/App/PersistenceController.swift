@@ -8,6 +8,9 @@ struct PersistenceController {
     // アプリ全体で共有するシングルトン
     static let shared = PersistenceController()
 
+    /// CoreData ストア読み込みエラー（nil なら正常）
+    private(set) var loadError: NSError?
+
     // PreviewやテストでもアクセスできるようにPreview用インスタンスを用意
     static var preview: PersistenceController = {
         let controller = PersistenceController(inMemory: true)
@@ -110,11 +113,14 @@ struct PersistenceController {
                 description.cloudKitContainerOptions = nil
             }
         }
+        var loadErr: NSError?
         container.loadPersistentStores { _, error in
             if let error = error as NSError? {
-                fatalError("CoreData の読み込みに失敗しました: \(error), \(error.userInfo)")
+                AppLogger.persistence.error("CoreData の読み込みに失敗しました: \(error), \(error.userInfo)")
+                loadErr = error
             }
         }
+        self.loadError = loadErr
         // 別スレッドからの変更を自動マージ
         container.viewContext.automaticallyMergesChangesFromParent = true
         // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）

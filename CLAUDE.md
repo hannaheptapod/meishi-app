@@ -141,7 +141,7 @@ meishi-app/
 │   │   ├── LockScreenView.swift                # 生体認証ロック画面
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
 │   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
-│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理
+│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
 │   │   ├── CardFormViewModel.swift
@@ -247,6 +247,8 @@ meishi-app/
 - AI自動タグ提案：名刺スキャン後、既存タグから該当するものをAIが提案。各タグについて1回forward passで yes/no 分類。CardFormView のタグセクションに「AI提案」チップとして表示。タップで適用。タグ20個まで対応
 - 人脈インサイト：名刺データの自動集計（会社別・エリア別・職種別・月別推移）。CoreData集約クエリのみでLLM不使用。メニューの「インサイト」から遷移
 - AI重複検出強化：Levenshtein閾値未満（0.5〜閾値）のボーダーライン候補をAIで二次判定。会社名形式差異（「株式会社ABC」vs「ABC」）や転職ケース（同一人物・異なる会社/役職）を捕捉。「AI検出」バッジで表示
+- アプリ内リンク：設定画面にプライバシーポリシー・サポートページへの Link を配置（GitHub Pages でホスト）
+- CoreData エラーハンドリング：ストア読み込み失敗時に fatalError ではなくアラートで通知（loadError プロパティ）
 
 ---
 
@@ -271,8 +273,8 @@ meishi-app/
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
 - `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
-- `UIFileSharingEnabled`：Documents ディレクトリへの Finder/iTunes ファイル共有を有効化（開発用モデル配置）
-- `LSSupportsOpeningDocumentsInPlace`：ドキュメントの直接アクセスを有効化
+- `UIFileSharingEnabled`：`false`（本番ビルド）。開発時のモデル配置には Application Support を使用
+- `LSSupportsOpeningDocumentsInPlace`：`false`（本番ビルド）
 - CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 
 ---
