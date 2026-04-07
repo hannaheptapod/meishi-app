@@ -84,11 +84,11 @@ struct CardFormView: View {
                             ProgressView()
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(viewModel.ocrStage)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
                                 if viewModel.ocrStage == "AIモデルで分析中..." {
                                     Text("初回はモデルのロードに時間がかかります")
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -100,7 +100,7 @@ struct CardFormView: View {
                 if let errorMessage = viewModel.ocrErrorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundColor(.red)
+                            .foregroundStyle(.red)
                             .font(.footnote)
                     }
                 }
@@ -165,7 +165,7 @@ struct CardFormView: View {
                                 .keyboardType(.phonePad)
                                 .textContentType(.telephoneNumber)
                             if viewModel.phones.count > 1 {
-                                Button {
+                                Button(role: .destructive) {
                                     viewModel.phones.remove(at: i)
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
