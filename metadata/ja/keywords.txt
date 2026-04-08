@@ -1,1 +1,1 @@
-名刺管理,OCR,AI,スキャン,ビジネス,連絡先,名刺読み取り,カメラ,vCard,CSV
+名刺管理,Apple Intelligence,AI,OCR,LLM,自然言語検索,オンデバイス,名刺読み取り,連絡先,vCard
