@@ -97,33 +97,52 @@ class CloudKitModelService {
     func downloadModel(modelDir: URL,
                        tokenizerDestination: URL,
                        progress: @escaping (Double) -> Void) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        // Step 1: 小ファイル + weightChunkCount を一括取得
+        let smallKeys: [String] = modelConfigs.flatMap { config in
+            [config.coremlDataField, config.metadataField, config.modelMilField]
+        } + [tokenizerField, weightChunkCountField]
+
+        let metaRecord = try await fetchRecord(desiredKeys: smallKeys, progress: { p in
+            progress(p * 0.1)  // 全体の 0-10%
+        })
+
+        guard let chunkCount = metaRecord[weightChunkCountField] as? Int64, chunkCount > 0 else {
+            throw CloudKitModelError.missingChunkCount
+        }
+
+        // 小ファイルを書き出し（アセットは operation 生存中に処理済み）
+        let fm = FileManager.default
+        try writeSmallFiles(record: metaRecord, modelDir: modelDir,
+                            tokenizerDestination: tokenizerDestination, fm: fm)
+
+        // Step 2: weight チャンクを1本ずつ個別取得
+        let totalChunks = Int(chunkCount)
+        for i in 0..<totalChunks {
+            let field = "\(weightChunkPrefix)\(i)"
+            let chunkRecord = try await fetchRecord(desiredKeys: [field], progress: { p in
+                let base = 0.1 + Double(i) / Double(totalChunks) * 0.9
+                let step = 0.9 / Double(totalChunks)
+                progress(base + p * step)
+            })
+            try writeChunk(record: chunkRecord, field: field, index: i,
+                           modelDir: modelDir, fm: fm)
+        }
+
+        progress(1.0)
+    }
+
+    // MARK: - レコード1件取得（desiredKeys で絞り込み）
+
+    private func fetchRecord(desiredKeys: [String],
+                             progress: @escaping (Double) -> Void) async throws -> CKRecord {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
             let operation = CKFetchRecordsOperation(recordIDs: [modelRecordID])
             operation.qualityOfService = .userInitiated
-
-            operation.perRecordProgressBlock = { _, p in
-                progress(p)
-            }
-
-            // ⚠️ CKAsset.fileURL は operation 生存中のみ有効な一時ファイル。
-            // ファイルのコピーをすべてこのコールバック内で完結させる。
-            operation.perRecordResultBlock = { [weak self] _, result in
-                guard let self else {
-                    continuation.resume(throwing: CloudKitModelError.noRecordFound)
-                    return
-                }
+            operation.desiredKeys = desiredKeys
+            operation.perRecordProgressBlock = { _, p in progress(p) }
+            operation.perRecordResultBlock = { _, result in
                 switch result {
-                case .success(let record):
-                    do {
-                        try self.processRecord(
-                            record: record,
-                            modelDir: modelDir,
-                            tokenizerDestination: tokenizerDestination
-                        )
-                        continuation.resume()
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
+                case .success(let record): continuation.resume(returning: record)
                 case .failure(let error):
                     if let ckError = error as? CKError, ckError.code == .unknownItem {
                         continuation.resume(throwing: CloudKitModelError.noRecordFound)
@@ -132,35 +151,25 @@ class CloudKitModelService {
                     }
                 }
             }
-
-            database.add(operation)
+            self.database.add(operation)
         }
-        progress(1.0)
     }
 
-    // MARK: - レコード処理（operation コールバック内で呼ぶこと）
+    // MARK: - 小ファイル書き出し（operation コールバック内で呼ぶこと）
 
-    private func processRecord(record: CKRecord,
-                               modelDir: URL,
-                               tokenizerDestination: URL) throws {
-        let fm = FileManager.default
-
-        guard let chunkCount = record[weightChunkCountField] as? Int64, chunkCount > 0 else {
-            throw CloudKitModelError.missingChunkCount
-        }
-
-        // 各モデルの小ファイル + weight チャンク結合
+    private func writeSmallFiles(record: CKRecord,
+                                 modelDir: URL,
+                                 tokenizerDestination: URL,
+                                 fm: FileManager) throws {
         for config in modelConfigs {
             let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
-
-            let smallFiles: [(field: String, path: String)] = [
+            let smallFiles: [(String, String)] = [
                 (config.coremlDataField, "coremldata.bin"),
                 (config.metadataField,   "metadata.json"),
                 (config.modelMilField,   "model.mil"),
             ]
             for (field, relativePath) in smallFiles {
-                guard let asset = record[field] as? CKAsset,
-                      let sourceURL = asset.fileURL else {
+                guard let asset = record[field] as? CKAsset, let sourceURL = asset.fileURL else {
                     throw CloudKitModelError.missingAsset(field)
                 }
                 let destURL = modelSubDir.appendingPathComponent(relativePath)
@@ -168,17 +177,7 @@ class CloudKitModelService {
                 try? fm.removeItem(at: destURL)
                 try fm.copyItem(at: sourceURL, to: destURL)
             }
-
-            try concatenateChunks(
-                record: record,
-                range: config.chunkRange,
-                modelSubDir: modelSubDir,
-                modelName: config.dirName,
-                fm: fm
-            )
         }
-
-        // tokenizer.json を保存
         guard let tokenizerAsset = record[tokenizerField] as? CKAsset,
               let tokenizerSourceURL = tokenizerAsset.fileURL else {
             throw CloudKitModelError.missingAsset(tokenizerField)
@@ -188,41 +187,40 @@ class CloudKitModelService {
         try fm.copyItem(at: tokenizerSourceURL, to: tokenizerDestination)
     }
 
-    // MARK: - weight チャンク結合
+    // MARK: - weight チャンク書き出し（operation コールバック内で呼ぶこと）
 
-    private func concatenateChunks(record: CKRecord,
-                                   range: Range<Int>,
-                                   modelSubDir: URL,
-                                   modelName: String,
-                                   fm: FileManager) throws {
-        let weightsDir = modelSubDir.appendingPathComponent("weights", isDirectory: true)
+    private func writeChunk(record: CKRecord,
+                            field: String,
+                            index: Int,
+                            modelDir: URL,
+                            fm: FileManager) throws {
+        // chunk index → どのモデルの weights/ に書き込むかを特定
+        guard let config = modelConfigs.first(where: { $0.chunkRange.contains(index) }) else {
+            throw CloudKitModelError.missingAsset(field)
+        }
+        let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
+        let weightsDir  = modelSubDir.appendingPathComponent("weights", isDirectory: true)
         try fm.createDirectory(at: weightsDir, withIntermediateDirectories: true)
 
-        let tempURL = weightsDir.appendingPathComponent("weight_temp.bin")
-        try? fm.removeItem(at: tempURL)
-        fm.createFile(atPath: tempURL.path, contents: nil)
-
-        guard let outputHandle = try? FileHandle(forWritingTo: tempURL) else {
-            throw CloudKitModelError.chunkConcatenationFailed(modelName)
+        guard let chunkAsset = record[field] as? CKAsset, let chunkURL = chunkAsset.fileURL else {
+            throw CloudKitModelError.missingAsset(field)
         }
 
-        for i in range {
-            let field = "\(weightChunkPrefix)\(i)"
-            let chunkAsset = record[field] as? CKAsset
-            let chunkURL = chunkAsset?.fileURL
-            print("[CloudKit] chunk \(i): asset=\(chunkAsset != nil), fileURL=\(chunkURL?.path ?? "nil")")
-            guard let chunkAsset, let chunkURL else {
-                try? outputHandle.close()
-                throw CloudKitModelError.missingAsset(field)
-            }
-            _ = chunkAsset
-            let chunkData = try Data(contentsOf: chunkURL)
-            outputHandle.write(chunkData)
-        }
-        try outputHandle.close()
-
+        // weight.bin に追記 or 新規作成
         let weightDest = weightsDir.appendingPathComponent("weight.bin")
-        try? fm.removeItem(at: weightDest)
-        try fm.moveItem(at: tempURL, to: weightDest)
+        let isFirst = index == config.chunkRange.lowerBound
+        if isFirst { try? fm.removeItem(at: weightDest) }
+
+        if !fm.fileExists(atPath: weightDest.path) {
+            fm.createFile(atPath: weightDest.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: weightDest) else {
+            throw CloudKitModelError.chunkConcatenationFailed(config.dirName)
+        }
+        handle.seekToEndOfFile()
+        let data = try Data(contentsOf: chunkURL)
+        handle.write(data)
+        try handle.close()
     }
+
 }
