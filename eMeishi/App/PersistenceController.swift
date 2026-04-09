@@ -34,6 +34,7 @@ struct PersistenceController {
             ("中村", "なかむら", "剛", "つよし",   "グローバル商事株式会社",     "ぐろーばるしょうじ",   "経理部",          "取締役CFO",        "nakamura@global-shoji.co.jp",    "06-2345-9999"),
         ]
 
+        var cards: [BusinessCard] = []
         for (i, s) in samples.enumerated() {
             let card = BusinessCard(context: context)
             card.id               = UUID()
@@ -49,7 +50,33 @@ struct PersistenceController {
             card.phone            = s.9
             card.createdAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
             card.updatedAt        = Date(timeIntervalSinceNow: -Double(i) * 86400)
+            cards.append(card)
         }
+
+        // タグ3種を作成（スクリーンショット用サンプル）
+        let tagImportant = Tag(context: context)
+        tagImportant.id = UUID(); tagImportant.name = "重要"
+        tagImportant.colorHex = "#FF3B30"; tagImportant.sortOrder = 0; tagImportant.createdAt = Date()
+
+        let tagIT = Tag(context: context)
+        tagIT.id = UUID(); tagIT.name = "IT"
+        tagIT.colorHex = "#007AFF"; tagIT.sortOrder = 1; tagIT.createdAt = Date()
+
+        let tagClient = Tag(context: context)
+        tagClient.id = UUID(); tagClient.name = "取引先"
+        tagClient.colorHex = "#34C759"; tagClient.sortOrder = 2; tagClient.createdAt = Date()
+
+        // お気に入り設定（山田太郎・山田健一・佐藤美咲）
+        cards[0].isFavorite = true
+        cards[2].isFavorite = true
+        cards[4].isFavorite = true
+
+        // タグ付与
+        cards[0].addToTags(tagImportant); cards[0].addToTags(tagIT) // 山田太郎: 重要+IT
+        cards[2].addToTags(tagIT)                                    // 山田健一: IT
+        cards[3].addToTags(tagClient)                                // 佐藤誠: 取引先
+        cards[4].addToTags(tagClient)                                // 佐藤美咲: 取引先
+        cards[6].addToTags(tagIT); cards[6].addToTags(tagClient)     // 田中由美: IT+取引先
 
         try? context.save()
         return controller
