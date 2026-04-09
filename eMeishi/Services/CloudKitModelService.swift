@@ -24,20 +24,14 @@ class CloudKitModelService {
     private let database = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
     private let recordType = "MLModelPackage"
 
-    // MARK: - モデルファイル名
-
-    private let embedModelDirName  = "qwen_embeddings.mlmodelc"
-    private let ffnModelDirName    = "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc"
-    private let lmheadModelDirName = "qwen_lm_head_lut6.mlmodelc"
-
-    // MARK: - アセットフィールド定義（本番スキーマに合わせた命名）
+    // MARK: - モデルフィールド定義
 
     private struct ModelAssetConfig {
         let dirName: String
         let coremlDataField: String
         let metadataField: String
         let modelMilField: String
-        /// weightChunk のインデックス範囲（例: 0..<2）
+        /// 使用する weightChunk インデックスの範囲
         let chunkRange: Range<Int>
     }
 
@@ -65,8 +59,8 @@ class CloudKitModelService {
         ),
     ]
 
-    private let tokenizerField     = "tokenizerAsset"
-    private let weightChunkPrefix  = "weightChunk"
+    private let tokenizerField        = "tokenizerAsset"
+    private let weightChunkPrefix     = "weightChunk"
     private let weightChunkCountField = "weightChunkCount"
 
     // MARK: - エラー型
@@ -93,12 +87,17 @@ class CloudKitModelService {
 
     private init() {}
 
-    // MARK: - レコード取得
+    // MARK: - モデルダウンロード
 
     private let modelRecordID = CKRecord.ID(recordName: "65526C03-31FB-4EE0-A61D-7C2C91C1C424")
 
-    private func fetchRecordWithProgress(progress: @escaping (Double) -> Void) async throws -> CKRecord {
-        try await withCheckedThrowingContinuation { continuation in
+    /// CloudKit からモデルファイルをダウンロードし、指定ディレクトリに保存する。
+    /// CKAsset.fileURL は operation 完了後に無効になるため、すべてのファイルコピーを
+    /// perRecordResultBlock コールバック内（operation 生存中）で完結させる。
+    func downloadModel(modelDir: URL,
+                       tokenizerDestination: URL,
+                       progress: @escaping (Double) -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let operation = CKFetchRecordsOperation(recordIDs: [modelRecordID])
             operation.qualityOfService = .userInitiated
 
@@ -106,10 +105,25 @@ class CloudKitModelService {
                 progress(p)
             }
 
-            operation.perRecordResultBlock = { _, result in
+            // ⚠️ CKAsset.fileURL は operation 生存中のみ有効な一時ファイル。
+            // ファイルのコピーをすべてこのコールバック内で完結させる。
+            operation.perRecordResultBlock = { [weak self] _, result in
+                guard let self else {
+                    continuation.resume(throwing: CloudKitModelError.noRecordFound)
+                    return
+                }
                 switch result {
                 case .success(let record):
-                    continuation.resume(returning: record)
+                    do {
+                        try self.processRecord(
+                            record: record,
+                            modelDir: modelDir,
+                            tokenizerDestination: tokenizerDestination
+                        )
+                        continuation.resume()
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
                 case .failure(let error):
                     if let ckError = error as? CKError, ckError.code == .unknownItem {
                         continuation.resume(throwing: CloudKitModelError.noRecordFound)
@@ -121,17 +135,16 @@ class CloudKitModelService {
 
             database.add(operation)
         }
+        progress(1.0)
     }
 
-    // MARK: - モデルダウンロード
+    // MARK: - レコード処理（operation コールバック内で呼ぶこと）
 
-    func downloadModel(modelDir: URL,
-                       tokenizerDestination: URL,
-                       progress: @escaping (Double) -> Void) async throws {
-        let record = try await fetchRecordWithProgress(progress: progress)
+    private func processRecord(record: CKRecord,
+                               modelDir: URL,
+                               tokenizerDestination: URL) throws {
         let fm = FileManager.default
 
-        // weightChunkCount を取得
         guard let chunkCount = record[weightChunkCountField] as? Int64, chunkCount > 0 else {
             throw CloudKitModelError.missingChunkCount
         }
@@ -140,7 +153,6 @@ class CloudKitModelService {
         for config in modelConfigs {
             let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
 
-            // 小ファイル（coremldata.bin / metadata.json / model.mil）
             let smallFiles: [(field: String, path: String)] = [
                 (config.coremlDataField, "coremldata.bin"),
                 (config.metadataField,   "metadata.json"),
@@ -157,7 +169,6 @@ class CloudKitModelService {
                 try fm.copyItem(at: sourceURL, to: destURL)
             }
 
-            // weight チャンクを結合して weights/weight.bin に保存
             try concatenateChunks(
                 record: record,
                 range: config.chunkRange,
@@ -175,8 +186,6 @@ class CloudKitModelService {
         try fm.createDirectory(at: tokenizerDestination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: tokenizerDestination)
         try fm.copyItem(at: tokenizerSourceURL, to: tokenizerDestination)
-
-        progress(1.0)
     }
 
     // MARK: - weight チャンク結合
