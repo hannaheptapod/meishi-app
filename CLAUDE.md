@@ -289,7 +289,7 @@ meishi-app/
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
 - `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
-- `UIFileSharingEnabled`：`false`（本番ビルド）。開発時のモデル配置には Application Support を使用
+- `UIFileSharingEnabled`：`true`（デバッグビルド・開発用モデル転送に使用）／`false`（本番ビルド前に必ず戻す）
 - `LSSupportsOpeningDocumentsInPlace`：`false`（本番ビルド）
 - CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 

@@ -27,7 +27,7 @@ class LocalLLMService: ObservableObject {
     // MARK: - モデルファイル名
 
     private let embedModelName   = "qwen_embeddings.mlmodelc"
-    private let ffnModelName     = "qwen_FFN_PF_lut6.mlmodelc"
+    private let ffnModelName     = "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc"
     private let lmheadModelName  = "qwen_lm_head_lut6.mlmodelc"
 
     // MARK: - 推論パラメータ（Anemll meta.yaml から）

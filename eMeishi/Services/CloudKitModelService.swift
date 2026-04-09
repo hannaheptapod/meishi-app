@@ -8,14 +8,18 @@ import CloudKit
 ///   - embedMetadataAsset:     Embed モデルの metadata.json
 ///   - embedCoremlDataAsset:   Embed モデルの coremldata.bin
 ///   - embedModelMilAsset:     Embed モデルの model.mil
+///   - embedWeightChunk0〜N:   Embed の weight.bin チャンク（各 ≤200MB）
+///   - embedWeightChunkCount:  Embed チャンク数
 ///   - ffnMetadataAsset:       FFN モデルの metadata.json
 ///   - ffnCoremlDataAsset:     FFN モデルの coremldata.bin
 ///   - ffnModelMilAsset:       FFN モデルの model.mil
+///   - ffnWeightChunk0〜N:     FFN の weight.bin チャンク
+///   - ffnWeightChunkCount:    FFN チャンク数
 ///   - lmheadMetadataAsset:    LM Head モデルの metadata.json
 ///   - lmheadCoremlDataAsset:  LM Head モデルの coremldata.bin
 ///   - lmheadModelMilAsset:    LM Head モデルの model.mil
-///   - weightChunk0〜N:        共有 weight.bin のチャンク
-///   - weightChunkCount:       チャンク数
+///   - lmheadWeightChunk0〜N:  LM Head の weight.bin チャンク
+///   - lmheadWeightChunkCount: LM Head チャンク数
 ///   - tokenizerAsset:         tokenizer.json
 class CloudKitModelService {
 
@@ -27,45 +31,64 @@ class CloudKitModelService {
     // MARK: - モデルファイル名
 
     private let embedModelDirName  = "qwen_embeddings.mlmodelc"
-    private let ffnModelDirName    = "qwen_FFN_PF_lut6.mlmodelc"
+    private let ffnModelDirName    = "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc"
     private let lmheadModelDirName = "qwen_lm_head_lut6.mlmodelc"
 
     // MARK: - アセットフィールド定義
 
-    /// Embed モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
-    private let embedAssetFields: [(field: String, relativePath: String)] = [
-        ("embedMetadataAsset",   "metadata.json"),
-        ("embedCoremlDataAsset", "coremldata.bin"),
-        ("embedModelMilAsset",   "model.mil"),
-    ]
+    /// 小ファイル（metadata.json / coremldata.bin / model.mil）のフィールド定義
+    private struct ModelAssetConfig {
+        let dirName: String
+        let fields: [(field: String, relativePath: String)]
+        let weightChunkPrefix: String
+        let weightChunkCountField: String
+    }
 
-    /// FFN モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
-    private let ffnAssetFields: [(field: String, relativePath: String)] = [
-        ("ffnMetadataAsset",   "metadata.json"),
-        ("ffnCoremlDataAsset", "coremldata.bin"),
-        ("ffnModelMilAsset",   "model.mil"),
-    ]
-
-    /// LM Head モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
-    private let lmheadAssetFields: [(field: String, relativePath: String)] = [
-        ("lmheadMetadataAsset",   "metadata.json"),
-        ("lmheadCoremlDataAsset", "coremldata.bin"),
-        ("lmheadModelMilAsset",   "model.mil"),
-    ]
+    private var modelConfigs: [ModelAssetConfig] {
+        [
+            ModelAssetConfig(
+                dirName: embedModelDirName,
+                fields: [
+                    ("embedMetadataAsset",   "metadata.json"),
+                    ("embedCoremlDataAsset", "coremldata.bin"),
+                    ("embedModelMilAsset",   "model.mil"),
+                ],
+                weightChunkPrefix: "embedWeightChunk",
+                weightChunkCountField: "embedWeightChunkCount"
+            ),
+            ModelAssetConfig(
+                dirName: ffnModelDirName,
+                fields: [
+                    ("ffnMetadataAsset",   "metadata.json"),
+                    ("ffnCoremlDataAsset", "coremldata.bin"),
+                    ("ffnModelMilAsset",   "model.mil"),
+                ],
+                weightChunkPrefix: "ffnWeightChunk",
+                weightChunkCountField: "ffnWeightChunkCount"
+            ),
+            ModelAssetConfig(
+                dirName: lmheadModelDirName,
+                fields: [
+                    ("lmheadMetadataAsset",   "metadata.json"),
+                    ("lmheadCoremlDataAsset", "coremldata.bin"),
+                    ("lmheadModelMilAsset",   "model.mil"),
+                ],
+                weightChunkPrefix: "lmheadWeightChunk",
+                weightChunkCountField: "lmheadWeightChunkCount"
+            ),
+        ]
+    }
 
     /// トークナイザーのフィールド名
     private let tokenizerField = "tokenizerAsset"
-
-    /// weight チャンクのフィールドプレフィックス
-    private let weightChunkPrefix = "weightChunk"
 
     // MARK: - エラー型
 
     enum CloudKitModelError: LocalizedError {
         case noRecordFound
         case missingAsset(String)
-        case missingChunkCount
-        case chunkConcatenationFailed
+        case missingChunkCount(String)
+        case chunkConcatenationFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -73,10 +96,10 @@ class CloudKitModelService {
                 return "CloudKit にモデルレコードが見つかりません"
             case .missingAsset(let field):
                 return "アセットが見つかりません: \(field)"
-            case .missingChunkCount:
-                return "weightChunkCount が設定されていません"
-            case .chunkConcatenationFailed:
-                return "weight チャンクの結合に失敗しました"
+            case .missingChunkCount(let model):
+                return "\(model) の weightChunkCount が設定されていません"
+            case .chunkConcatenationFailed(let model):
+                return "\(model) の weight チャンクの結合に失敗しました"
             }
         }
     }
@@ -118,8 +141,8 @@ class CloudKitModelService {
     // MARK: - モデルダウンロード
 
     /// CloudKit からモデルファイルをダウンロードし、指定ディレクトリに保存する。
-    /// Embed / FFN / LM Head の3モデル小ファイル + 共有 weight チャンク + tokenizer を取得。
-    /// weight.bin はすべてのモデルの weights/ にコピーする（Anemll 共有ウェイト構成）。
+    /// Embed / FFN / LM Head それぞれの小ファイル + 各 weight チャンク + tokenizer を取得。
+    /// 各モデルは独自の weight.bin を持つ（Anemll 独立ウェイト構成）。
     /// - Parameters:
     ///   - modelDir: モデルファイルの保存先ディレクトリ（例: .../LocalLLM/）
     ///   - tokenizerDestination: tokenizer.json の保存先
@@ -131,16 +154,12 @@ class CloudKitModelService {
 
         let fm = FileManager.default
 
-        // --- 各モデルの小ファイル保存 ---
-        let modelDirs: [(dirName: String, fields: [(field: String, relativePath: String)])] = [
-            (embedModelDirName,  embedAssetFields),
-            (ffnModelDirName,    ffnAssetFields),
-            (lmheadModelDirName, lmheadAssetFields),
-        ]
+        // --- 各モデルの小ファイル + weight チャンク結合 ---
+        for config in modelConfigs {
+            let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
 
-        for (dirName, fields) in modelDirs {
-            let modelSubDir = modelDir.appendingPathComponent(dirName, isDirectory: true)
-            for (field, relativePath) in fields {
+            // 小ファイル（metadata.json / coremldata.bin / model.mil）
+            for (field, relativePath) in config.fields {
                 guard let asset = record[field] as? CKAsset,
                       let sourceURL = asset.fileURL else {
                     throw CloudKitModelError.missingAsset(field)
@@ -151,6 +170,14 @@ class CloudKitModelService {
                 try? fm.removeItem(at: destURL)
                 try fm.copyItem(at: sourceURL, to: destURL)
             }
+
+            // weight チャンクを結合して weights/weight.bin に保存
+            try concatenateWeightChunks(
+                record: record,
+                config: config,
+                modelSubDir: modelSubDir,
+                fm: fm
+            )
         }
 
         // --- tokenizer.json の保存 ---
@@ -163,23 +190,36 @@ class CloudKitModelService {
         try? fm.removeItem(at: tokenizerDestination)
         try fm.copyItem(at: tokenizerSourceURL, to: tokenizerDestination)
 
-        // --- weight チャンクの結合 ---
-        guard let chunkCount = record["weightChunkCount"] as? Int64, chunkCount > 0 else {
-            throw CloudKitModelError.missingChunkCount
+        progress(1.0)
+    }
+
+    // MARK: - weight チャンク結合
+
+    /// 指定モデルの weight チャンクを結合して weights/weight.bin に保存する
+    private func concatenateWeightChunks(record: CKRecord,
+                                         config: ModelAssetConfig,
+                                         modelSubDir: URL,
+                                         fm: FileManager) throws {
+        guard let chunkCount = record[config.weightChunkCountField] as? Int64, chunkCount > 0 else {
+            throw CloudKitModelError.missingChunkCount(config.dirName)
         }
 
-        // weight.bin を一時ファイルに結合
-        let tempWeightURL = modelDir.appendingPathComponent("weight_temp.bin")
-        try? fm.removeItem(at: tempWeightURL)
-        fm.createFile(atPath: tempWeightURL.path, contents: nil)
-        guard let outputHandle = try? FileHandle(forWritingTo: tempWeightURL) else {
-            throw CloudKitModelError.chunkConcatenationFailed
+        let weightsDir = modelSubDir.appendingPathComponent("weights", isDirectory: true)
+        try fm.createDirectory(at: weightsDir, withIntermediateDirectories: true)
+
+        let tempURL = weightsDir.appendingPathComponent("weight_temp.bin")
+        try? fm.removeItem(at: tempURL)
+        fm.createFile(atPath: tempURL.path, contents: nil)
+
+        guard let outputHandle = try? FileHandle(forWritingTo: tempURL) else {
+            throw CloudKitModelError.chunkConcatenationFailed(config.dirName)
         }
 
         for i in 0..<Int(chunkCount) {
-            let chunkField = "\(weightChunkPrefix)\(i)"
+            let chunkField = "\(config.weightChunkPrefix)\(i)"
             guard let chunkAsset = record[chunkField] as? CKAsset,
                   let chunkURL = chunkAsset.fileURL else {
+                try? outputHandle.close()
                 throw CloudKitModelError.missingAsset(chunkField)
             }
             let chunkData = try Data(contentsOf: chunkURL)
@@ -187,19 +227,8 @@ class CloudKitModelService {
         }
         try outputHandle.close()
 
-        // 各モデルの weights/weight.bin に配置
-        for dirName in [embedModelDirName, ffnModelDirName, lmheadModelDirName] {
-            let weightsDir  = modelDir.appendingPathComponent(dirName, isDirectory: true)
-                                      .appendingPathComponent("weights", isDirectory: true)
-            try fm.createDirectory(at: weightsDir, withIntermediateDirectories: true)
-            let weightDest  = weightsDir.appendingPathComponent("weight.bin")
-            try? fm.removeItem(at: weightDest)
-            try fm.copyItem(at: tempWeightURL, to: weightDest)
-        }
-
-        // 一時ファイル削除
-        try? fm.removeItem(at: tempWeightURL)
-
-        progress(1.0)
+        let weightDest = weightsDir.appendingPathComponent("weight.bin")
+        try? fm.removeItem(at: weightDest)
+        try fm.moveItem(at: tempURL, to: weightDest)
     }
 }
