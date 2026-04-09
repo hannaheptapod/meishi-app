@@ -208,11 +208,14 @@ class CloudKitModelService {
 
         for i in range {
             let field = "\(weightChunkPrefix)\(i)"
-            guard let chunkAsset = record[field] as? CKAsset,
-                  let chunkURL = chunkAsset.fileURL else {
+            let chunkAsset = record[field] as? CKAsset
+            let chunkURL = chunkAsset?.fileURL
+            print("[CloudKit] chunk \(i): asset=\(chunkAsset != nil), fileURL=\(chunkURL?.path ?? "nil")")
+            guard let chunkAsset, let chunkURL else {
                 try? outputHandle.close()
                 throw CloudKitModelError.missingAsset(field)
             }
+            _ = chunkAsset
             let chunkData = try Data(contentsOf: chunkURL)
             outputHandle.write(chunkData)
         }
