@@ -6,6 +6,7 @@ import CoreData
 struct AISearchChatView: View {
 
     @EnvironmentObject private var listViewModel: CardListViewModel
+    @Environment(\.managedObjectContext) private var viewContext
     var initialQuery: String = ""
     @State private var inputText = ""
     @State private var messages: [AISearchService.ChatMessage] = []
@@ -120,8 +121,7 @@ struct AISearchChatView: View {
 
     /// インサイト結果から検索候補を動的生成（最大4件）
     private func buildSuggestions() -> [String] {
-        let context = PersistenceController.shared.container.viewContext
-        let insights = InsightsService.shared.generateInsights(context: context)
+        let insights = InsightsService.shared.generateInsights(context: viewContext)
         var suggestions: [String] = []
 
         // 上位の会社名から候補
