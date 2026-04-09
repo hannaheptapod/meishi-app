@@ -366,12 +366,7 @@ private struct AdvancedSettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        Button("クリア") {
-                            try? llm.deleteModel()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(.red)
+
                     }
                 }
             }
