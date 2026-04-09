@@ -48,7 +48,7 @@
 		<string>remote-notification</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
-	<true/>
+	<string>$(FILE_SHARING_ENABLED)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

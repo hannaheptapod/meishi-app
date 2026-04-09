@@ -1,0 +1,11 @@
+// Release ビルド専用設定
+
+// iTunes ファイル共有（本番では無効）
+FILE_SHARING_ENABLED = NO
+
+// Swift コンパイル条件（#if DEBUG ブロックをすべて除去）
+// → 開発者セクション・seedSampleData・CloudKitModelUploader がビルドから除外される
+SWIFT_ACTIVE_COMPILATION_CONDITIONS =
+
+// テスト可能性不要（最適化優先）
+ENABLE_TESTABILITY = NO
