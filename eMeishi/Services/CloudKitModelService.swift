@@ -2,19 +2,21 @@ import Foundation
 import CloudKit
 
 /// CloudKit Public Database からオンデバイスLLMモデルファイルをダウンロードするサービス。
-/// Prefill/Decode 分割方式の Qwen3-0.6B-4bit モデルに対応。
-/// weight.bin は CKAsset 上限（250MB）を超える場合があるためチャンク分割に対応。
+/// Anemll 変換済み Qwen3-0.6B-ctx512（3モデル分割方式）に対応。
 ///
 /// CloudKit レコード構成（MLModelPackage）:
-///   - prefillMetadataAsset:    Prefill の metadata.json
-///   - prefillCoremlDataAsset:  Prefill の coremldata.bin
-///   - prefillModelMilAsset:    Prefill の model.mil
-///   - decodeMetadataAsset:     Decode の metadata.json
-///   - decodeCoremlDataAsset:   Decode の coremldata.bin
-///   - decodeModelMilAsset:     Decode の model.mil
-///   - weightChunk0〜N:         共有 weight.bin のチャンク（Prefill/Decode で同一ウェイト）
-///   - weightChunkCount:        チャンク数
-///   - tokenizerAsset:          tokenizer.json
+///   - embedMetadataAsset:     Embed モデルの metadata.json
+///   - embedCoremlDataAsset:   Embed モデルの coremldata.bin
+///   - embedModelMilAsset:     Embed モデルの model.mil
+///   - ffnMetadataAsset:       FFN モデルの metadata.json
+///   - ffnCoremlDataAsset:     FFN モデルの coremldata.bin
+///   - ffnModelMilAsset:       FFN モデルの model.mil
+///   - lmheadMetadataAsset:    LM Head モデルの metadata.json
+///   - lmheadCoremlDataAsset:  LM Head モデルの coremldata.bin
+///   - lmheadModelMilAsset:    LM Head モデルの model.mil
+///   - weightChunk0〜N:        共有 weight.bin のチャンク
+///   - weightChunkCount:       チャンク数
+///   - tokenizerAsset:         tokenizer.json
 class CloudKitModelService {
 
     static let shared = CloudKitModelService()
@@ -24,23 +26,31 @@ class CloudKitModelService {
 
     // MARK: - モデルファイル名
 
-    private let prefillModelDirName = "Qwen3-0.6B-Prefill-4bit.mlmodelc"
-    private let decodeModelDirName  = "Qwen3-0.6B-Decode-4bit.mlmodelc"
+    private let embedModelDirName  = "qwen_embeddings.mlmodelc"
+    private let ffnModelDirName    = "qwen_FFN_PF_lut6.mlmodelc"
+    private let lmheadModelDirName = "qwen_lm_head_lut6.mlmodelc"
 
     // MARK: - アセットフィールド定義
 
-    /// Prefill モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
-    private let prefillAssetFields: [(field: String, relativePath: String)] = [
-        ("prefillMetadataAsset",   "metadata.json"),
-        ("prefillCoremlDataAsset", "coremldata.bin"),
-        ("prefillModelMilAsset",   "model.mil"),
+    /// Embed モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
+    private let embedAssetFields: [(field: String, relativePath: String)] = [
+        ("embedMetadataAsset",   "metadata.json"),
+        ("embedCoremlDataAsset", "coremldata.bin"),
+        ("embedModelMilAsset",   "model.mil"),
     ]
 
-    /// Decode モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
-    private let decodeAssetFields: [(field: String, relativePath: String)] = [
-        ("decodeMetadataAsset",   "metadata.json"),
-        ("decodeCoremlDataAsset", "coremldata.bin"),
-        ("decodeModelMilAsset",   "model.mil"),
+    /// FFN モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
+    private let ffnAssetFields: [(field: String, relativePath: String)] = [
+        ("ffnMetadataAsset",   "metadata.json"),
+        ("ffnCoremlDataAsset", "coremldata.bin"),
+        ("ffnModelMilAsset",   "model.mil"),
+    ]
+
+    /// LM Head モデルの小ファイル: フィールド名 → mlmodelc 内の相対パス
+    private let lmheadAssetFields: [(field: String, relativePath: String)] = [
+        ("lmheadMetadataAsset",   "metadata.json"),
+        ("lmheadCoremlDataAsset", "coremldata.bin"),
+        ("lmheadModelMilAsset",   "model.mil"),
     ]
 
     /// トークナイザーのフィールド名
@@ -108,8 +118,8 @@ class CloudKitModelService {
     // MARK: - モデルダウンロード
 
     /// CloudKit からモデルファイルをダウンロードし、指定ディレクトリに保存する。
-    /// Prefill/Decode 両モデルの小ファイル + 共有 weight チャンク + tokenizer を取得。
-    /// weight.bin は Prefill/Decode で同一のため、両方の weights/ に配置する。
+    /// Embed / FFN / LM Head の3モデル小ファイル + 共有 weight チャンク + tokenizer を取得。
+    /// weight.bin はすべてのモデルの weights/ にコピーする（Anemll 共有ウェイト構成）。
     /// - Parameters:
     ///   - modelDir: モデルファイルの保存先ディレクトリ（例: .../LocalLLM/）
     ///   - tokenizerDestination: tokenizer.json の保存先
@@ -121,32 +131,26 @@ class CloudKitModelService {
 
         let fm = FileManager.default
 
-        // --- Prefill モデルの小ファイル保存 ---
-        let prefillDir = modelDir.appendingPathComponent(prefillModelDirName, isDirectory: true)
-        for (field, relativePath) in prefillAssetFields {
-            guard let asset = record[field] as? CKAsset,
-                  let sourceURL = asset.fileURL else {
-                throw CloudKitModelError.missingAsset(field)
-            }
-            let destURL = prefillDir.appendingPathComponent(relativePath)
-            let parentDir = destURL.deletingLastPathComponent()
-            try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
-            try? fm.removeItem(at: destURL)
-            try fm.copyItem(at: sourceURL, to: destURL)
-        }
+        // --- 各モデルの小ファイル保存 ---
+        let modelDirs: [(dirName: String, fields: [(field: String, relativePath: String)])] = [
+            (embedModelDirName,  embedAssetFields),
+            (ffnModelDirName,    ffnAssetFields),
+            (lmheadModelDirName, lmheadAssetFields),
+        ]
 
-        // --- Decode モデルの小ファイル保存 ---
-        let decodeDir = modelDir.appendingPathComponent(decodeModelDirName, isDirectory: true)
-        for (field, relativePath) in decodeAssetFields {
-            guard let asset = record[field] as? CKAsset,
-                  let sourceURL = asset.fileURL else {
-                throw CloudKitModelError.missingAsset(field)
+        for (dirName, fields) in modelDirs {
+            let modelSubDir = modelDir.appendingPathComponent(dirName, isDirectory: true)
+            for (field, relativePath) in fields {
+                guard let asset = record[field] as? CKAsset,
+                      let sourceURL = asset.fileURL else {
+                    throw CloudKitModelError.missingAsset(field)
+                }
+                let destURL   = modelSubDir.appendingPathComponent(relativePath)
+                let parentDir = destURL.deletingLastPathComponent()
+                try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
+                try? fm.removeItem(at: destURL)
+                try fm.copyItem(at: sourceURL, to: destURL)
             }
-            let destURL = decodeDir.appendingPathComponent(relativePath)
-            let parentDir = destURL.deletingLastPathComponent()
-            try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
-            try? fm.removeItem(at: destURL)
-            try fm.copyItem(at: sourceURL, to: destURL)
         }
 
         // --- tokenizer.json の保存 ---
@@ -164,7 +168,7 @@ class CloudKitModelService {
             throw CloudKitModelError.missingChunkCount
         }
 
-        // weight.bin を一時ファイルに結合し、Prefill/Decode 両方の weights/ にコピー
+        // weight.bin を一時ファイルに結合
         let tempWeightURL = modelDir.appendingPathComponent("weight_temp.bin")
         try? fm.removeItem(at: tempWeightURL)
         fm.createFile(atPath: tempWeightURL.path, contents: nil)
@@ -172,7 +176,7 @@ class CloudKitModelService {
             throw CloudKitModelError.chunkConcatenationFailed
         }
 
-        for i in 0 ..< Int(chunkCount) {
+        for i in 0..<Int(chunkCount) {
             let chunkField = "\(weightChunkPrefix)\(i)"
             guard let chunkAsset = record[chunkField] as? CKAsset,
                   let chunkURL = chunkAsset.fileURL else {
@@ -183,19 +187,15 @@ class CloudKitModelService {
         }
         try outputHandle.close()
 
-        // Prefill の weights/weight.bin
-        let prefillWeightsDir = prefillDir.appendingPathComponent("weights", isDirectory: true)
-        try fm.createDirectory(at: prefillWeightsDir, withIntermediateDirectories: true)
-        let prefillWeightDest = prefillWeightsDir.appendingPathComponent("weight.bin")
-        try? fm.removeItem(at: prefillWeightDest)
-        try fm.copyItem(at: tempWeightURL, to: prefillWeightDest)
-
-        // Decode の weights/weight.bin
-        let decodeWeightsDir = decodeDir.appendingPathComponent("weights", isDirectory: true)
-        try fm.createDirectory(at: decodeWeightsDir, withIntermediateDirectories: true)
-        let decodeWeightDest = decodeWeightsDir.appendingPathComponent("weight.bin")
-        try? fm.removeItem(at: decodeWeightDest)
-        try fm.copyItem(at: tempWeightURL, to: decodeWeightDest)
+        // 各モデルの weights/weight.bin に配置
+        for dirName in [embedModelDirName, ffnModelDirName, lmheadModelDirName] {
+            let weightsDir  = modelDir.appendingPathComponent(dirName, isDirectory: true)
+                                      .appendingPathComponent("weights", isDirectory: true)
+            try fm.createDirectory(at: weightsDir, withIntermediateDirectories: true)
+            let weightDest  = weightsDir.appendingPathComponent("weight.bin")
+            try? fm.removeItem(at: weightDest)
+            try fm.copyItem(at: tempWeightURL, to: weightDest)
+        }
 
         // 一時ファイル削除
         try? fm.removeItem(at: tempWeightURL)

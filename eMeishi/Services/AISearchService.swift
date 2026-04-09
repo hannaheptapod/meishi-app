@@ -319,7 +319,7 @@ class AISearchService {
 
         for card in cards {
             let summary = compactSummary(card: card)
-            let isMatch = classifyRelevance(
+            let isMatch = await classifyRelevance(
                 query: query,
                 cardSummary: summary,
                 prefill: models.prefill,
@@ -342,19 +342,19 @@ class AISearchService {
         cardSummary: String,
         prefill: MLModel,
         tokenizer: Qwen25Tokenizer
-    ) -> Bool {
+    ) async -> Bool {
         let systemInstruction = "この名刺が検索クエリに直接関連するか判定。会社名・部署名・役職に検索テーマと直接関係する語が含まれる場合のみyes。間接的な関連はno。迷ったらno。yesかnoのみ回答。"
         let prompt = "<|im_start|>system\n\(systemInstruction)<|im_end|>\n<|im_start|>user\n検索:「\(query)」\n名刺:\(cardSummary)\n関連する?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
         let ids = tokenizer.encode(prompt)
-        guard ids.count <= 1024 else { return false }
+        guard ids.count <= LocalLLMService.shared.maxContextLength else { return false }
 
         let yesTokenIds = tokenizer.encode("yes")
         let noTokenIds = tokenizer.encode("no")
         guard let yesId = yesTokenIds.last, let noId = noTokenIds.last else { return false }
 
         do {
-            let logits = try LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
+            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
 
             let shape = logits.shape.map { $0.intValue }
             let vocabSize = shape.last ?? 0
