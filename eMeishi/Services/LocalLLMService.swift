@@ -588,6 +588,8 @@ class LocalLLMService: ObservableObject {
         defer { Task { @MainActor in self.isDownloading = false } }
 
         let dir = modelDirURL
+        // 中途半端な前回ダウンロードを削除してからやり直す
+        try? FileManager.default.removeItem(at: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         try await CloudKitModelService.shared.downloadModel(
@@ -605,7 +607,6 @@ class LocalLLMService: ObservableObject {
     // MARK: - モデル削除
 
     func deleteModel() throws {
-        guard isModelAvailable else { return }
         try? FileManager.default.removeItem(at: modelDirURL)
         embedModel   = nil
         ffnModel     = nil
