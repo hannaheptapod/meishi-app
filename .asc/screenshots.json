@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "app": {
+    "bundle_id": "com.jinks.emeishi",
+    "udid": "740123E4-03DB-4069-ABD0-3E444AF48965",
+    "output_dir": "./screenshots/raw",
+    "launch_args": ["-UITestMode"]
+  },
+  "steps": [
+    { "action": "wait", "duration_ms": 2000 },
+    { "action": "tap", "id": "tag_filter_chip_0" },
+    { "action": "wait", "duration_ms": 500 },
+    { "action": "screenshot", "name": "01_card_list" },
+    { "action": "tap", "id": "search_button" },
+    { "action": "wait", "duration_ms": 500 },
+    { "action": "type", "text": "zzz" },
+    { "action": "wait", "duration_ms": 1000 },
+    { "action": "screenshot", "name": "02_ai_search" },
+    { "action": "tap", "id": "cancel_button" },
+    { "action": "tap", "id": "card_0" },
+    { "action": "wait", "duration_ms": 800 },
+    { "action": "screenshot", "name": "04_card_detail" }
+  ]
+}
