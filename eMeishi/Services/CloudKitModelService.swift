@@ -163,6 +163,7 @@ class CloudKitModelService {
                                  fm: FileManager) throws {
         for config in modelConfigs {
             let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: modelSubDir.path)
             let smallFiles: [(String, String)] = [
                 (config.coremlDataField, "coremldata.bin"),
                 (config.metadataField,   "metadata.json"),
@@ -176,6 +177,7 @@ class CloudKitModelService {
                 try fm.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fm.removeItem(at: destURL)
                 try fm.copyItem(at: sourceURL, to: destURL)
+                try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: destURL.path)
             }
         }
         guard let tokenizerAsset = record[tokenizerField] as? CKAsset,
@@ -185,6 +187,7 @@ class CloudKitModelService {
         try fm.createDirectory(at: tokenizerDestination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.removeItem(at: tokenizerDestination)
         try fm.copyItem(at: tokenizerSourceURL, to: tokenizerDestination)
+        try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: tokenizerDestination.path)
     }
 
     // MARK: - weight チャンク書き出し（operation コールバック内で呼ぶこと）
@@ -221,6 +224,11 @@ class CloudKitModelService {
         let data = try Data(contentsOf: chunkURL)
         handle.write(data)
         try handle.close()
+        // CloudKit キャッシュからのコピーは読み取り専用になる場合があるため明示的に書き込み権限を付与
+        let isLast = index == config.chunkRange.last!
+        if isLast {
+            try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: weightDest.path)
+        }
     }
 
 }

@@ -107,22 +107,6 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - モデル管理
 
-    /// ANE で読み込み試行し失敗したら CPU+GPU にフォールバック
-    private func loadWithFallback(url: URL, config: MLModelConfiguration, name: String) throws -> MLModel {
-        do {
-            let model = try MLModel(contentsOf: url, configuration: config)
-            AppLogger.llm.info("\(name) モデルロード完了 (cpuAndNeuralEngine)")
-            return model
-        } catch {
-            AppLogger.llm.warning("\(name) ANEロード失敗、cpuAndGPUでリトライ: \(error.localizedDescription, privacy: .public)")
-            let fallback = MLModelConfiguration()
-            fallback.computeUnits = .cpuAndGPU
-            let model = try MLModel(contentsOf: url, configuration: fallback)
-            AppLogger.llm.info("\(name) モデルロード完了 (cpuAndGPU fallback)")
-            return model
-        }
-    }
-
     func loadModelIfNeeded() throws {
         guard isModelAvailable else { return }
 
@@ -130,15 +114,17 @@ class LocalLLMService: ObservableObject {
         config.computeUnits = .cpuAndNeuralEngine
 
         if embedModel == nil {
-            embedModel = try loadWithFallback(url: embedModelURL, config: config, name: "Embed")
-            ffnState = nil
+            embedModel = try MLModel(contentsOf: embedModelURL, configuration: config)
+            AppLogger.llm.info("Embed モデルロード完了 (cpuAndNeuralEngine)")
         }
         if ffnModel == nil {
-            ffnModel = try loadWithFallback(url: ffnModelURL, config: config, name: "FFN")
+            ffnModel = try MLModel(contentsOf: ffnModelURL, configuration: config)
+            AppLogger.llm.info("FFN モデルロード完了 (cpuAndNeuralEngine)")
             ffnState = ffnModel!.makeState()
         }
         if lmheadModel == nil {
-            lmheadModel = try loadWithFallback(url: lmheadModelURL, config: config, name: "LMHead")
+            lmheadModel = try MLModel(contentsOf: lmheadModelURL, configuration: config)
+            AppLogger.llm.info("LMHead モデルロード完了 (cpuAndNeuralEngine)")
         }
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
