@@ -31,27 +31,27 @@ class CloudKitModelService {
         let coremlDataField: String
         let metadataField: String
         let modelMilField: String
-        /// 使用する weightChunk インデックスの範囲
+        /// このモデルの weight.bin を構成するチャンクのインデックス範囲
         let chunkRange: Range<Int>
     }
 
     private let modelConfigs: [ModelAssetConfig] = [
         ModelAssetConfig(
-            dirName: "qwen_embeddings.mlmodelc",
+            dirName:         "qwen_embeddings.mlmodelc",
             coremlDataField: "coremlDataAsset",
             metadataField:   "metadataAsset",
             modelMilField:   "modelMilAsset",
             chunkRange:      0..<2
         ),
         ModelAssetConfig(
-            dirName: "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc",
+            dirName:         "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc",
             coremlDataField: "prefillCoremlDataAsset",
             metadataField:   "prefillMetadataAsset",
             modelMilField:   "prefillModelMilAsset",
             chunkRange:      2..<4
         ),
         ModelAssetConfig(
-            dirName: "qwen_lm_head_lut6.mlmodelc",
+            dirName:         "qwen_lm_head_lut6.mlmodelc",
             coremlDataField: "decodeCoremlDataAsset",
             metadataField:   "decodeMetadataAsset",
             modelMilField:   "decodeModelMilAsset",
@@ -110,12 +110,13 @@ class CloudKitModelService {
             throw CloudKitModelError.missingChunkCount
         }
 
-        // 小ファイルを書き出し（アセットは operation 生存中に処理済み）
+        // 小ファイルを書き出し
         let fm = FileManager.default
         try writeSmallFiles(record: metaRecord, modelDir: modelDir,
                             tokenizerDestination: tokenizerDestination, fm: fm)
 
-        // Step 2: weight チャンクを1本ずつ個別取得
+        // Step 2: weight チャンクを1本ずつ個別取得し、各モデルの weight.bin に書き込む
+        // chunkRange に従い embed:0-1, ffn:2-3, lmhead:4 を各モデルに分配する
         let totalChunks = Int(chunkCount)
         for i in 0..<totalChunks {
             let field = "\(weightChunkPrefix)\(i)"
@@ -155,7 +156,7 @@ class CloudKitModelService {
         }
     }
 
-    // MARK: - 小ファイル書き出し（operation コールバック内で呼ぶこと）
+    // MARK: - 小ファイル書き出し
 
     private func writeSmallFiles(record: CKRecord,
                                  modelDir: URL,
@@ -163,7 +164,9 @@ class CloudKitModelService {
                                  fm: FileManager) throws {
         for config in modelConfigs {
             let modelSubDir = modelDir.appendingPathComponent(config.dirName, isDirectory: true)
+            try fm.createDirectory(at: modelSubDir, withIntermediateDirectories: true)
             try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: modelSubDir.path)
+
             let smallFiles: [(String, String)] = [
                 (config.coremlDataField, "coremldata.bin"),
                 (config.metadataField,   "metadata.json"),
@@ -190,7 +193,7 @@ class CloudKitModelService {
         try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: tokenizerDestination.path)
     }
 
-    // MARK: - weight チャンク書き出し（operation コールバック内で呼ぶこと）
+    // MARK: - weight チャンク書き出し
 
     private func writeChunk(record: CKRecord,
                             field: String,
@@ -225,8 +228,7 @@ class CloudKitModelService {
         handle.write(data)
         try handle.close()
         // CloudKit キャッシュからのコピーは読み取り専用になる場合があるため明示的に書き込み権限を付与
-        let isLast = index == config.chunkRange.last!
-        if isLast {
+        if index == config.chunkRange.last! {
             try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: weightDest.path)
         }
     }

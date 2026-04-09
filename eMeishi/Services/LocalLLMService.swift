@@ -110,20 +110,29 @@ class LocalLLMService: ObservableObject {
     func loadModelIfNeeded() throws {
         guard isModelAvailable else { return }
 
-        let config = MLModelConfiguration()
-        config.computeUnits = .cpuAndNeuralEngine
+        // Embed モデル: .cpuOnly を使用
+        // iOS 26 で .cpuAndNeuralEngine / .all 指定時に MIL→EIR 変換（ANE コンパイルパス）で
+        // bad_cast が発生しロードに失敗する（error -14）。
+        // .cpuOnly にすれば MIL→EIR を一切走らせないため確実にロードできる。
+        // Embed はトークン埋め込みルックアップ（gather）のみで計算負荷が極めて軽く CPU で十分。
+        let embedConfig = MLModelConfiguration()
+        embedConfig.computeUnits = .cpuOnly
+
+        // FFN・LMHead: ANE 必須（Transformer の重い演算はANEで実行）
+        let aneConfig = MLModelConfiguration()
+        aneConfig.computeUnits = .cpuAndNeuralEngine
 
         if embedModel == nil {
-            embedModel = try MLModel(contentsOf: embedModelURL, configuration: config)
-            AppLogger.llm.info("Embed モデルロード完了 (cpuAndNeuralEngine)")
+            embedModel = try MLModel(contentsOf: embedModelURL, configuration: embedConfig)
+            AppLogger.llm.info("Embed モデルロード完了 (cpuOnly)")
         }
         if ffnModel == nil {
-            ffnModel = try MLModel(contentsOf: ffnModelURL, configuration: config)
+            ffnModel = try MLModel(contentsOf: ffnModelURL, configuration: aneConfig)
             AppLogger.llm.info("FFN モデルロード完了 (cpuAndNeuralEngine)")
             ffnState = ffnModel!.makeState()
         }
         if lmheadModel == nil {
-            lmheadModel = try MLModel(contentsOf: lmheadModelURL, configuration: config)
+            lmheadModel = try MLModel(contentsOf: lmheadModelURL, configuration: aneConfig)
             AppLogger.llm.info("LMHead モデルロード完了 (cpuAndNeuralEngine)")
         }
         if tokenizer == nil {
