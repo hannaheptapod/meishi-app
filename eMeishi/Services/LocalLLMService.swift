@@ -107,35 +107,38 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - モデル管理
 
+    /// ANE で読み込み試行し失敗したら CPU+GPU にフォールバック
+    private func loadWithFallback(url: URL, config: MLModelConfiguration, name: String) throws -> MLModel {
+        do {
+            let model = try MLModel(contentsOf: url, configuration: config)
+            AppLogger.llm.info("\(name) モデルロード完了 (cpuAndNeuralEngine)")
+            return model
+        } catch {
+            AppLogger.llm.warning("\(name) ANEロード失敗、cpuAndGPUでリトライ: \(error.localizedDescription, privacy: .public)")
+            let fallback = MLModelConfiguration()
+            fallback.computeUnits = .cpuAndGPU
+            let model = try MLModel(contentsOf: url, configuration: fallback)
+            AppLogger.llm.info("\(name) モデルロード完了 (cpuAndGPU fallback)")
+            return model
+        }
+    }
+
     func loadModelIfNeeded() throws {
         guard isModelAvailable else { return }
 
         let config = MLModelConfiguration()
-        // ANE（Apple Neural Engine）を積極利用。Transformer 層は ANE で実行し電力効率を改善。
-        // int32 の埋め込みルックアップは CoreML が自動的に CPU で処理。
         config.computeUnits = .cpuAndNeuralEngine
 
         if embedModel == nil {
-            embedModel = try MLModel(contentsOf: embedModelURL, configuration: config)
-            let desc = embedModel!.modelDescription
-            AppLogger.llm.debug("Embed inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.debug("Embed outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.info("Embed モデルロード完了 (cpuAndNeuralEngine)")
+            embedModel = try loadWithFallback(url: embedModelURL, config: config, name: "Embed")
+            ffnState = nil
         }
         if ffnModel == nil {
-            ffnModel = try MLModel(contentsOf: ffnModelURL, configuration: config)
-            let desc = ffnModel!.modelDescription
-            AppLogger.llm.debug("FFN inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.debug("FFN outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.info("FFN モデルロード完了 (cpuAndNeuralEngine, stateful)")
+            ffnModel = try loadWithFallback(url: ffnModelURL, config: config, name: "FFN")
             ffnState = ffnModel!.makeState()
         }
         if lmheadModel == nil {
-            lmheadModel = try MLModel(contentsOf: lmheadModelURL, configuration: config)
-            let desc = lmheadModel!.modelDescription
-            AppLogger.llm.debug("LMHead inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.debug("LMHead outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.info("LMHead モデルロード完了 (cpuAndNeuralEngine, split=\(self.splitLMHead))")
+            lmheadModel = try loadWithFallback(url: lmheadModelURL, config: config, name: "LMHead")
         }
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
