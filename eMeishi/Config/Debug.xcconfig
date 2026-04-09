@@ -1,7 +1,7 @@
 // Debug ビルド専用設定
 
-// iTunes ファイル共有（開発用モデル転送）
-FILE_SHARING_ENABLED = YES
+// Debug 用 Info.plist（UIFileSharingEnabled=true を Boolean 型で設定）
+INFOPLIST_FILE = eMeishi/Info-Debug.plist
 
 // Swift コンパイル条件（#if DEBUG ブロックを有効化）
 // → SettingsView 開発者セクション・seedSampleData・CloudKitModelUploader
