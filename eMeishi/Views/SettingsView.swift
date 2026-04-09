@@ -190,12 +190,31 @@ struct SettingsView: View {
     // MARK: - 開発者向け（デバッグビルドのみ）
 
 #if DEBUG
+    @State private var ckUploadStatus: String = ""
+    @State private var isUploading = false
+
     private var debugSection: some View {
         Section("開発者向け") {
             Button {
                 showSeedConfirm = true
             } label: {
                 Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
+            }
+            Button {
+                isUploading = true
+                ckUploadStatus = "アップロード中..."
+                Task {
+                    await CloudKitModelUploader.uploadCorrectModels { status in
+                        ckUploadStatus = status
+                        if !status.contains("中") { isUploading = false }
+                    }
+                }
+            } label: {
+                Label("CloudKit モデルを正しいバージョンに更新", systemImage: "icloud.and.arrow.up")
+            }
+            .disabled(isUploading)
+            if !ckUploadStatus.isEmpty {
+                Text(ckUploadStatus).font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -366,6 +385,7 @@ private struct AdvancedSettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+
                     }
                 }
             }

@@ -36,10 +36,6 @@
 	<string>アプリのロック解除に使用します</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>名刺画像を保存するために使用します</string>
-	<key>UIDeviceFamily</key>
-	<array>
-		<integer>1</integer>
-	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -52,7 +48,7 @@
 		<string>remote-notification</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
-	<false/>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

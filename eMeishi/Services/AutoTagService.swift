@@ -36,7 +36,7 @@ class AutoTagService {
         for tag in targetTags {
             guard let tagID = tag.id, let tagName = tag.name, !tagName.isEmpty else { continue }
 
-            let matches = classifyTagMatch(
+            let matches = await classifyTagMatch(
                 tagName: tagName,
                 cardSummary: cardSummary,
                 prefill: models.prefill,
@@ -76,12 +76,12 @@ class AutoTagService {
 
     /// 1タグ1回の forward pass で yes/no 分類
     private func classifyTagMatch(tagName: String, cardSummary: String,
-                                  prefill: MLModel, tokenizer: Qwen25Tokenizer) -> Bool {
+                                  prefill: MLModel, tokenizer: Qwen25Tokenizer) async -> Bool {
         let prompt = buildTagMatchPrompt(tagName: tagName, cardSummary: cardSummary)
         let ids = tokenizer.encode(prompt)
 
         do {
-            let logits = try LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
+            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
             guard let tokenId = LocalLLMService.shared.argmaxLastToken(logits: logits) else { return false }
             let decoded = tokenizer.decode([tokenId]).lowercased()
                 .trimmingCharacters(in: .whitespacesAndNewlines)

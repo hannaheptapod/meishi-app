@@ -88,7 +88,7 @@ iPhoneの連絡先との連携やCSV/vCard出力に対応する。モデルフ�
 | データ永続化 | CoreData（端末内のみ・オフライン完結） |
 | OCR（文字認識） | Vision Framework（VNRecognizeTextRequest） |
 | 意味分析（Apple Intelligence端末） | Apple Foundation Models（FoundationModels framework・`#if canImport` で条件付きコンパイル・iOS 26+） |
-| 意味分析（非対応端末） | Qwen3-0.6B-4bit CoreML Prefill/Decode 分割（LocalLLMService / CloudKit経由 or ローカル配置） |
+| 意味分析（非対応端末） | Qwen3-0.6B Anemll ANE対応 CoreML（LocalLLMService / CloudKit経由 or ローカル配置）Embed+FFN+LMHead 3モデル構成・stateful KV cache・LUT6量子化・`.cpuAndNeuralEngine` |
 | 意味分析（前後段処理・常時） | 正規表現ベース分類（CardFieldClassifier・常時利用可能） |
 | BPEトークナイザー | Qwen25Tokenizer（HuggingFace tokenizer.json を解析） |
 | カメラ | AVFoundation |
@@ -124,7 +124,7 @@ Foundation Models のみ使用          Qwen3-0.6B CoreML のみ使用
 - `appleIntelligence` / `localLLM` / `classifier` を SettingsView で選択
 - **両LLMエンジン共通の前後段処理（ハイブリッド方式）**：`CardFieldClassifier.classifyStructuredFields` で Pass1（正規表現：email・phone・URL・住所・会社・部署・役職を抽出）+ Pass2（OCR座標情報を使った名前スコアリング：フリガナ近接・フォントサイズ・位置情報で確信度判定、>0.4 で名前確定）を実行。未分類行のみを各LLMエンジンに送り、結果をマージする。ルールベース確定結果を常に優先
 - **Apple Intelligence 対応端末**：ハイブリッド前段処理 → 未分類行のみ `@Generable`+`@Guide` マクロで `ParsedCard` 型を構造化出力。既知フィールドをプロンプトコンテキストとして渡し幻覚を防止。email/phone/address/website はルールベース結果を常に優先
-- **非対応端末**：ハイブリッド前段処理 → 未分類行のみ LLM で**単一パス分類**（1行1回の forward pass でカテゴリ判定：name/title/department/company）。自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）。Decode モデル優先（mask 不要）・出力不正時 Prefill フォールバック。名前行はスペース分割で姓名分離。`computeUnits = .cpuAndGPU`（ANE の int32 非互換を回避）。10秒タイムアウト
+- **非対応端末**：ハイブリッド前段処理 → 未分類行のみ LLM で**単一パス分類**（1行1回の forward pass でカテゴリ判定：name/title/department/company）。自動回帰生成を完全廃止。Anemll Qwen3-0.6B-ctx512（Embed→FFN Prefill→LM Head 3モデル）・stateful KV cache（iOS 18+ MLState）・LUT6量子化・`computeUnits = .cpuAndNeuralEngine`（ANE 有効）・バッチサイズ64・コンテキスト512トークン・LM Head 16チャンク分割。10秒タイムアウト
 - **前後段処理（常時）**：`classify(lines:)` による全フィールド分類（Pass1 + Pass2 + 残り行から会社・役職補完）。LLM不使用・常時利用可能
 
 ---
@@ -167,8 +167,8 @@ meishi-app/
 │   │   ├── OCRService.swift
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
-│   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Prefill/Decode 分割対応・weight チャンク結合
-│   │   ├── LocalLLMService.swift               # Qwen3-0.6B CoreML Prefill/Decode 分割推論・モデル管理・Documents/AppSupport 二重パス
+│   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
+│   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
 │   │   ├── SearchQueryClassifier.swift         # AI自然言語検索のクエリ意図分類（時間表現+フィールド分類）
 │   │   ├── AutoTagService.swift                # AI自動タグ提案（既存タグからカード内容に該当するものを提案）
 │   │   ├── InsightsService.swift               # 人脈インサイト集計（会社別・エリア別・職種別・月別）
@@ -238,9 +238,9 @@ meishi-app/
 - ふりがなフィールド（lastNameReading / firstNameReading / companyReading）：OCR時に自動生成（CFStringTokenizer）・手動入力可・名前順/会社名順ソートに使用・検索対象に追加
 - カメラ撮影 → OCR → ハイブリッド意味分析（ルールベース前段 + LLM後段）によるフィールド自動分類（両LLMエンジン共通のclassifyStructuredFields前段処理）
 - 連続撮影（バッチ撮影）：標準カメラUIで複数枚連続撮影し、撮影完了後にまとめて確認・保存。CameraBatchCapture（純UIKit・シングルトン）がカメラ表示を管理し、SwiftUIモーダルとの競合を回避。cameraOverlayViewで撮影枚数カウンター＋「完了」ボタンを標準UIに重ねる。BatchReviewViewでCardFormViewを順番に表示
-- Qwen3-0.6B CoreML Prefill/Decode 分割推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM**単一パス分類**（1行1回forward pass・自動回帰生成廃止）・Decodeモデル優先（mask不要）・Decode出力不正時Prefillフォールバック・`.cpuAndGPU`（ANE int32非互換回避）・10秒タイムアウト・BPEトークナイザー）
+- Anemll Qwen3-0.6B-ctx512 ANE対応推論（ハイブリッド方式: ルールベース前段抽出 + 座標ベース名前スコアリング + LLM**単一パス分類**（1行1回・3段 forward pass）・Embed+FFN+LMHead 3モデル・stateful KV cache・`.cpuAndNeuralEngine`・コンテキスト512トークン・10秒タイムアウト・BPEトークナイザー）
 - モデルファイル二重パス: Documents/LocalLLM/（開発用・Finder/iTunes で転送）→ Application Support/LocalLLM/（CloudKit ダウンロード）の優先順で検索
-- CloudKit Public Database 経由のモデル配布（Prefill/Decode 各モデル + 共有 weight チャンク分割・CKAsset・iCloudアカウント不要）
+- CloudKit Public Database 経由のモデル配布（Embed/FFN/LMHead 3モデル + 共有 weight チャンク分割・CKAsset・iCloudアカウント不要）
 - iTunes ファイル共有（UIFileSharingEnabled）で Documents ディレクトリへの開発用モデル配置に対応
 - 設定画面（読み取り方法選択・モデルダウンロード管理・重複閾値・エクスポート設定）
 - iPhoneの連絡先へのエクスポート（CNContactStore）
@@ -289,7 +289,7 @@ meishi-app/
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
 - `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
-- `UIFileSharingEnabled`：`false`（本番ビルド）。開発時のモデル配置には Application Support を使用
+- `UIFileSharingEnabled`：`true`（デバッグビルド・開発用モデル転送に使用）／`false`（本番ビルド前に必ず戻す）
 - `LSSupportsOpeningDocumentsInPlace`：`false`（本番ビルド）
 - CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 
@@ -299,10 +299,10 @@ meishi-app/
 
 - **Xcodeプロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない。** Xcode 16 の File System Synchronized Groups により、eMeishi/ 配下に Swift ファイルを追加すれば自動的にビルド対象になる
 - Foundation Models はシミュレータで動作しない（実機 iPhone 15 Pro以降 + Apple Intelligence有効が必要）
-- Qwen3-0.6B CoreML（Prefill/Decode 分割）はシミュレータでも動作するが低速（CPU推論・Neural Engine 不使用）
+- Anemll Qwen3-0.6B-ctx512 はシミュレータでも動作するが低速（ANE 不使用・CPU推論）
 - `LocalLLMService` のモデル検索パス: ① Documents/LocalLLM/（開発用・Finder/iTunes 転送）→ ② Application Support/LocalLLM/（CloudKit DL）。Documents 優先
-- モデル構成: `Qwen3-0.6B-Prefill-4bit.mlmodelc/` + `Qwen3-0.6B-Decode-4bit.mlmodelc/` + `tokenizer.json`（合計約 570MB）
-- Prefill/Decode は同一 weight.bin を共有（CloudKit 配布時は1セットのチャンクを両方にコピー）
+- モデル構成: `qwen_embeddings.mlmodelc/` + `qwen_FFN_PF_lut6.mlmodelc/` + `qwen_lm_head_lut6.mlmodelc/` + `tokenizer.json`（合計約 300MB）
+- 3モデルは同一 weight.bin を共有（CloudKit 配布時は1セットのチャンクを3モデルの weights/ にコピー）
 - モデルは CloudKit Public Database から配布。weight.bin は CKAsset 上限（250MB）超の場合チャンク分割保存
 - 開発時のモデル差し替え: Finder → iPhone → eMeishi の Documents/LocalLLM/ にフォルダごと配置
 - CloudKit Container の設定・レコード作成・ファイルアップロードは Xcode / CloudKit Dashboard で手動実施
