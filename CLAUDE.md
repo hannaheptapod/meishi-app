@@ -1,5 +1,21 @@
 # CLAUDE.md — 名刺管理アプリ（eMeishi）
 
+## 🚫 ビルド・アップロード前チェックリスト（必須・違反禁止）
+
+**アーカイブ・アップロードは事前精査なしに絶対実行しない。**
+
+アーカイブ実行前に必ず確認すること：
+
+1. ビルド番号は **`yyyymmddxyz`** 形式を使用する（例: v1.0.1 を 2026-04-09 にビルド → `20260409101`）。xyz はバージョン番号 x.y.z の各桁を連結したもの。`asc builds list --app 6761180218 --platform IOS --limit 3` で既存番号より大きいことを確認する
+2. `Info.plist` の以下を目視確認：
+   - `UISupportedInterfaceOrientations` に **4方向すべて**（Portrait・PortraitUpsideDown・LandscapeLeft・LandscapeRight）が含まれているか
+   - `ITSAppUsesNonExemptEncryption` が設定されているか
+   - Usage Description（カメラ・連絡先・FaceID等）が漏れなく記載されているか
+3. 上記確認後、**ユーザーに確認を取ってから**アーカイブ・アップロードを実行する
+4. ユーザーの承認なしにビルドを増やすことは**絶対禁止**
+
+---
+
 ## ⚠️ 作業開始前チェックリスト（必須）
 
 コードを変更する前に必ず実行すること：

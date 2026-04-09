@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "app": {
+    "bundle_id": "com.jinks.emeishi",
+    "project": "eMeishi.xcodeproj",
+    "scheme": "eMeishi",
+    "simulator_udid": "740123E4-03DB-4069-ABD0-3E444AF48965"
+  },
+  "paths": {
+    "plan": ".asc/screenshots.json",
+    "raw_dir": "./screenshots/raw",
+    "framed_dir": "./screenshots/framed"
+  },
+  "pipeline": {
+    "frame_enabled": false,
+    "upload_enabled": false
+  },
+  "upload": {
+    "version_localization_id": "b4bb9e64-4ebb-4793-8f8e-51bdb17174da",
+    "device_type": "IPHONE_67",
+    "source_dir": "./screenshots/raw/iphone69"
+  }
+}

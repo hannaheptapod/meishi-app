@@ -1,0 +1,7 @@
+{
+  "description": "eMeishiは、Apple Intelligenceに対応したAI名刺管理アプリです。カメラで撮影するだけで、AIが名前・会社名・電話番号・メールアドレスを自動で読み取ります。「先月会った渋谷のエンジニア」のような自然言語でも検索できます。\n\n━━ AI機能 ━━\n\n■ ハイブリッドAI読み取り\nVision OCR → AIによるフィールド自動分類。Apple Intelligence対応端末（iOS 26以降・iPhone 15 Pro以降）では内蔵AIを直接利用。非対応端末ではオンデバイスLLM（Qwen3-0.6B）でAI読み取りを実現。\n\n■ AI自然言語検索\n「先月会った渋谷のエンジニア」「食品メーカーの営業担当」のような言葉で名刺を検索。クラウドAPIは不要。\n\n■ AIタグ自動提案\n名刺スキャン後、登録済みタグからAIが候補を自動提案。タップするだけで適用できます。\n\n■ AI重複検出\n転職ケース（同一人物・異なる会社）もAIがスマートに検出してマージを提案します。\n\n━━ 基本機能 ━━\n\n- カメラ撮影＋AI自動読み取り（連続撮影対応）\n- 名前・会社名のふりがな自動生成\n- iPhoneの連絡先へワンタップで保存\n- CSV・vCard書き出し\n- タグ付けで自由にグループ分け\n- お気に入り・フィルタ・検索\n- 人脈インサイト（会社別・エリア別・月別統計）\n- Face ID / Touch ID アプリロック\n- iCloud同期（オプション）\n\n━━ プライバシー ━━\n\nすべてのAI処理は端末内で完結します。名刺データはクラウドに送信されません。iCloud同期を有効にした場合のみあなたのiCloudアカウントに保存されますが、開発者を含む第三者はアクセスできません。\n\n※ Apple Intelligence機能はiOS 26以降・iPhone 15 Pro以降が必要です。非対応端末は初回にAIモデル（約570MB）のダウンロードが必要です。",
+  "keywords": "名刺管理,Apple Intelligence,AI,OCR,LLM,自然言語検索,オンデバイス,名刺読み取り,連絡先,vCard",
+  "promotionalText": "Apple Intelligenceに対応。カメラで撮るだけで名前・会社・連絡先を自動読み取り。「先月会ったエンジニア」と自然言語で検索。すべてオンデバイス処理。",
+  "whatsNew": "■ Apple Intelligence対応（iOS 26+ / iPhone 15 Pro以降）\n■ AI自然言語検索：「先月会った渋谷のエンジニア」で検索\n■ AIタグ自動提案：スキャン後にAIがタグを候補表示\n■ AI重複検出強化：転職ケースも検出",
+  "supportUrl": "https://hannaheptapod.github.io/meishi-app/support.html"
+}

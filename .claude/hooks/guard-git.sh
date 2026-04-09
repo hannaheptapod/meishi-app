@@ -21,9 +21,15 @@ fi
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
-# ① main・develop への直接コミット・マージをブロック
+# release/* と hotfix/* はリリースフローで main・develop へのマージ・push が必要なため除外
+IS_RELEASE_FLOW=false
+if echo "$BRANCH" | grep -qE "^(release|hotfix)/"; then
+  IS_RELEASE_FLOW=true
+fi
+
+# ① main・develop への直接コミット・マージをブロック（release/hotfix は除外）
 if echo "$COMMAND" | grep -qE "git (commit|merge)"; then
-  if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
+  if [ "$IS_RELEASE_FLOW" = false ] && { [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; }; then
     echo "❌ BLOCKED: '$BRANCH' への直接コミット・マージは禁止です。" >&2
     echo "  feature/* または fix/* ブランチを作成し、PR を通してください。" >&2
     echo "  → /branch を実行して正しいブランチに切り替えてください。" >&2
@@ -31,15 +37,17 @@ if echo "$COMMAND" | grep -qE "git (commit|merge)"; then
   fi
 fi
 
-# ② main・develop への直接 push をブロック
+# ② main・develop への直接 push をブロック（release/hotfix は除外）
 if echo "$COMMAND" | grep -qE "git push"; then
-  if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
-    echo "❌ BLOCKED: '$BRANCH' への直接 push は禁止です。PR を通してください。" >&2
-    exit 2
-  fi
-  if echo "$COMMAND" | grep -qE "(origin main|origin develop| main$| develop$|:main|:develop)"; then
-    echo "❌ BLOCKED: main・develop への直接 push は禁止です。PR を通してください。" >&2
-    exit 2
+  if [ "$IS_RELEASE_FLOW" = false ]; then
+    if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
+      echo "❌ BLOCKED: '$BRANCH' への直接 push は禁止です。PR を通してください。" >&2
+      exit 2
+    fi
+    if echo "$COMMAND" | grep -qE "(origin main|origin develop| main$| develop$|:main|:develop)"; then
+      echo "❌ BLOCKED: main・develop への直接 push は禁止です。PR を通してください。" >&2
+      exit 2
+    fi
   fi
 fi
 
