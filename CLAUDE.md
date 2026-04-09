@@ -66,6 +66,13 @@ hotfix/*      本番の緊急バグ修正。main から分岐し main と develo
 - **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
 - **日常の開発フロー：** `develop` から `feature/<機能名>` を切る → PR → `develop` へマージ
 - **リリースフロー：** `develop` から `release/<バージョン>` を切る → `main` と `develop` の両方にマージ → `main` にタグ付け
+  1. `git checkout develop && git checkout -b release/<x.y.z>`
+  2. `Info.plist` のバージョン・ビルド番号を更新（ビルド番号は `yyyymmddxyz` 形式、既存より大きいか `asc builds list` で確認）
+  3. ビルド・アップロード：CLAUDE.md 冒頭の「ビルド・アップロード前チェックリスト」を必ず実施し**ユーザー承認を得てから**実行
+  4. スクリーンショット撮影が必要な場合：開発者メモの手順に従い撮影・ASC アップロード（`asc-shots-pipeline` スキル参照）
+  5. What's New 更新：`asc-whats-new-writer` スキルを使う
+  6. 審査提出：`asc-release-flow` スキルを使う（提出前ヘルスチェック → Submit）
+  7. 提出後：`release/<x.y.z>` → `main`（PR）、`release/<x.y.z>` → `develop`（PR）、`main` に `vX.Y.Z` タグ、ブランチ削除
 - **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
 - ブランチ命名：`feature/<機能名>`・`fix/<修正内容>`・`release/<x.y>`・`hotfix/<内容>`・`docs/<内容>`・`chore/<内容>`
 - マージ後は作業ブランチをローカル・リモートともに削除する
@@ -310,3 +317,4 @@ meishi-app/
 - vCard は 3.0 形式（設定で 4.0 に変更可能）
 - 重複判定は名前70%・会社名30%の重み付きスコア
 - **HIG（Human Interface Guidelines）を参照する際は、まず sosumi MCPサーバーを使う。** `searchAppleDocumentation` で検索 → `fetchAppleDocumentation` で詳細取得（パス例：`design/human-interface-guidelines/foundations/color`）。必要に応じて `fetchAppleVideoTranscript` で関連WWDCセッションも参照
+- **App Store スクリーンショット撮影時は必ず以下を実施してから撮ること：** ① Dynamic Island 非表示（`SBSuppressDynamicIslandCompletely=true` を SpringBoard plist に書き込みシミュレーター再起動）② ステータスバー固定（`xcrun simctl status_bar $UDID override --time "9:41" --batteryState charged --batteryLevel 100 --wifiBars 3`）③ スクリーンショットは `xcrun simctl io $UDID screenshot --mask=ignored`。デバイス・パス・localization ID 等の設定は `.asc/shots.settings.json` を参照
