@@ -35,34 +35,19 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 
 ## アーキテクチャ（AI 処理の流れ）
 
-```text
-┌─ カメラ撮影 ──────────────────────────────────────┐
-│                                                    │
-│ OCR: Vision Framework                              │
-│   VNRecognizeTextRequest / .accurate               │
-│   recognitionLanguages = [ja-JP, en-US]            │
-│                                                    │
-│ ハイブリッド前段処理（常時・LLM 不使用）            │
-│   CardFieldClassifier.classifyStructuredFields     │
-│   ├─ Pass1: 正規表現（email・phone・URL・住所・    │
-│   │         会社・部署・役職を抽出）                │
-│   └─ Pass2: 座標ベース名前スコアリング              │
-│             （フリガナ近接・フォントサイズ・位置）   │
-│                                                    │
-│ LLM 分類（未分類行のみ・排他選択）                  │
-│   ├─ Apple Intelligence 端末                       │
-│   │    Foundation Models                           │
-│   │    @Generable + @Guide で ParsedCard 構造化    │
-│   │                                                │
-│   └─ 非対応端末                                    │
-│        Qwen3-0.6B Anemll CoreML                    │
-│        Embed + FFN + LMHead 3モデル構成            │
-│        stateful KV cache / LUT6 / ANE              │
-│        1行1回の単一パス分類（自動回帰生成なし）     │
-│                                                    │
-│ ハイブリッド後段処理                                │
-│   残余行から会社・役職を補完                         │
-└────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  A[カメラ撮影] --> B[OCR<br/>Vision Framework<br/>VNRecognizeTextRequest / .accurate<br/>ja-JP, en-US]
+  B --> C[ハイブリッド前段処理 常時・LLM 不使用<br/>CardFieldClassifier.classifyStructuredFields]
+  C --> C1[Pass1: 正規表現で email・phone・URL・住所・会社・部署・役職を抽出]
+  C --> C2[Pass2: 座標ベース名前スコアリング<br/>フリガナ近接・フォントサイズ・位置]
+  C2 --> D{未分類行あり?}
+  D -- Yes --> E[LLM 分類 排他選択]
+  E --> E1[Apple Intelligence 端末<br/>Foundation Models<br/>@Generable + @Guide で ParsedCard 構造化]
+  E --> E2[非対応端末<br/>Qwen3-0.6B Anemll CoreML<br/>Embed + FFN + LMHead 3モデル<br/>stateful KV cache / LUT6 / ANE<br/>1行1回の単一パス分類]
+  D -- No --> F
+  E1 --> F[ハイブリッド後段処理<br/>残余行から会社・役職を補完]
+  E2 --> F
 ```
 
 ルールベースの抽出結果が常に LLM より優先されます。LLM エンジンは排他利用（フォールバック連鎖なし）です。
