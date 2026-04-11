@@ -217,6 +217,7 @@ struct CardFormView: View {
                             FlowLayout(spacing: 6) {
                                 ForEach(listViewModel.allTags.filter { viewModel.suggestedTagIDs.contains($0.id ?? UUID()) }) { tag in
                                     HStack(spacing: 4) {
+                                        // 承認ボタン
                                         Button {
                                             if let id = tag.id {
                                                 viewModel.acceptTagSuggestion(id)
@@ -240,6 +241,17 @@ struct CardFormView: View {
                                                 Capsule()
                                                     .strokeBorder(tag.color.opacity(0.3), lineWidth: 1)
                                             )
+                                        }
+                                        .buttonStyle(.plain)
+                                        // 却下ボタン
+                                        Button {
+                                            if let id = tag.id {
+                                                viewModel.dismissTagSuggestion(id)
+                                            }
+                                        } label: {
+                                            Image(systemName: "xmark")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
                                         }
                                         .buttonStyle(.plain)
                                     }
