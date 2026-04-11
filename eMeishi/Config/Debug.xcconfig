@@ -1,0 +1,11 @@
+// Debug ビルド専用設定
+
+// Debug 用 Info.plist（UIFileSharingEnabled=true を Boolean 型で設定）
+INFOPLIST_FILE = eMeishi/Info-Debug.plist
+
+// Swift コンパイル条件（#if DEBUG ブロックを有効化）
+// → SettingsView 開発者セクション・seedSampleData・CloudKitModelUploader
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+
+// テスト可能性（Unit/UIテスト実行に必要）
+ENABLE_TESTABILITY = YES

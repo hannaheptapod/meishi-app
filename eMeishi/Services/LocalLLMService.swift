@@ -4,8 +4,11 @@ import Accelerate
 import Combine
 import os
 
-// オンデバイス Qwen3-0.6B（4bit量子化 CoreML・Prefill/Decode 分割方式）による意味分析サービス
-// モデルソース: smkrv/Qwen3-0.6B-CoreML-4bit
+// オンデバイス Qwen3-0.6B（ANE対応 Anemll 変換版）による意味分析サービス
+// モデルソース: anemll/anemll-Qwen-Qwen3-0.6B-ctx512_0.3.4
+//
+// アーキテクチャ: Embed + FFN Prefill（stateful KV cache） + LM Head（split 16）
+// ComputeUnits: .cpuAndNeuralEngine（ANE で Transformer 層を実行）
 //
 // モデルファイル配置先（2通り）:
 //   A) CloudKit 経由ダウンロード → ~/Library/Application Support/LocalLLM/
@@ -13,17 +16,30 @@ import os
 //
 // 必要ファイル構成:
 //   <modelDir>/
-//     Qwen3-0.6B-Prefill-4bit.mlmodelc/   (コンパイル済み Prefill モデル)
-//     Qwen3-0.6B-Decode-4bit.mlmodelc/    (コンパイル済み Decode モデル)
-//     tokenizer.json                       (BPE トークナイザー)
+//     qwen_embeddings.mlmodelc/        (トークン埋め込み)
+//     qwen_FFN_PF_lut6.mlmodelc/      (Transformer FFN・stateful KV cache・LUT6量子化)
+//     qwen_lm_head_lut6.mlmodelc/     (LM Head・logits を 16 チャンクに分割出力)
+//     tokenizer.json                  (BPE トークナイザー)
 class LocalLLMService: ObservableObject {
 
     static let shared = LocalLLMService()
 
-    // MARK: - 定数
+    // MARK: - モデルファイル名
 
-    private let prefillModelName = "Qwen3-0.6B-Prefill-4bit.mlmodelc"
-    private let decodeModelName  = "Qwen3-0.6B-Decode-4bit.mlmodelc"
+    private let embedModelName   = "qwen_embeddings.mlmodelc"
+    private let ffnModelName     = "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc"
+    private let lmheadModelName  = "qwen_lm_head_lut6.mlmodelc"
+
+    // MARK: - 推論パラメータ（Anemll meta.yaml から）
+
+    /// Anemll Qwen3-0.6B-ctx512 の最大コンテキスト長
+    let maxContextLength: Int = 512
+    /// FFN モデルの入力バッチサイズ（固定）
+    private let batchSize: Int = 64
+    /// LM Head の分割数（logits1〜logits16）
+    private let splitLMHead: Int = 16
+    /// 語彙サイズ（Qwen3 共通）
+    private let vocabSize: Int = 151936
 
     // MARK: - 状態
 
@@ -32,9 +48,11 @@ class LocalLLMService: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var isInferencing:    Bool = false
 
-    private(set) var prefillModel: MLModel? = nil
-    private(set) var decodeModel:  MLModel? = nil
-    private(set) var tokenizer:    Qwen25Tokenizer? = nil
+    private(set) var embedModel:  MLModel? = nil
+    private(set) var ffnModel:    MLModel? = nil
+    private(set) var lmheadModel: MLModel? = nil
+    private(set) var tokenizer:   Qwen25Tokenizer? = nil
+    private var ffnState: MLState? = nil  // iOS 18+ stateful KV cache
 
     // MARK: - ファイルパス
 
@@ -54,16 +72,20 @@ class LocalLLMService: ObservableObject {
 
     /// 実際に使用するモデルディレクトリ（Documents 優先、なければ Application Support）
     private var activeModelDir: URL {
-        let localPrefill = localModelDirURL.appendingPathComponent(prefillModelName)
-        if FileManager.default.fileExists(atPath: localPrefill.path) {
+        let localEmbed = localModelDirURL.appendingPathComponent(embedModelName)
+        if FileManager.default.fileExists(atPath: localEmbed.path) {
             return localModelDirURL
         }
         return modelDirURL
     }
 
-    var prefillModelURL: URL { activeModelDir.appendingPathComponent(prefillModelName) }
-    var decodeModelURL:  URL { activeModelDir.appendingPathComponent(decodeModelName) }
+    var embedModelURL:  URL { activeModelDir.appendingPathComponent(embedModelName) }
+    var ffnModelURL:    URL { activeModelDir.appendingPathComponent(ffnModelName) }
+    var lmheadModelURL: URL { activeModelDir.appendingPathComponent(lmheadModelName) }
     var tokenizerFileURL: URL { activeModelDir.appendingPathComponent("tokenizer.json") }
+
+    // 後方互換: 呼び出し元（DuplicateChecker 等）が prefillModelURL を使う場合に対応
+    var prefillModelURL: URL { embedModelURL }
 
     private init() {
         isModelAvailable = checkModelFiles()
@@ -72,24 +94,15 @@ class LocalLLMService: ObservableObject {
     /// モデルファイルの存在を確認（Documents → Application Support の順）
     private func checkModelFiles() -> Bool {
         let fm = FileManager.default
-        // Documents 内を先にチェック（開発用ローカル配置）
+        // Documents 内を先にチェック
         let localDir = localModelDirURL
-        let localPrefill = localDir.appendingPathComponent(prefillModelName)
-        let localDecode  = localDir.appendingPathComponent(decodeModelName)
-        let localTok     = localDir.appendingPathComponent("tokenizer.json")
-        if fm.fileExists(atPath: localPrefill.path)
-        && fm.fileExists(atPath: localDecode.path)
-        && fm.fileExists(atPath: localTok.path) {
+        let localFiles = [embedModelName, ffnModelName, lmheadModelName, "tokenizer.json"]
+        if localFiles.allSatisfy({ fm.fileExists(atPath: localDir.appendingPathComponent($0).path) }) {
             return true
         }
-        // Application Support 内をチェック（CloudKit ダウンロード）
+        // Application Support 内をチェック
         let appDir = modelDirURL
-        let appPrefill = appDir.appendingPathComponent(prefillModelName)
-        let appDecode  = appDir.appendingPathComponent(decodeModelName)
-        let appTok     = appDir.appendingPathComponent("tokenizer.json")
-        return fm.fileExists(atPath: appPrefill.path)
-            && fm.fileExists(atPath: appDecode.path)
-            && fm.fileExists(atPath: appTok.path)
+        return localFiles.allSatisfy({ fm.fileExists(atPath: appDir.appendingPathComponent($0).path) })
     }
 
     // MARK: - モデル管理
@@ -97,24 +110,30 @@ class LocalLLMService: ObservableObject {
     func loadModelIfNeeded() throws {
         guard isModelAvailable else { return }
 
-        let config = MLModelConfiguration()
-        // .all だと ANE が int32 入力に対応できず CPU フォールバックで極端に遅い
-        // .cpuAndGPU で GPU を優先的に使用し、int32 互換性を確保
-        config.computeUnits = .cpuAndGPU
+        // Embed モデル: .cpuOnly を使用
+        // iOS 26 で .cpuAndNeuralEngine / .all 指定時に MIL→EIR 変換（ANE コンパイルパス）で
+        // bad_cast が発生しロードに失敗する（error -14）。
+        // .cpuOnly にすれば MIL→EIR を一切走らせないため確実にロードできる。
+        // Embed はトークン埋め込みルックアップ（gather）のみで計算負荷が極めて軽く CPU で十分。
+        let embedConfig = MLModelConfiguration()
+        embedConfig.computeUnits = .cpuOnly
 
-        if prefillModel == nil {
-            prefillModel = try MLModel(contentsOf: prefillModelURL, configuration: config)
-            let desc = prefillModel!.modelDescription
-            AppLogger.llm.debug("Prefill inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.debug("Prefill outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.info("Prefill モデルロード完了 (cpuAndGPU)")
+        // FFN・LMHead: ANE 必須（Transformer の重い演算はANEで実行）
+        let aneConfig = MLModelConfiguration()
+        aneConfig.computeUnits = .cpuAndNeuralEngine
+
+        if embedModel == nil {
+            embedModel = try MLModel(contentsOf: embedModelURL, configuration: embedConfig)
+            AppLogger.llm.info("Embed モデルロード完了 (cpuOnly)")
         }
-        if decodeModel == nil {
-            decodeModel = try MLModel(contentsOf: decodeModelURL, configuration: config)
-            let desc = decodeModel!.modelDescription
-            AppLogger.llm.debug("Decode inputs: \(desc.inputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.debug("Decode outputs: \(desc.outputDescriptionsByName.keys.sorted(), privacy: .public)")
-            AppLogger.llm.info("Decode モデルロード完了 (cpuAndGPU)")
+        if ffnModel == nil {
+            ffnModel = try MLModel(contentsOf: ffnModelURL, configuration: aneConfig)
+            AppLogger.llm.info("FFN モデルロード完了 (cpuAndNeuralEngine)")
+            ffnState = ffnModel!.makeState()
+        }
+        if lmheadModel == nil {
+            lmheadModel = try MLModel(contentsOf: lmheadModelURL, configuration: aneConfig)
+            AppLogger.llm.info("LMHead モデルロード完了 (cpuAndNeuralEngine)")
         }
         if tokenizer == nil {
             tokenizer = try Qwen25Tokenizer(url: tokenizerFileURL)
@@ -123,10 +142,10 @@ class LocalLLMService: ObservableObject {
 
     // MARK: - モデルロード（公開ヘルパー）
 
-    /// モデルをロードし、利用可能なら (prefillModel, tokenizer) を返す。
-    /// 利用不可の場合は nil を返す。
+    /// モデルをロードし、利用可能なら (prefill: embedModel, tokenizer) を返す。
+    /// 後方互換: prefill フィールドには embedModel を返す（forwardPrefill は内部でフル推論を実行）。
     func ensureModelLoaded() -> (prefill: MLModel, tokenizer: Qwen25Tokenizer)? {
-        if prefillModel == nil || tokenizer == nil {
+        if embedModel == nil || tokenizer == nil {
             isModelAvailable = checkModelFiles()
             do {
                 try loadModelIfNeeded()
@@ -134,8 +153,8 @@ class LocalLLMService: ObservableObject {
                 AppLogger.llm.error("モデルロードエラー: \(error)")
             }
         }
-        guard let pModel = prefillModel, let tok = tokenizer else { return nil }
-        return (pModel, tok)
+        guard let embed = embedModel, let tok = tokenizer else { return nil }
+        return (prefill: embed, tokenizer: tok)
     }
 
     // MARK: - 推論（公開API）
@@ -144,14 +163,11 @@ class LocalLLMService: ObservableObject {
     /// ルールベース前段処理は呼び出し元（CardFormViewModel）で実施済み。
     /// モデル未ロード・推論失敗時は nil を返す。
     ///
-    /// 推論方式: 単一パス分類（1行1回の forward pass でカテゴリ判定）
-    /// - 自動回帰生成を完全廃止（KVキャッシュなしモデルでは O(n²) で破綻するため）
-    /// - 未分類行数 × 1回の forward pass のみ（通常2-4回）
+    /// 推論方式: 単一パス分類（1行1回の 3段 forward pass でカテゴリ判定）
+    ///   Embed → FFN Prefill（stateful・バッチ64）→ LM Head（16 チャンク分割）
     func classifyUnclassifiedLines(_ lines: [String]) async -> CardFieldClassifier.ParsedCard? {
-        // アプリ再起動後に未ロードの場合はここでロードする
-        if prefillModel == nil || decodeModel == nil || tokenizer == nil {
+        if embedModel == nil || ffnModel == nil || lmheadModel == nil || tokenizer == nil {
             await MainActor.run { isInferencing = true }
-            // モデルファイルの存在を再チェック（Finder で追加された場合に対応）
             isModelAvailable = checkModelFiles()
             do {
                 try loadModelIfNeeded()
@@ -159,9 +175,9 @@ class LocalLLMService: ObservableObject {
                 AppLogger.llm.error("モデルロードエラー: \(error)")
             }
         }
-        guard let pModel = prefillModel, let dModel = decodeModel, let tok = tokenizer else {
+        guard let tok = tokenizer, embedModel != nil, ffnModel != nil, lmheadModel != nil else {
             await MainActor.run { isInferencing = false }
-            AppLogger.llm.warning("モデル未ロード（prefill=\(self.prefillModel != nil, privacy: .public), decode=\(self.decodeModel != nil, privacy: .public), tok=\(self.tokenizer != nil, privacy: .public)）")
+            AppLogger.llm.warning("モデル未ロード（embed=\(self.embedModel != nil, privacy: .public), ffn=\(self.ffnModel != nil, privacy: .public), lmhead=\(self.lmheadModel != nil, privacy: .public), tok=\(self.tokenizer != nil, privacy: .public)）")
             return nil
         }
 
@@ -175,19 +191,14 @@ class LocalLLMService: ObservableObject {
         AppLogger.llm.info("単一パス分類開始。未分類行: \(lines.count, privacy: .public)行")
 
         do {
-            let llmResult = try classifyByLine(
-                prefillModel: pModel, decodeModel: dModel,
-                tokenizer: tok,
-                lines: lines,
-                deadline: deadline
-            )
+            let llmResult = try await classifyByLine(tokenizer: tok, lines: lines, deadline: deadline)
             let elapsed = Date().timeIntervalSince(startTime)
             AppLogger.llm.info("分類完了。\(String(format: "%.1f", elapsed), privacy: .public)秒")
 
-            let llmHasContent = !llmResult.lastName.isEmpty || !llmResult.firstName.isEmpty
+            let hasContent = !llmResult.lastName.isEmpty || !llmResult.firstName.isEmpty
                 || !llmResult.title.isEmpty || !llmResult.department.isEmpty
                 || !llmResult.company.isEmpty
-            if !llmHasContent {
+            if !hasContent {
                 AppLogger.llm.info("LLM結果が空")
                 return nil
             }
@@ -202,57 +213,43 @@ class LocalLLMService: ObservableObject {
         }
     }
 
-    // MARK: - 単一パス分類（自動回帰生成を廃止）
+    // MARK: - 単一パス分類
 
-    /// 各未分類行に対して1回の forward pass でカテゴリ（名前/役職/部署/会社）を判定。
-    ///
-    /// 自動回帰生成（15ステップ × 全シーケンス再処理 = O(n²)）を完全廃止し、
-    /// 行数分の単一 forward pass（各 ~25トークン）のみで分類する。
-    ///
-    /// 計算量: O(行数 × プロンプト長) ≈ O(3 × 25) = 75トークン相当
-    /// 旧方式: O(15 × (60+15)/2) ≈ O(562) トークン相当（7.5倍の削減）
     private enum LineCategory: String {
         case name, title, department, company, unknown
     }
 
-    private func classifyByLine(prefillModel: MLModel,
-                                decodeModel: MLModel,
-                                tokenizer: Qwen25Tokenizer,
+    private func classifyByLine(tokenizer: Qwen25Tokenizer,
                                 lines: [String],
-                                deadline: Date) throws -> CardFieldClassifier.ParsedCard {
+                                deadline: Date) async throws -> CardFieldClassifier.ParsedCard {
         var result = CardFieldClassifier.ParsedCard()
-
-        // Prefill モデルを使用（causalMask 付きで正しいアテンション保証）
-        // Decode モデルは causalMask なしで全行 '!' を返す問題があるため不使用
 
         for (i, line) in lines.enumerated() {
             if Date() > deadline { throw InferenceError.timeout }
 
-            // 分類用プロンプト
             let prompt = buildClassificationPrompt(line: line)
             let ids = tokenizer.encode(prompt)
 
             let stepStart = CFAbsoluteTimeGetCurrent()
-            let logits = try forwardPrefill(model: prefillModel, ids: ids, seqLen: ids.count)
+            // forwardPrefill: Embed → FFN Prefill batches → LM Head → [1,1,151936] logits
+            let logits = try await forwardPrefill(model: embedModel!, ids: ids, seqLen: ids.count)
             let stepMs = (CFAbsoluteTimeGetCurrent() - stepStart) * 1000
 
             guard let tokenId = argmaxLastToken(logits: logits) else {
-                AppLogger.llm.debug("行\(i+1, privacy: .public) [Pre] \(String(format: "%.0f", stepMs), privacy: .public)ms: argmax失敗 \(line, privacy: .private)")
+                AppLogger.llm.debug("行\(i+1, privacy: .public) [ANE] \(String(format: "%.0f", stepMs), privacy: .public)ms: argmax失敗")
                 continue
             }
             let decoded = tokenizer.decode([tokenId]).lowercased()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // カテゴリ判定: 先頭文字 + 日本語キーワードの両方に対応
             let category: LineCategory
             if decoded.hasPrefix("n") || decoded.hasPrefix("名") || decoded.hasPrefix("person") { category = .name }
             else if decoded.hasPrefix("t") || decoded.hasPrefix("役") || decoded.hasPrefix("position") { category = .title }
             else if decoded.hasPrefix("d") || decoded.hasPrefix("部") || decoded.hasPrefix("sect") { category = .department }
             else if decoded.hasPrefix("c") || decoded.hasPrefix("会") || decoded.hasPrefix("org") { category = .company }
-            else if decoded.hasPrefix("a") || decoded.hasPrefix("住") || decoded.hasPrefix("addr") { category = .unknown } // 住所はルールベースが処理済みのはず
             else { category = .unknown }
 
-            AppLogger.llm.debug("行\(i+1, privacy: .public) [Pre] \(String(format: "%.0f", stepMs), privacy: .public)ms (\(ids.count, privacy: .public)tok): \(line, privacy: .private) → \(category.rawValue, privacy: .public) (token=\(decoded, privacy: .public) id=\(tokenId, privacy: .public))")
+            AppLogger.llm.debug("行\(i+1, privacy: .public) [ANE] \(String(format: "%.0f", stepMs), privacy: .public)ms (\(ids.count, privacy: .public)tok): \(line, privacy: .private) → \(category.rawValue, privacy: .public) (token=\(decoded, privacy: .public) id=\(tokenId, privacy: .public))")
 
             switch category {
             case .name:
@@ -266,8 +263,6 @@ class LocalLLMService: ObservableObject {
             case .company:
                 if result.company.isEmpty { result.company = line.trimmingCharacters(in: .whitespaces) }
             case .unknown:
-                // unknown はスキップ（ルールベースが既に名前・住所等を検出済み）
-                // LLM が分類できなかった行を名前として扱うと正しい結果を壊す
                 break
             }
         }
@@ -275,136 +270,258 @@ class LocalLLMService: ObservableObject {
         return result
     }
 
-    /// 分類用 ChatML プロンプト
-    /// Qwen3 に1行のカテゴリを1トークンで回答させる
-    /// /no_think で思考モード無効化し、選択肢を明示してトークン制約する
+    /// 分類用 ChatML プロンプト（Qwen3 形式）
     private func buildClassificationPrompt(line: String) -> String {
         return "<|im_start|>system\nClassify the business card field. Reply with exactly one word. A person's name is typically 2-6 kanji characters, often with a space between family and given name.<|im_end|>\n<|im_start|>user\nWhat type of field is this on a Japanese business card?\n\"\(line)\"\nOptions: name, title, department, company, address, other<|im_end|>\n<|im_start|>assistant\n/no_think\n"
     }
 
-    /// 日本語名を姓・名に分割（スペース区切り、日本の慣習で姓が先）
+    /// 日本語名を姓・名に分割
     private func splitJapaneseName(_ text: String) -> (lastName: String, firstName: String) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        // 半角スペースで分割
         let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
         if parts.count >= 2 { return (parts[0], parts[1]) }
-        // 全角スペースで分割
         let fwParts = trimmed.split(separator: "\u{3000}", maxSplits: 1).map(String.init)
         if fwParts.count >= 2 { return (fwParts[0], fwParts[1]) }
-        // 分割不能 → 全体を姓に
         return (trimmed, "")
     }
 
-    // MARK: - 自動回帰生成（レガシー・単一パス分類が失敗した場合の保険）
+    // MARK: - Anemll 3段 Forward Pass
 
-    private let maxContextLength = 1024
+    /// Anemll 3段推論パイプライン（後方互換 public API）
+    ///
+    /// 内部的に Embed → FFN Prefill（batched stateful）→ LM Head（split 16）を実行し、
+    /// 結合した [1, 1, 151936] float32 logits を返す。
+    /// `model` パラメータは後方互換のために残すが内部では使用しない。
+    func forwardPrefill(model: MLModel, ids: [Int], seqLen: Int) async throws -> MLMultiArray {
+        guard embedModel != nil, let ffn = ffnModel, lmheadModel != nil else {
+            throw InferenceError.noLogits
+        }
 
-    // MARK: - Forward Pass（Prefill）
+        // コンテキスト長を超えるプロンプトは末尾 maxContextLength トークンに切り詰め
+        let actualIds: [Int]
+        if ids.count > maxContextLength {
+            AppLogger.llm.warning("プロンプト長 \(ids.count, privacy: .public) がコンテキスト長 \(self.maxContextLength, privacy: .public) を超過。末尾トークンを使用")
+            actualIds = Array(ids.suffix(maxContextLength))
+        } else {
+            actualIds = ids
+        }
+        let actualLen = actualIds.count
 
-    /// Prefill モデルの forward pass（プロンプト全体を一括処理）
-    /// 入力: inputIds [1, seqLen] + causalMask [1, 1, seqLen, 1024]
-    /// 出力: logits [1, 1, 151936]
-    func forwardPrefill(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
-        let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        // NSNumber 変換を回避して直接ポインタ書き込み
+        // バッチ数（64 の倍数に切り上げ）
+        let numBatches = (actualLen + batchSize - 1) / batchSize
+        let paddedLen  = numBatches * batchSize
+        let paddedIds  = actualIds + Array(repeating: 0, count: paddedLen - actualLen)
+
+        // FFN KV キャッシュをリセット（各プロンプトで独立した推論）
+        ffnState = ffn.makeState()
+
+        var lastBatchOutput: MLMultiArray? = nil
+
+        for batchIdx in 0..<numBatches {
+            let batchStart = batchIdx * batchSize
+            let batchIds   = Array(paddedIds[batchStart..<batchStart + batchSize])
+
+            // Step 1: Embed バッチ
+            let hidden = try await forwardEmbedBatch(ids: batchIds)
+
+            // Step 2: FFN Prefill バッチ（stateful）
+            let outHidden = try await forwardFFNBatch(
+                hidden: hidden,
+                posOffset: batchStart,
+                seqLen: actualLen
+            )
+            lastBatchOutput = outHidden
+        }
+
+        guard let lastOutput = lastBatchOutput else { throw InferenceError.noLogits }
+
+        // Step 3: 最後のバッチの実トークン位置の hidden state を取り出す
+        let lastTokenInBatch = (actualLen - 1) % batchSize
+        let finalHidden = try extractHiddenState(from: lastOutput, tokenIdx: lastTokenInBatch)
+
+        // Step 4: LM Head → 16 チャンク logits を結合して [1, 1, 151936] を返す
+        return try await forwardLMHeadToLogits(hidden: finalHidden)
+    }
+
+    // MARK: - Embed（バッチ単位）
+
+    /// トークン ID を埋め込みベクトルに変換する（batchSize=64 固定）
+    /// 入力: input_ids [1, 64] int32
+    /// 出力: hidden_states [1, 64, hiddenSize] float16
+    private func forwardEmbedBatch(ids: [Int]) async throws -> MLMultiArray {
+        let n = ids.count  // = batchSize
+        let inputArray = try MLMultiArray(shape: [1, n as NSNumber], dataType: .int32)
         let ptr = inputArray.dataPointer.assumingMemoryBound(to: Int32.self)
         for (i, id) in ids.enumerated() { ptr[i] = Int32(id) }
 
-        let mask = try buildCausalMask(queryLen: seqLen, keyLen: maxContextLength)
-
-        let features: [String: Any] = [
-            "inputIds":   MLFeatureValue(multiArray: inputArray),
-            "causalMask": MLFeatureValue(multiArray: mask),
-        ]
-        let provider = try MLDictionaryFeatureProvider(dictionary: features)
-        let output   = try model.prediction(from: provider)
-
-        guard let logits = output.featureValue(for: "logits")?.multiArrayValue else {
-            throw InferenceError.noLogits
+        let input  = try MLDictionaryFeatureProvider(dictionary: [
+            "input_ids": MLFeatureValue(multiArray: inputArray)
+        ])
+        let output = try await embedModel!.prediction(from: input)
+        guard let hidden = output.featureValue(for: "hidden_states")?.multiArrayValue else {
+            throw InferenceError.noHiddenStates
         }
-        return logits
+        return hidden
     }
 
-    // MARK: - Forward Pass（Decode）
+    // MARK: - FFN Prefill（バッチ単位・stateful）
 
-    /// Decode モデルの forward pass（全シーケンスを入力し最後のトークンの logits を取得）
-    /// 入力: inputIds [1, seqLen]（プロンプト + 生成済みトークン全体）
-    /// 出力: logits
-    /// このモデルは内部で causal mask と position_ids を自動構築する
-    private func forwardDecode(model: MLModel, ids: [Int], seqLen: Int) throws -> MLMultiArray {
-        let inputArray = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        let ptr = inputArray.dataPointer.assumingMemoryBound(to: Int32.self)
-        for (i, id) in ids.enumerated() { ptr[i] = Int32(id) }
+    /// Transformer FFN を stateful KV キャッシュ付きで実行する
+    /// 入力: hidden_states [1, 64, hiddenSize] + position_ids [64] + causal_mask [1,1,64,512] + current_pos [1]
+    /// 出力: output_hidden_states [1, 64, hiddenSize]（KV キャッシュは state に蓄積）
+    private func forwardFFNBatch(hidden: MLMultiArray,
+                                 posOffset: Int,
+                                 seqLen: Int) async throws -> MLMultiArray {
+        guard let state = ffnState else { throw InferenceError.noHiddenStates }
 
-        let features: [String: Any] = [
-            "inputIds": MLFeatureValue(multiArray: inputArray),
-        ]
-        let provider = try MLDictionaryFeatureProvider(dictionary: features)
-        let output   = try model.prediction(from: provider)
+        // position_ids: [posOffset, posOffset+1, ..., posOffset+batchSize-1]
+        let posArray = try MLMultiArray(shape: [batchSize as NSNumber], dataType: .int32)
+        let posPtr   = posArray.dataPointer.assumingMemoryBound(to: Int32.self)
+        for i in 0..<batchSize { posPtr[i] = Int32(posOffset + i) }
 
-        guard let logits = output.featureValue(for: "logits")?.multiArrayValue else {
-            throw InferenceError.noLogits
+        // current_pos: このバッチが終了した後のポジション
+        let curPosArray = try MLMultiArray(shape: [1], dataType: .int32)
+        let curPosPtr   = curPosArray.dataPointer.assumingMemoryBound(to: Int32.self)
+        curPosPtr[0]    = Int32(posOffset + batchSize)
+
+        // causal_mask [1, 1, batchSize, maxContextLength]
+        let mask = try buildBatchCausalMask(batchStart: posOffset, seqLen: seqLen)
+
+        let input  = try MLDictionaryFeatureProvider(dictionary: [
+            "hidden_states": MLFeatureValue(multiArray: hidden),
+            "position_ids":  MLFeatureValue(multiArray: posArray),
+            "causal_mask":   MLFeatureValue(multiArray: mask),
+            "current_pos":   MLFeatureValue(multiArray: curPosArray),
+        ])
+        let output = try await ffnModel!.prediction(from: input, using: state)
+        guard let outHidden = output.featureValue(for: "output_hidden_states")?.multiArrayValue else {
+            throw InferenceError.noHiddenStates
         }
-        return logits
+        return outHidden
     }
 
-    // MARK: - Causal Mask
+    // MARK: - Batch Causal Mask
 
-    /// Prefill 用 causal_mask を Float16 で構築する [1, 1, queryLen, keyLen]
-    /// keyLen は常に maxContextLength (1024)
-    /// 0.0 = 参照可、-30000.0 = マスク（-inf の代替）
-    /// Accelerate (vDSP) でバルク充填しループコストを削減
-    func buildCausalMask(queryLen: Int, keyLen: Int) throws -> MLMultiArray {
-        let shape: [NSNumber] = [1, 1, NSNumber(value: queryLen), NSNumber(value: keyLen)]
+    /// FFN バッチ用 causal mask [1, 1, batchSize, maxContextLength]（Float16）
+    ///
+    /// クエリ q（ローカル位置 0..batchSize-1）の絶対位置は batchStart+q。
+    /// キー k（0..maxContextLength-1）について:
+    ///   k <= batchStart+q → 0.0（参照可）
+    ///   k >  batchStart+q → -30000.0（マスク）
+    private func buildBatchCausalMask(batchStart: Int, seqLen: Int) throws -> MLMultiArray {
+        let shape: [NSNumber] = [1, 1,
+                                 batchSize as NSNumber,
+                                 maxContextLength as NSNumber]
         let mask = try MLMultiArray(shape: shape, dataType: .float16)
 
-        // Float16 ポインタで直接書き込み（NSNumber 変換を回避）
-        let ptr = mask.dataPointer.assumingMemoryBound(to: UInt16.self)
-        let allowBits: UInt16 = 0x0000        // Float16: 0.0
-        let blockBits: UInt16 = 0xF753        // Float16: -30000.0
+        let ptr        = mask.dataPointer.assumingMemoryBound(to: UInt16.self)
+        let allowBits: UInt16 = 0x0000  // Float16:  0.0
+        let blockBits: UInt16 = 0xF753  // Float16: -30000.0
 
-        // まず全体を blockVal で埋める
-        let totalElements = queryLen * keyLen
-        ptr.initialize(repeating: blockBits, count: totalElements)
+        ptr.initialize(repeating: blockBits, count: batchSize * maxContextLength)
 
-        // causal 部分（下三角）を allowVal で上書き
-        for i in 0 ..< queryLen {
-            let absI = keyLen - queryLen + i
-            let rowStart = i * keyLen
-            // 0 ... absI を allow に設定
-            let allowCount = absI + 1
+        for q in 0..<batchSize {
+            let absPos     = batchStart + q
+            let rowStart   = q * maxContextLength
+            let allowCount = min(absPos + 1, maxContextLength)
             if allowCount > 0 {
-                let rowPtr = ptr.advanced(by: rowStart)
-                rowPtr.initialize(repeating: allowBits, count: min(allowCount, keyLen))
+                ptr.advanced(by: rowStart).initialize(repeating: allowBits, count: allowCount)
             }
         }
         return mask
     }
 
-    enum InferenceError: Error { case noLogits, timeout }
+    // MARK: - Hidden State 抽出
 
-    // MARK: - Argmax・float16変換
+    /// FFN 出力 [1, batchSize, hiddenSize] からトークン tokenIdx の hidden state [1, 1, hiddenSize] を取り出す
+    private func extractHiddenState(from output: MLMultiArray, tokenIdx: Int) throws -> MLMultiArray {
+        let shape      = output.shape.map { $0.intValue }
+        let hiddenSize = shape[2]
+        let stride1    = output.strides[1].intValue  // token 次元のストライド
 
-    /// ロジット配列の最後のトークン位置で argmax を取り、最大値のインデックスを返す
-    /// Prefill: [1, 1, 151936]、Decode: スカラーまたは [vocab] 等の可変形状に対応
+        let result = try MLMultiArray(shape: [1, 1, hiddenSize as NSNumber], dataType: output.dataType)
+        let srcOffset  = tokenIdx * stride1
+
+        switch output.dataType {
+        case .float16:
+            let src = output.dataPointer.assumingMemoryBound(to: UInt16.self).advanced(by: srcOffset)
+            let dst = result.dataPointer.assumingMemoryBound(to: UInt16.self)
+            dst.initialize(from: src, count: hiddenSize)
+        case .float32:
+            let src = output.dataPointer.assumingMemoryBound(to: Float32.self).advanced(by: srcOffset)
+            let dst = result.dataPointer.assumingMemoryBound(to: Float32.self)
+            dst.initialize(from: src, count: hiddenSize)
+        default:
+            for i in 0..<hiddenSize { result[i] = output[srcOffset + i] }
+        }
+        return result
+    }
+
+    // MARK: - LM Head（分割 logits 結合）
+
+    /// LM Head を実行し、16 分割 logits を結合して [1, 1, 151936] float32 を返す
+    /// 入力: hidden_states [1, 1, hiddenSize]
+    /// 出力: logits [1, 1, 151936] float32（argmaxLastToken 互換）
+    private func forwardLMHeadToLogits(hidden: MLMultiArray) async throws -> MLMultiArray {
+        let input  = try MLDictionaryFeatureProvider(dictionary: [
+            "hidden_states": MLFeatureValue(multiArray: hidden)
+        ])
+        let output = try await lmheadModel!.prediction(from: input)
+
+        let result    = try MLMultiArray(shape: [1, 1, vocabSize as NSNumber], dataType: .float32)
+        let resultPtr = result.dataPointer.assumingMemoryBound(to: Float32.self)
+        let chunkSize = vocabSize / splitLMHead  // 9496
+
+        for i in 1...splitLMHead {
+            guard let chunk = output.featureValue(for: "logits\(i)")?.multiArrayValue else {
+                throw InferenceError.noLogits
+            }
+            let actualChunkSize = chunk.shape.last!.intValue
+            let offset          = (i - 1) * chunkSize
+
+            switch chunk.dataType {
+            case .float16:
+                let ptr = chunk.dataPointer.assumingMemoryBound(to: UInt16.self)
+                for j in 0..<actualChunkSize {
+                    resultPtr[offset + j] = float16ToFloat32(ptr[j])
+                }
+            case .float32:
+                let ptr = chunk.dataPointer.assumingMemoryBound(to: Float32.self)
+                for j in 0..<actualChunkSize {
+                    resultPtr[offset + j] = ptr[j]
+                }
+            default:
+                for j in 0..<actualChunkSize {
+                    resultPtr[offset + j] = chunk[j].floatValue
+                }
+            }
+        }
+        return result
+    }
+
+    // MARK: - エラー型
+
+    enum InferenceError: Error { case noLogits, noHiddenStates, timeout }
+
+    // MARK: - Argmax（後方互換 public API）
+
+    /// logits [1, 1, vocabSize] から argmax を返す
     func argmaxLastToken(logits: MLMultiArray) -> Int? {
         let shape   = logits.shape.map { $0.intValue }
         let strides = logits.strides.map { $0.intValue }
 
-        let vocabSize: Int
+        let vocabSz: Int
         let baseOffset: Int
         switch shape.count {
         case 1:
-            vocabSize  = shape[0]
+            vocabSz    = shape[0]
             baseOffset = 0
         case 2:
-            vocabSize  = shape[1]
-            let lastRow = max(0, shape[0] - 1)
-            baseOffset  = lastRow * strides[0]
+            vocabSz    = shape[1]
+            baseOffset = max(0, shape[0] - 1) * strides[0]
         case 3:
-            vocabSize   = shape[2]
-            let lastPos = max(0, shape[1] - 1)
-            baseOffset  = lastPos * strides[1]
+            vocabSz    = shape[2]
+            baseOffset = max(0, shape[1] - 1) * strides[1]
         default:
             return nil
         }
@@ -416,24 +533,22 @@ class LocalLLMService: ObservableObject {
         switch logits.dataType {
         case .float32:
             let ptr = logits.dataPointer.assumingMemoryBound(to: Float32.self)
-            for v in 0 ..< vocabSize {
+            for v in 0..<vocabSz {
                 let val = ptr[baseOffset + v * vocabStride]
                 if val > maxVal { maxVal = val; argmax = v }
             }
         case .float16:
             let ptr = logits.dataPointer.assumingMemoryBound(to: UInt16.self)
-            for v in 0 ..< vocabSize {
-                let bits = ptr[baseOffset + v * vocabStride]
-                let val  = float16ToFloat32(bits)
+            for v in 0..<vocabSz {
+                let val = float16ToFloat32(ptr[baseOffset + v * vocabStride])
                 if val > maxVal { maxVal = val; argmax = v }
             }
         default:
-            for v in 0 ..< vocabSize {
+            for v in 0..<vocabSz {
                 let val = logits[baseOffset + v * vocabStride].floatValue
                 if val > maxVal { maxVal = val; argmax = v }
             }
         }
-
         return argmax
     }
 
@@ -461,69 +576,8 @@ class LocalLLMService: ObservableObject {
         return Float(bitPattern: f32bits)
     }
 
-    // MARK: - プロンプト構築（ChatML 形式）
-
-    /// ハイブリッド方式用: 未分類行のみを対象に名前・役職・部署を問う最小プロンプト
-    /// - プロンプトの各トークンが全デコードステップの計算量に影響するため極限まで短縮
-    /// - Qwen3 の思考モード無効化（/no_think）
-    /// - assistant ターンで `{"lastName":"` までプリフィルし生成トークン数を最小化
-    ///
-    /// 設計意図: KVキャッシュなしモデルでは各デコードステップで全トークンを再処理する
-    /// → プロンプト10トークン短縮 × 15ステップ = 150トークン分の計算削減
-    /// → プリフィル3トークン追加 = デコードステップ3回分の完全削減
-    let jsonPrefill = "{\"lastName\":\""
-
-    func buildChatMLPrompt(unclassifiedLines: [String], knownCompany: String) -> String {
-        let rawText = unclassifiedLines.joined(separator: "\n")
-        let hint = knownCompany.isEmpty ? "" : " company=\(knownCompany)"
-        return "<|im_start|>system\nJSON<|im_end|>\n<|im_start|>user\nCard:\n\(rawText)\nGet:lastName,firstName,title,department\(hint)<|im_end|>\n<|im_start|>assistant\n/no_think\n\(jsonPrefill)"
-    }
-
-    /// 旧API互換: 全行を渡すプロンプト（テスト用に残す）
-    func buildChatMLPrompt(lines: [String]) -> String {
-        let rawText = lines.joined(separator: "\n")
-        return "<|im_start|>system\nJSON<|im_end|>\n<|im_start|>user\nCard:\n\(rawText)\nGet:lastName,firstName,company,department,title,phone,email,address,website<|im_end|>\n<|im_start|>assistant\n/no_think\n\(jsonPrefill)"
-    }
-
-    // MARK: - JSON パース
-
-    func parseJSON(_ text: String) -> CardFieldClassifier.ParsedCard? {
-        let cleaned = text
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```",     with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let start = cleaned.firstIndex(of: "{") else { return nil }
-        let fromBrace = String(cleaned[start...])
-
-        let jsonStr: String
-        if let end = fromBrace.lastIndex(of: "}") {
-            jsonStr = String(fromBrace[fromBrace.startIndex...end])
-        } else {
-            jsonStr = fromBrace + "}"
-        }
-
-        guard let data = jsonStr.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-        else { return nil }
-
-        var result = CardFieldClassifier.ParsedCard()
-        result.lastName   = dict["lastName"]   ?? ""
-        result.firstName  = dict["firstName"]  ?? ""
-        result.company    = dict["company"]    ?? ""
-        result.department = dict["department"] ?? ""
-        result.title      = dict["title"]      ?? ""
-        if let phone = dict["phone"], !phone.isEmpty { result.phones = [phone] }
-        result.email      = dict["email"]      ?? ""
-        result.address    = dict["address"]    ?? ""
-        result.website    = dict["website"]    ?? ""
-        return result
-    }
-
     // MARK: - モデルダウンロード
 
-    /// ユーザーの同意後に呼び出す。@Published プロパティで進捗を通知する。
-    /// CloudKit Public Database からモデルファイルをダウンロードする。
     func downloadModel() async throws {
         await MainActor.run {
             isDownloading    = true
@@ -532,9 +586,10 @@ class LocalLLMService: ObservableObject {
         defer { Task { @MainActor in self.isDownloading = false } }
 
         let dir = modelDirURL
+        // 中途半端な前回ダウンロードを削除してからやり直す
+        try? FileManager.default.removeItem(at: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        // CloudKit からダウンロード（プログレスは MainActor で更新）
         try await CloudKitModelService.shared.downloadModel(
             modelDir: dir,
             tokenizerDestination: dir.appendingPathComponent("tokenizer.json")
@@ -542,7 +597,6 @@ class LocalLLMService: ObservableObject {
             Task { @MainActor in self?.downloadProgress = p }
         }
 
-        // ロード確認
         isModelAvailable = checkModelFiles()
         try loadModelIfNeeded()
         await MainActor.run { self.isModelAvailable = true }
@@ -551,12 +605,12 @@ class LocalLLMService: ObservableObject {
     // MARK: - モデル削除
 
     func deleteModel() throws {
-        guard isModelAvailable else { return }
-        // Application Support 内のモデルのみ削除（Documents 内は開発用なので残す）
         try? FileManager.default.removeItem(at: modelDirURL)
-        prefillModel     = nil
-        decodeModel      = nil
-        tokenizer        = nil
+        embedModel   = nil
+        ffnModel     = nil
+        lmheadModel  = nil
+        ffnState     = nil
+        tokenizer    = nil
         isModelAvailable = checkModelFiles()
     }
 

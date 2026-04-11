@@ -91,7 +91,7 @@ struct DuplicateChecker {
 
         // 最大10ペアまでAI検証（レイテンシ対策）
         for pair in borderlinePairs.prefix(10) {
-            let isMatch = verifyDuplicateWithAI(
+            let isMatch = await verifyDuplicateWithAI(
                 card1: pair.cardA,
                 card2: pair.cardB,
                 prefill: models.prefill,
@@ -109,14 +109,14 @@ struct DuplicateChecker {
 
     /// 1ペアをAIで同一人物判定
     private func verifyDuplicateWithAI(card1: BusinessCard, card2: BusinessCard,
-                                       prefill: MLModel, tokenizer: Qwen25Tokenizer) -> Bool {
+                                       prefill: MLModel, tokenizer: Qwen25Tokenizer) async -> Bool {
         let summary1 = cardSummary(card1)
         let summary2 = cardSummary(card2)
         let prompt = "<|im_start|>system\nAre these two business cards the same person? Reply yes or no.<|im_end|>\n<|im_start|>user\nCard1: \(summary1)\nCard2: \(summary2)\nSame person?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
         let ids = tokenizer.encode(prompt)
         do {
-            let logits = try LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
+            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
             guard let tokenId = LocalLLMService.shared.argmaxLastToken(logits: logits) else { return false }
             let decoded = tokenizer.decode([tokenId]).lowercased()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
