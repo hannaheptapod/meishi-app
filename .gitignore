@@ -76,3 +76,17 @@ opencode.json
 .claude/app-store-review-agent/
 .claude/asc-skills/
 
+# Blitz 自動生成（本アプリでは使わないが起動のたびに書き込まれる）
+backend/
+.agents/
+.claude/worktrees/
+.claude/rules/blitz.md
+.claude/rules/teenybase.md
+.claude/agents/reviewer.md
+.claude/skills/asc-*/
+
+# screenshots パイプライン作業領域（iphone69/ と ipad13/ のみ追跡）
+/screenshots/raw/*.png
+screenshots/ipad/
+screenshots/framed/
+

@@ -27,10 +27,6 @@
 
 ## ⚠️ 作業開始前チェックリスト（必須）
 
----
-
-## ⚠️ 作業開始前チェックリスト（必須）
-
 コードを変更する前に必ず実行すること：
 
 1. `git branch --show-current` でブランチを確認
@@ -78,9 +74,10 @@ hotfix/*      本番の緊急バグ修正。main から分岐し main と develo
 - **ブランチ名は必ず規定のプレフィックスを使うこと。** `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス（`claude/` など外部ツール・AIエージェントが自動生成するものを含む）は使用禁止。外部から指定されたブランチ名であっても規定外なら `/branch` スキルで**即座にリネーム**する。
 - **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
 - **日常の開発フロー：** `develop` から `feature/<機能名>` を切る → PR → `develop` へマージ
+- **本プロジェクトで使う skill は 5 個のみ**: `/branch`・`/translate`（hook 強制）、`asc-shots-pipeline`・`asc-whats-new-writer`・`asc-release-flow`（リリース手順）。`.claude/skills/asc-*/` には Blitz が 22 個の未使用 skill を同期してくるが、gitignore 済みなので無視して良い
 - **リリースフロー：** `develop` から `release/<バージョン>` を切る → `main` と `develop` の両方にマージ → `main` にタグ付け
   1. `git checkout develop && git checkout -b release/<x.y.z>`
-  2. `Info.plist` のバージョン・ビルド番号を更新（ビルド番号は `yyyymmddxyz` 形式、既存より大きいか `asc builds list` で確認）
+  2. `Info.plist` のバージョン・ビルド番号を更新（冒頭の「ビルド・アップロード前チェックリスト」を参照）
   3. ビルド・アップロード：CLAUDE.md 冒頭の「ビルド・アップロード前チェックリスト」を必ず実施し**ユーザー承認を得てから**実行
   4. スクリーンショット撮影が必要な場合：開発者メモの手順に従い撮影・ASC アップロード（`asc-shots-pipeline` スキル参照）
   5. What's New 更新：`asc-whats-new-writer` スキルを使う
@@ -154,7 +151,14 @@ Foundation Models のみ使用          Qwen3-0.6B CoreML のみ使用
 ```
 meishi-app/
 ├── CLAUDE.md
+├── README.md
 ├── eMeishi/
+│   ├── Info.plist                              # Release 用（UIFileSharingEnabled=false）
+│   ├── Info-Debug.plist                        # Debug 用（UIFileSharingEnabled=true・開発用モデル転送）
+│   ├── eMeishi.entitlements                    # CloudKit・iCloud 同期・アプリグループ等
+│   ├── Config/
+│   │   ├── Debug.xcconfig                      # INFOPLIST_FILE=Info-Debug.plist・SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG
+│   │   └── Release.xcconfig                    # INFOPLIST_FILE=Info.plist・DEBUG 条件コード除外
 │   ├── App/
 │   │   ├── eMeishiApp.swift
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
@@ -170,6 +174,7 @@ meishi-app/
 │   │   ├── CardFormView.swift
 │   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
 │   │   ├── BatchReviewView.swift               # 連続撮影後の一括確認（CardFormViewを順番に表示）
+│   │   ├── AISearchChatView.swift              # AI自然言語検索のチャットUI
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
@@ -177,7 +182,10 @@ meishi-app/
 │   │   ├── LockScreenView.swift                # 生体認証ロック画面
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
 │   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
-│   │   └── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
+│   │   ├── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
+│   │   └── Components/
+│   │       ├── CardRowView.swift               # 一覧行セル
+│   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
 │   │   ├── CardFormViewModel.swift
@@ -188,24 +196,42 @@ meishi-app/
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
+│   │   ├── CloudKitModelUploader.swift         # #if DEBUG 限定のモデルアップローダ（開発者向け）
 │   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
-│   │   ├── SearchQueryClassifier.swift         # AI自然言語検索のクエリ意図分類（時間表現+フィールド分類）
+│   │   ├── AISearchService.swift               # AI自然言語検索（時間表現抽出 + フィールド分類）
 │   │   ├── AutoTagService.swift                # AI自動タグ提案（既存タグからカード内容に該当するものを提案）
 │   │   ├── InsightsService.swift               # 人脈インサイト集計（会社別・エリア別・職種別・月別）
 │   │   └── Qwen25Tokenizer.swift               # BPE トークナイザー（Qwen3互換）
 │   ├── Utilities/
-│   │   ├── DuplicateChecker.swift
-│   │   ├── CardFieldClassifier.swift
-│   │   └── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
+│   │   ├── AppLogger.swift                     # os.Logger ラッパー
+│   │   ├── CardFieldClassifier.swift           # 正規表現ベースのフィールド分類（ハイブリッド前段処理）
+│   │   ├── CardGroupingService.swift           # 50音セクション分割
+│   │   ├── ContactPatternExtractor.swift       # email/phone/URL/住所の正規表現抽出
+│   │   ├── DuplicateChecker.swift              # Levenshtein 距離による重複判定
+│   │   ├── FieldDetector.swift                 # OCR 行からフィールド種別の初期判定
+│   │   ├── FlowLayout.swift                    # SwiftUI タグ折返しレイアウト
+│   │   ├── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
+│   │   ├── NameProcessor.swift                 # 名前の分割・正規化
+│   │   ├── NameReadingGenerator.swift          # ふりがな自動生成（CFStringTokenizer）
+│   │   └── ShareSheet.swift                    # UIActivityViewController ラッパー
 │   ├── Resources/
 │   │   └── BusinessCard.xcdatamodeld           # v1（初期）・v2（department追加）・v3（reading追加）・v4（isFavorite+Tag追加）・v5（Tag.sortOrder追加）の5バージョン
 │   ├── AppIcon.icon/                           # アプリアイコン
 │   └── Assets.xcassets                         # アクセントカラー
 ├── eMeishiTests/
 │   └── eMeishiTests.swift                      # 機能テスト網羅的に実装済み
-└── eMeishiUITests/
-    ├── eMeishiUITests.swift                  # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
-    └── eMeishiUITestsLaunchTests.swift       # 起動テスト
+├── eMeishiUITests/
+│   ├── eMeishiUITests.swift                  # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
+│   └── eMeishiUITestsLaunchTests.swift       # 起動テスト
+├── scripts/
+│   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
+├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
+├── metadata/                                   # App Store Connect メタデータ
+│   ├── app_info.yaml                           # アプリ基本情報（カテゴリ・URL 等）
+│   └── version/<x.y.z>/ja.json                 # バージョンごとの description・keywords・whatsNew
+├── .asc/                                       # ASC 向け設定（screenshots.json・shots.settings.json）
+├── screenshots/raw/{iphone69,ipad13}/          # App Store スクリーンショット（必要サイズのみ追跡）
+└── ExportOptions.plist                         # xcodebuild 手動 export 用
 ```
 
 ---
@@ -309,7 +335,7 @@ meishi-app/
 - `NSContactsUsageDescription`：連絡先への読み書きに使用
 - `NSFaceIDUsageDescription`：アプリのロック解除に使用
 - `NSPhotoLibraryUsageDescription`：名刺画像を保存するために使用
-- `UIFileSharingEnabled`：`true`（デバッグビルド・開発用モデル転送に使用）／`false`（本番ビルド前に必ず戻す）
+- `UIFileSharingEnabled`：Debug ビルドは `eMeishi/Info-Debug.plist`（`true`・開発用モデル転送）、Release ビルドは `eMeishi/Info.plist`（`false`）。`Config/Debug.xcconfig`・`Config/Release.xcconfig` の `INFOPLIST_FILE` でビルド構成ごとに自動切替されるため、手動で戻す必要はない
 - `LSSupportsOpeningDocumentsInPlace`：`false`（本番ビルド）
 - CloudKit Capability + Background Modes（Remote notifications）：iCloud 同期に必要（Xcode で手動設定）
 
@@ -318,6 +344,7 @@ meishi-app/
 ## 開発者メモ
 
 - **Xcodeプロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない。** Xcode 16 の File System Synchronized Groups により、eMeishi/ 配下に Swift ファイルを追加すれば自動的にビルド対象になる
+- **Blitz が `.claude/rules/blitz.md`・`.claude/rules/teenybase.md`・`.claude/agents/reviewer.md`・`.claude/skills/asc-*/`・`.agents/`・`backend/` を起動ごとに上書き再生成する。** いずれも `.gitignore` で透明化してあるため `git status` に出なければ正常。Teenybase は本アプリで不使用（`backend/` のコードを一切 import していない）なので再生成されても放置して良い
 - Foundation Models はシミュレータで動作しない（実機 iPhone 15 Pro以降 + Apple Intelligence有効が必要）
 - Anemll Qwen3-0.6B-ctx512 はシミュレータでも動作するが低速（ANE 不使用・CPU推論）
 - `LocalLLMService` のモデル検索パス: ① Documents/LocalLLM/（開発用・Finder/iTunes 転送）→ ② Application Support/LocalLLM/（CloudKit DL）。Documents 優先

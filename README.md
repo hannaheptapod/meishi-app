@@ -27,7 +27,7 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 | データ永続化 | CoreData + NSPersistentCloudKitContainer |
 | OCR | Vision Framework（VNRecognizeTextRequest） |
 | AI分析（Apple Intelligence対応端末） | Foundation Models（iOS 26+） |
-| AI分析（非対応端末） | Qwen3-0.6B CoreML（Prefill/Decode分割） |
+| AI分析（非対応端末） | Qwen3-0.6B Anemll CoreML（Embed+FFN+LMHead 3モデル・ANE対応） |
 | カメラ | AVFoundation |
 | 連絡先 | Contacts Framework |
 | 生体認証 | LocalAuthentication |
