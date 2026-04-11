@@ -226,15 +226,8 @@ struct CardDetailView: View {
 
     @ViewBuilder
     private var avatarView: some View {
-        ZStack {
-            Circle()
-                .fill(Color.accentColor.opacity(0.12))
-                .frame(width: 58, height: 58)
-            Text(card.initials)
-                .font(.title3.bold())
-                .foregroundStyle(Color.accentColor)
-        }
-        .accessibilityLabel("\(card.fullName.isEmpty ? "名前なし" : card.fullName)のアバター")
+        CardAvatarView(card: card, size: 58)
+            .accessibilityLabel("\(card.fullName.isEmpty ? "名前なし" : card.fullName)のアバター")
     }
 
     // MARK: - アクション
