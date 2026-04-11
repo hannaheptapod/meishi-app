@@ -13,7 +13,8 @@
   },
   "pipeline": {
     "frame_enabled": false,
-    "upload_enabled": false
+    "upload_enabled": false,
+    "pre_capture_script": "./scripts/shots-preflight.sh"
   },
   "devices": {
     "iphone": {
