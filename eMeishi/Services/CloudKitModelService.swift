@@ -1,5 +1,6 @@
 import Foundation
 import CloudKit
+import CryptoKit
 
 /// CloudKit Public Database からオンデバイスLLMモデルファイルをダウンロードするサービス。
 /// Anemll 変換済み Qwen3-0.6B-ctx512（3モデル分割方式）に対応。
@@ -33,6 +34,8 @@ class CloudKitModelService {
         let modelMilField: String
         /// このモデルの weight.bin を構成するチャンクのインデックス範囲
         let chunkRange: Range<Int>
+        /// レコードに格納された weight.bin の SHA256 を読み出すフィールド（optional）
+        let sha256Field: String
     }
 
     private let modelConfigs: [ModelAssetConfig] = [
@@ -41,21 +44,24 @@ class CloudKitModelService {
             coremlDataField: "coremlDataAsset",
             metadataField:   "metadataAsset",
             modelMilField:   "modelMilAsset",
-            chunkRange:      0..<2
+            chunkRange:      0..<2,
+            sha256Field:     "embedWeightSHA256"
         ),
         ModelAssetConfig(
             dirName:         "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc",
             coremlDataField: "prefillCoremlDataAsset",
             metadataField:   "prefillMetadataAsset",
             modelMilField:   "prefillModelMilAsset",
-            chunkRange:      2..<4
+            chunkRange:      2..<4,
+            sha256Field:     "ffnWeightSHA256"
         ),
         ModelAssetConfig(
             dirName:         "qwen_lm_head_lut6.mlmodelc",
             coremlDataField: "decodeCoremlDataAsset",
             metadataField:   "decodeMetadataAsset",
             modelMilField:   "decodeModelMilAsset",
-            chunkRange:      4..<5
+            chunkRange:      4..<5,
+            sha256Field:     "lmheadWeightSHA256"
         ),
     ]
 
@@ -70,6 +76,7 @@ class CloudKitModelService {
         case missingAsset(String)
         case missingChunkCount
         case chunkConcatenationFailed(String)
+        case sha256Mismatch(model: String, expected: String, actual: String)
 
         var errorDescription: String? {
             switch self {
@@ -81,6 +88,8 @@ class CloudKitModelService {
                 return "weightChunkCount が設定されていません"
             case .chunkConcatenationFailed(let model):
                 return "\(model) の weight チャンクの結合に失敗しました"
+            case .sha256Mismatch(let model, let expected, let actual):
+                return "\(model) の weight.bin が破損しています (expected=\(expected.prefix(8))... actual=\(actual.prefix(8))...)"
             }
         }
     }
@@ -97,9 +106,9 @@ class CloudKitModelService {
     func downloadModel(modelDir: URL,
                        tokenizerDestination: URL,
                        progress: @escaping (Double) -> Void) async throws {
-        // Step 1: 小ファイル + weightChunkCount を一括取得
+        // Step 1: 小ファイル + weightChunkCount + SHA256 を一括取得
         let smallKeys: [String] = modelConfigs.flatMap { config in
-            [config.coremlDataField, config.metadataField, config.modelMilField]
+            [config.coremlDataField, config.metadataField, config.modelMilField, config.sha256Field]
         } + [tokenizerField, weightChunkCountField]
 
         let metaRecord = try await fetchRecord(desiredKeys: smallKeys, progress: { p in
@@ -108,6 +117,14 @@ class CloudKitModelService {
 
         guard let chunkCount = metaRecord[weightChunkCountField] as? Int64, chunkCount > 0 else {
             throw CloudKitModelError.missingChunkCount
+        }
+
+        // 各モデルの期待 SHA256（フィールド未設定なら nil = 検証スキップ）
+        var expectedSHA256: [String: String] = [:]
+        for config in modelConfigs {
+            if let sha = metaRecord[config.sha256Field] as? String, !sha.isEmpty {
+                expectedSHA256[config.dirName] = sha
+            }
         }
 
         // 小ファイルを書き出し
@@ -127,9 +144,47 @@ class CloudKitModelService {
             })
             try writeChunk(record: chunkRecord, field: field, index: i,
                            modelDir: modelDir, fm: fm)
+
+            // 各モデルの最終チャンクを書き終えたタイミングで SHA256 検証
+            if let config = modelConfigs.first(where: { $0.chunkRange.last == i }) {
+                try verifyWeightSHA256(modelDir: modelDir,
+                                       config: config,
+                                       expected: expectedSHA256[config.dirName])
+            }
         }
 
         progress(1.0)
+    }
+
+    // MARK: - SHA256 検証
+
+    /// 指定モデルの weight.bin を SHA256 で検証する。
+    /// `expected` が nil の場合（古いアップロード済みレコードに SHA256 フィールドが無い場合）は検証をスキップする。
+    private func verifyWeightSHA256(modelDir: URL,
+                                    config: ModelAssetConfig,
+                                    expected: String?) throws {
+        guard let expected = expected else { return }
+        let weightPath = modelDir.appendingPathComponent(config.dirName)
+            .appendingPathComponent("weights")
+            .appendingPathComponent("weight.bin")
+        let actual = try computeSHA256(of: weightPath)
+        if actual != expected {
+            throw CloudKitModelError.sha256Mismatch(model: config.dirName,
+                                                    expected: expected,
+                                                    actual: actual)
+        }
+    }
+
+    private func computeSHA256(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        let bufferSize = 1024 * 1024
+        while true {
+            guard let data = try handle.read(upToCount: bufferSize), !data.isEmpty else { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - レコード1件取得（desiredKeys で絞り込み）

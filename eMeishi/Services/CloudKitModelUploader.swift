@@ -1,23 +1,49 @@
 #if DEBUG
 import Foundation
 import CloudKit
+import CryptoKit
 
 /// CloudKit の MLModelPackage レコードを正しいモデルファイルで上書きする（開発用）。
 ///
-/// 使用方法:
-///   1. Simulator を起動し、Settings > 開発者向け > "CloudKit モデルを正しいバージョンに更新" をタップ
-///   2. 完了後にこのファイルと SettingsView の呼び出し部分を削除する
+/// 使い方:
+///   1. Simulator の Documents/LocalLLM/ に新しいモデルファイルを配置
+///      （Simulator > File > Open Simulator Device Directories > AppUUID/Documents）
+///   2. DEBUG ビルドでアプリを起動し Settings > 開発者向け > "CloudKit モデルを正しいバージョンに更新"
+///   3. ログ (`CloudKitUpload:`) で SHA256・チャンク数・検証結果を確認
 ///
-/// アップロード元: Documents/LocalLLM/（Finder 経由で Mac からシミュレータに転送する）
-/// 転送方法: Simulator > File > Open Simulator Device Directories > AppUUID/Documents に配置
+/// アップロード後に埋め込む検証フィールド:
+///   - embedWeightSHA256 / ffnWeightSHA256 / lmheadWeightSHA256
+///     ダウンロード側 (CloudKitModelService) が weight.bin の整合性を検証するために使う
+///   - weightChunkCount は従来通り Int64 で格納
 enum CloudKitModelUploader {
 
     private static let database   = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
     private static let recordID   = CKRecord.ID(recordName: "65526C03-31FB-4EE0-A61D-7C2C91C1C424")
     private static let chunkBytes = 200 * 1024 * 1024  // 200 MB
 
+    private struct WeightSource {
+        let label: String            // "embed" / "ffn" / "lmhead"
+        let relativePath: String     // Documents/LocalLLM からの相対パス
+        let sha256Field: String      // レコードに書き込むフィールド名
+        let firstChunkIndex: Int     // weightChunk<N> の開始 index
+    }
+
+    private static let weightSources: [WeightSource] = [
+        WeightSource(label: "embed",
+                     relativePath: "qwen_embeddings.mlmodelc/weights/weight.bin",
+                     sha256Field: "embedWeightSHA256",
+                     firstChunkIndex: 0),
+        WeightSource(label: "ffn",
+                     relativePath: "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc/weights/weight.bin",
+                     sha256Field: "ffnWeightSHA256",
+                     firstChunkIndex: 2),
+        WeightSource(label: "lmhead",
+                     relativePath: "qwen_lm_head_lut6.mlmodelc/weights/weight.bin",
+                     sha256Field: "lmheadWeightSHA256",
+                     firstChunkIndex: 4),
+    ]
+
     static func uploadCorrectModels(status: @escaping (String) -> Void) async {
-        // ソースディレクトリ: Simulator の Documents/LocalLLM/
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let base = docs.appendingPathComponent("LocalLLM")
 
@@ -26,9 +52,23 @@ enum CloudKitModelUploader {
             return
         }
 
-        await MainActor.run { status("レコード取得中...") }
-
         do {
+            // Preflight: 全 weight.bin の SHA256・サイズをアップロード前に計算してログ出力
+            await MainActor.run { status("weight.bin をハッシュ計算中...") }
+            var preflight: [String: (sha256: String, size: Int64)] = [:]
+            for src in weightSources {
+                let url = base.appendingPathComponent(src.relativePath)
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    await MainActor.run { status("エラー: \(src.relativePath) が見つかりません") }
+                    return
+                }
+                let (sha, size) = try sha256AndSize(of: url)
+                preflight[src.label] = (sha, size)
+                let mb = String(format: "%.1f", Double(size) / 1024 / 1024)
+                print("CloudKitUpload: \(src.label) size=\(mb)MB sha256=\(sha)")
+            }
+
+            await MainActor.run { status("レコード取得中...") }
             let record = try await database.record(for: recordID)
 
             // 小ファイル
@@ -55,44 +95,104 @@ enum CloudKitModelUploader {
             await MainActor.run { status("小ファイルセット完了。weight 分割中...") }
 
             // weight.bin をチャンク分割してセット
-            let weightDefs: [(String, Int)] = [
-                // embed: chunk 0-1
-                ("qwen_embeddings.mlmodelc/weights/weight.bin",              0),
-                // ffn: chunk 2-3
-                ("qwen_FFN_PF_lut6_chunk_01of01.mlmodelc/weights/weight.bin", 2),
-                // lmhead: chunk 4
-                ("qwen_lm_head_lut6.mlmodelc/weights/weight.bin",            4),
-            ]
-
             let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("ckchunks")
             try? FileManager.default.removeItem(at: tmpDir)
             try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
 
             var chunkIndex = 0
-            for (weightPath, _) in weightDefs {
-                let src = base.appendingPathComponent(weightPath)
-                await MainActor.run { status("分割中: \(weightPath.components(separatedBy: "/").last ?? "")") }
+            for src in weightSources {
+                let url = base.appendingPathComponent(src.relativePath)
+                await MainActor.run { status("分割中: \(src.label) weight.bin") }
 
-                let handle = try FileHandle(forReadingFrom: src)
+                if chunkIndex != src.firstChunkIndex {
+                    print("CloudKitUpload: WARNING chunk index 不整合 expected=\(src.firstChunkIndex) actual=\(chunkIndex)")
+                }
+
+                let handle = try FileHandle(forReadingFrom: url)
                 defer { try? handle.close() }
-                var part = 0
                 while true {
                     guard let data = try handle.read(upToCount: chunkBytes), !data.isEmpty else { break }
                     let chunkURL = tmpDir.appendingPathComponent("chunk_\(chunkIndex).bin")
                     try data.write(to: chunkURL)
                     record["weightChunk\(chunkIndex)"] = CKAsset(fileURL: chunkURL)
                     chunkIndex += 1
-                    part += 1
+                }
+
+                // preflight で計算済みの SHA256 をレコードにセット
+                if let info = preflight[src.label] {
+                    record[src.sha256Field] = info.sha256 as CKRecordValue
                 }
             }
             record["weightChunkCount"] = Int64(chunkIndex)
-            await MainActor.run { status("合計 \(chunkIndex) チャンク。CloudKit に保存中（数分かかります）...") }
+
+            let summary = "合計 \(chunkIndex) チャンク / " + weightSources.compactMap { src in
+                preflight[src.label].map { "\(src.label)=\(String(format: "%.0f", Double($0.size) / 1024 / 1024))MB" }
+            }.joined(separator: " ")
+            print("CloudKitUpload: \(summary)")
+            await MainActor.run { status("\(summary) を CloudKit に保存中（数分かかります）...") }
 
             try await database.save(record)
-            await MainActor.run { status("✅ CloudKit 更新完了（\(chunkIndex) チャンク）") }
+
+            // Post-upload: 保存したレコードを読み戻して SHA256 とチャンク数が書き込まれているか検証
+            await MainActor.run { status("保存完了。CloudKit 側を検証中...") }
+            let keys = weightSources.map { $0.sha256Field } + ["weightChunkCount"]
+            let verifyOp = CKFetchRecordsOperation(recordIDs: [recordID])
+            verifyOp.desiredKeys = keys
+            let verifyRecord = try await fetch(operation: verifyOp, recordID: recordID)
+
+            var mismatches: [String] = []
+            for src in weightSources {
+                let stored = verifyRecord[src.sha256Field] as? String
+                let expected = preflight[src.label]?.sha256
+                if stored != expected {
+                    mismatches.append("\(src.label): expected=\(expected ?? "nil") stored=\(stored ?? "nil")")
+                }
+            }
+            if let storedCount = verifyRecord["weightChunkCount"] as? Int64, storedCount != Int64(chunkIndex) {
+                mismatches.append("chunkCount: expected=\(chunkIndex) stored=\(storedCount)")
+            }
+
+            if mismatches.isEmpty {
+                print("CloudKitUpload: ✅ 検証 OK")
+                await MainActor.run { status("✅ CloudKit 更新・検証完了（\(chunkIndex) チャンク）") }
+            } else {
+                print("CloudKitUpload: ❌ 検証失敗\n  " + mismatches.joined(separator: "\n  "))
+                await MainActor.run { status("❌ 保存は成功したが検証失敗: \(mismatches.count) 件") }
+            }
 
         } catch {
+            print("CloudKitUpload: ❌ \(error.localizedDescription)")
             await MainActor.run { status("❌ エラー: \(error.localizedDescription)") }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func sha256AndSize(of url: URL) throws -> (String, Int64) {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var total: Int64 = 0
+        let bufferSize = 1024 * 1024
+        while true {
+            guard let data = try handle.read(upToCount: bufferSize), !data.isEmpty else { break }
+            hasher.update(data: data)
+            total += Int64(data.count)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return (digest, total)
+    }
+
+    private static func fetch(operation: CKFetchRecordsOperation, recordID: CKRecord.ID) async throws -> CKRecord {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
+            operation.qualityOfService = .userInitiated
+            operation.perRecordResultBlock = { _, result in
+                switch result {
+                case .success(let record): continuation.resume(returning: record)
+                case .failure(let error):  continuation.resume(throwing: error)
+                }
+            }
+            database.add(operation)
         }
     }
 }
