@@ -357,4 +357,4 @@ meishi-app/
 - vCard は 3.0 形式（設定で 4.0 に変更可能）
 - 重複判定は名前70%・会社名30%の重み付きスコア
 - **HIG（Human Interface Guidelines）を参照する際は、まず sosumi MCPサーバーを使う。** `searchAppleDocumentation` で検索 → `fetchAppleDocumentation` で詳細取得（パス例：`design/human-interface-guidelines/foundations/color`）。必要に応じて `fetchAppleVideoTranscript` で関連WWDCセッションも参照
-- **App Store スクリーンショット撮影時は必ず以下を実施してから撮ること：** ① Dynamic Island 非表示（`SBSuppressDynamicIslandCompletely=true` を SpringBoard plist に書き込みシミュレーター再起動）② ステータスバー固定（`xcrun simctl status_bar $UDID override --time "9:41" --batteryState charged --batteryLevel 100 --wifiBars 3`）③ スクリーンショットは `xcrun simctl io $UDID screenshot --mask=ignored`。デバイス・パス・localization ID 等の設定は `.asc/shots.settings.json` を参照
+- **App Store スクリーンショット撮影前に必ず `./scripts/shots-preflight.sh` を実行する。** シミュレータ shutdown → Dynamic Island 抑制（`SBSuppressDynamicIslandCompletely=true`）→ boot → ステータスバー固定（9:41・満充電・Wi-Fi 最大）を一括で行う。対象デバイスを絞る場合は `./scripts/shots-preflight.sh iphone` / `./scripts/shots-preflight.sh ipad`。UDID は `.asc/shots.settings.json` の `devices` から読む。撮影は `xcrun simctl io $UDID screenshot --mask=ignored` で取得すること
