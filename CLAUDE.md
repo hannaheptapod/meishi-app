@@ -74,6 +74,7 @@ hotfix/*   本番緊急修正。main から分岐し main と develop 両方へ�
   5. What's New 更新：`asc-whats-new-writer` スキル
   6. 審査提出：`asc-release-flow` スキル（提出前ヘルスチェック → Submit）
   7. 提出後：`release/<x.y.z>` → `main`（PR）、`release/<x.y.z>` → `develop`（PR）、`main` に `vX.Y.Z` タグ、ブランチ削除
+  8. リリースノート公開：`gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes` でマージ済み PR から GitHub Releases を自動生成（手書き CHANGELOG.md は管理しない方針）
 - **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
 - マージ後は作業ブランチをローカル・リモートともに削除する
 - PR は機能単位でまとめる。無関係な変更を混在させない

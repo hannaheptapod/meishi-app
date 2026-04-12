@@ -34,6 +34,13 @@ struct AISearchChatView: View {
                     }
                 }
                 .onAppear {
+                    // スクリーンショット撮影モード：モック会話を注入
+                    if ScreenshotMode.isActive,
+                       ScreenshotMode.startScreen == "AIChat",
+                       messages.isEmpty {
+                        messages = ScreenshotMockSupport.mockChatMessages(cards: listViewModel.cards)
+                        return
+                    }
                     if !initialQuery.isEmpty && !didSendInitialQuery {
                         didSendInitialQuery = true
                         inputText = initialQuery

@@ -34,7 +34,7 @@ struct EMeishiApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ContentView()
+                rootView
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
 
                 // App Switcher プライバシーオーバーレイ
@@ -76,6 +76,19 @@ struct EMeishiApp: App {
             } message: {
                 Text("この端末はApple Intelligenceに対応していないため、名刺の読み取り精度を向上させるAIモデルをダウンロードできます。Wi-Fi環境でのダウンロードを推奨します。")
             }
+        }
+    }
+
+    /// スクリーンショット撮影モード：Insights / Duplicate は通常 NavigationLink で push される画面のため、
+    /// ScreenshotHostView 経由で単独ルートとして表示する。それ以外は通常 ContentView。
+    @ViewBuilder
+    private var rootView: some View {
+        if isUITest,
+           let screen = ScreenshotMode.startScreen,
+           screen == "Insights" || screen == "Duplicate" {
+            ScreenshotHostView(screen: screen)
+        } else {
+            ContentView()
         }
     }
 

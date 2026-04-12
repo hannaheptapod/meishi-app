@@ -53,6 +53,16 @@ struct CardFormView: View {
         self.batchProgress = batchProgress
     }
 
+    // MARK: - 初期化（外部から ViewModel を注入）
+    // スクリーンショット撮影用にモックの ViewModel を注入できるようにする
+
+    init(viewModelFactory: @escaping () -> CardFormViewModel, onSave: @escaping () -> Void) {
+        _viewModel = StateObject(wrappedValue: viewModelFactory())
+        self.onSave = onSave
+        self.onSkip = nil
+        self.batchProgress = nil
+    }
+
     // MARK: - 初期化（既存カードの編集）
 
     init(card: BusinessCard, onSave: @escaping () -> Void) {
