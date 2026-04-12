@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "9A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:eMeishi.xcodeproj",
+      "identifier" : "3979F89E2F7275F200BC90DC",
+      "name" : "eMeishi"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:eMeishi.xcodeproj",
+        "identifier" : "3979F8AD2F7275F300BC90DC",
+        "name" : "eMeishiTests"
+      }
+    },
+    {
+      "skippedTests" : [
+        "ScreenshotRunnerTests"
+      ],
+      "target" : {
+        "containerPath" : "container:eMeishi.xcodeproj",
+        "identifier" : "3979F8B72F7275F300BC90DC",
+        "name" : "eMeishiUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
