@@ -86,8 +86,7 @@ class CloudKitModelUploadTests: XCTestCase {
             defer { try? handle.close() }
             var part = 0
             while true {
-                let data = try handle.read(upToCount: chunkBytes)
-                if data.isEmpty { break }
+                guard let data = try handle.read(upToCount: chunkBytes), !data.isEmpty else { break }
                 let chunkURL = tmpDir.appendingPathComponent("chunk_\(chunkIndex).bin")
                 try data.write(to: chunkURL)
                 record["weightChunk\(chunkIndex)"] = CKAsset(fileURL: chunkURL)
