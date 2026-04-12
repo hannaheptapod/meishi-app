@@ -58,38 +58,91 @@
 main       本番リリース済み。タグ（v1.0, v1.1）を打つ
 develop    次リリースの統合ブランチ。常に動作する状態を保つ
 feature/*  1 機能 1 ブランチ。develop から分岐し develop へ PR
-release/*  App Store 提出前の最終確認のみ。機能追加禁止
+fix/*      バグ修正。develop から分岐し develop へ PR
+release/*  App Store 提出前の最終調整のみ。機能追加禁止
 hotfix/*   本番緊急修正。main から分岐し main と develop 両方へマージ
+docs/*     ドキュメント更新
+chore/*    ビルド設定・依存関係等
 ```
 
-- **ブランチ名プレフィックスは `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` のみ許可。** 外部ツール・AI エージェントが自動生成した `claude/` 等を含め、規定外は `/branch` スキルで**即座にリネーム**する
-- **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
-- **日常フロー：** `develop` → `feature/<機能名>` → PR 作成 → **Xcode Cloud PR Validation 通過をユーザーが確認** → `develop` へマージ（ユーザー操作）
-- **PR 作成後の Claude の役割はそこで終了。** Xcode Cloud の CI 結果確認・マージ・ブランチ削除はユーザーが行う。Claude が自律的にマージすることは**絶対禁止**
-- **本プロジェクトで使う skill は 5 個のみ**: `/branch`・`/translate`（hook 強制）、`asc-shots-pipeline`・`asc-whats-new-writer`・`asc-release-flow`（リリース手順）。`.claude/skills/asc-*/` には Blitz が 22 個の未使用 skill を同期してくるが、gitignore 済みなので無視して良い
-- **リリースフロー：**
-  1. `git checkout develop && git checkout -b release/<x.y.z>`
-  2. `Info.plist` のバージョン・ビルド番号を更新（冒頭の「ビルド・アップロード前チェックリスト」を参照）
-  3. ビルド・アップロードはユーザー承認を得てから実行
-  4. スクリーンショット撮影が必要な場合：`asc-shots-pipeline` スキル参照
-  5. What's New 更新：`asc-whats-new-writer` スキル
-  6. 審査提出：`asc-release-flow` スキル（提出前ヘルスチェック → Submit）
-  7. 提出後：`release/<x.y.z>` → `main`（PR）、`release/<x.y.z>` → `develop`（PR）、`main` に `vX.Y.Z` タグ、ブランチ削除
-  8. リリースノート公開：`gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes` でマージ済み PR から GitHub Releases を自動生成（手書き CHANGELOG.md は管理しない方針）
-- **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
-- マージ後は作業ブランチをローカル・リモートともに削除する（ユーザー操作）
-- PR は機能単位でまとめる。無関係な変更を混在させない
+- **ブランチ名プレフィックスは上記 6 種のみ許可。** 規定外（`claude/` 等）は `/branch` スキルで**即座にリネーム**する
+- **main・develop への直接 push・commit は絶対禁止。** `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
+- **PR は機能単位でまとめる。** 無関係な変更を混在させない
+- **本プロジェクトで使う skill は 5 個のみ**: `/branch`・`/translate`（hook 強制）、`asc-shots-pipeline`・`asc-whats-new-writer`・`asc-release-flow`（リリース手順）
 
-### Xcode Cloud ワークフロー（PR マージ条件）
+### 役割分担
 
-| ワークフロー | トリガー | 必須確認 |
-|---|---|---|
-| PR Validation | PR → `develop` | **Build PASS 後にユーザーがマージ** |
-| Develop Integration | push → `develop` | Build 結果を確認（自動） |
-| Release Build | push → `release/*` | Archive 成功後にユーザーが TestFlight 確認 |
+| 担当 | 範囲 |
+|---|---|
+| **Claude** | ブランチ作成・実装・コミット・push・PR 作成・CI 失敗時の修正 |
+| **ユーザー** | CI 確認・PR マージ・ブランチ削除・タグ打ち・App Store 提出最終判断 |
+| **Xcode Cloud** | PR Validation / Develop Integration / Release Build を自動実行 |
 
-- **PR を作成したら Claude はそれ以上手を出さない。** Xcode Cloud が PR Validation を自動実行するため、その結果をユーザーが確認してからマージする
-- CI が失敗した場合は原因を調査・修正して再 push し、ユーザーに報告する
+**Claude は PR を作成したらそこで手を止める。マージは絶対に自律実行しない。**
+
+---
+
+### フェーズ 1: 日常開発フロー
+
+```
+develop
+  └─[Claude] feature/<機能名> ブランチ作成
+       ├─[Claude] 実装・コミット・push
+       ├─[Claude] PR 作成（base: develop）
+       ├─[Xcode Cloud] PR Validation 自動起動（Build）
+       ├─[ユーザー] CI 結果確認 → PR マージ
+       ├─[Xcode Cloud] Develop Integration 自動起動（Build）
+       └─[ユーザー] ブランチ削除（ローカル・リモート）
+```
+
+---
+
+### フェーズ 2: リリースフロー
+
+```
+develop
+  └─[Claude]    1. release/<x.y.z> ブランチ作成
+  └─[Claude]    2. Info.plist バージョン・ビルド番号更新
+  └─[Claude]    3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
+  └─[Claude]    4. 結果をユーザーに提示し、明示的な承認を得る
+  └─[Claude]    5. push → PR 作成（base: develop）
+  └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight）
+  └─[ユーザー]  7. Archive 成功・TestFlight 配信を確認
+  └─[Claude]    8. スクリーンショット撮影（shots-preflight.sh → asc-shots-pipeline）
+  └─[Claude]    9. What's New 更新（asc-whats-new-writer スキル）
+  └─[Claude]   10. 提出前ヘルスチェック → 審査提出（asc-release-flow スキル）
+  └─[ユーザー] 11. release/<x.y.z> → main への PR 作成・マージ
+  └─[ユーザー] 12. release/<x.y.z> → develop への PR 作成・マージ
+  └─[ユーザー] 13. main に vX.Y.Z タグを打つ
+  └─[Claude]   14. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes）
+  └─[ユーザー] 15. release ブランチ削除（ローカル・リモート）
+```
+
+> ビルド番号は `yyyymmddNNN`（001 始まりの当日連番）。`ci_scripts/ci_post_clone.sh` が Xcode Cloud で自動設定。手動更新は `Info.plist` の `CURRENT_PROJECT_VERSION` を直接編集。
+
+---
+
+### フェーズ 3: 緊急修正フロー（hotfix）
+
+```
+main
+  └─[Claude]    1. hotfix/<内容> ブランチ作成（main から分岐）
+  └─[Claude]    2. 修正・コミット・push → PR 作成（base: main）
+  └─[Xcode Cloud] 3. PR Validation 自動起動
+  └─[ユーザー]  4. CI 確認 → main への PR マージ・タグ
+  └─[ユーザー]  5. hotfix/<内容> → develop への PR 作成・マージ
+  └─[ユーザー]  6. ブランチ削除（ローカル・リモート）
+```
+
+---
+
+### Xcode Cloud ワークフロー早見表
+
+| ワークフロー | トリガー | アクション | Claude の対応 |
+|---|---|---|---|
+| PR Validation | PR → `develop` | Build | PR 作成で自動起動。CI 失敗なら修正して再 push |
+| Develop Integration | push → `develop` | Build | マージ後に自動起動。失敗はユーザーに報告 |
+| Release Build | push → `release/*` | Archive | push で自動起動。失敗なら原因調査・修正 |
 
 ---
 
