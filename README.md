@@ -158,6 +158,48 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 
 > **Note:** Foundation Models は iPhone 15 Pro 以降 + Apple Intelligence 有効の実機でのみ動作します。Qwen3-0.6B CoreML はシミュレータでも動作しますが低速です。
 
+## CI/CD（Xcode Cloud）
+
+### 現状（As Is）
+
+| ワークフロー | トリガー | アクション | テスト実行 |
+|---|---|---|---|
+| PR Validation | PR → `develop` | Build | **なし** |
+| Develop Integration | push → `develop` | Build | **なし** |
+| Release Build | push → `release/*` | Archive | **なし** |
+
+- Xcode Cloud の初期セットアップ済み（GitHub 連携・署名・App 確認）
+- `ci_scripts/` にビルド番号自動生成・バリデーション・ログのスクリプト配置済み
+- `eMeishi-CI.xctestplan` 作成済み（ScreenshotRunnerTests を除外）
+- テストアクションは ASC API の `testDestinations` 形式問題で未設定
+- Release Build の TestFlight 自動デプロイ（Post-Action）は未設定
+
+### 目標（To Be）
+
+| ワークフロー | トリガー | アクション | テスト実行 |
+|---|---|---|---|
+| PR Validation | PR → `develop` | Build + **Test** | **Unit Tests のみ** |
+| Develop Integration | push → `develop` | Build + **Test** | **Unit + UI Tests**（eMeishi-CI.xctestplan） |
+| Release Build | push → `release/*` | Archive → **TestFlight** | なし（Archive のみ） |
+
+### 残作業
+
+1. PR Validation・Develop Integration に TEST アクション追加（`testDestinations` の正しい形式で再設定）
+2. Release Build に TestFlight デプロイの Post-Action 追加
+3. develop マージ後の初回ビルド成功を確認
+
+### CI スクリプト構成
+
+```
+ci_scripts/
+├── ci_post_clone.sh        # ビルド番号 YYYYMMDDNNN 自動生成
+├── ci_pre_xcodebuild.sh    # ビルド前バリデーション（19 項目、archive 時のみブロック）
+└── ci_post_xcodebuild.sh   # ビルド後ログ出力
+```
+
+- `ci_pre_xcodebuild.sh` は `scripts/pre-build-check.sh` の CI 版。asc CLI 依存の 3 項目（ビルド番号比較・証明書・プロファイル）はスキップ
+- テストプラン `eMeishi-CI.xctestplan` は ScreenshotRunnerTests を除外（App Store スクリーンショット専用のため CI では不要）
+
 ## ライセンス
 
 [MIT License](LICENSE)
