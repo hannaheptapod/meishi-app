@@ -168,6 +168,13 @@ echo "  PASS: $PASS  FAIL: $FAIL"
 echo "================================"
 if [[ $FAIL -gt 0 ]]; then
   echo "FAIL があります。アーカイブ禁止。"
+  # 古いセンチネルを削除（前回 PASS が残っていても無効化）
+  rm -f .release-check-ok
   exit 1
 fi
 echo "全項目 PASS。ユーザー承認後にアーカイブ可。"
+
+# センチネルファイルを生成（guard-git.sh が release/* push 前に確認）
+COMMIT_HASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+echo "$COMMIT_HASH" > .release-check-ok
+echo "  センチネル生成: .release-check-ok（commit: ${COMMIT_HASH:0:7}）"

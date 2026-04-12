@@ -37,9 +37,33 @@ if echo "$COMMAND" | grep -qE "git (commit|merge)"; then
   fi
 fi
 
-# ② main・develop への直接 push をブロック（release/hotfix は除外）
+# ② release/* への push は pre-build-check.sh PASS が必須
+if echo "$COMMAND" | grep -qE "git push" && echo "$BRANCH" | grep -qE "^release/"; then
+  # --delete は除外
+  if ! echo "$COMMAND" | grep -qE "(--delete|-d)\s"; then
+    if [ ! -f ".release-check-ok" ]; then
+      echo "❌ BLOCKED: release/* への push 前に ./scripts/pre-build-check.sh を実行してください。" >&2
+      echo "  全項目 PASS 後にセンチネルが生成され、この guard が解除されます。" >&2
+      exit 2
+    fi
+    SENTINEL_COMMIT=$(cat .release-check-ok 2>/dev/null || echo "")
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ "$SENTINEL_COMMIT" != "$CURRENT_COMMIT" ]; then
+      echo "❌ BLOCKED: コミットが更新されたため pre-build-check.sh を再実行してください。" >&2
+      echo "  チェック時: ${SENTINEL_COMMIT:0:7}  現在: ${CURRENT_COMMIT:0:7}" >&2
+      exit 2
+    fi
+    echo "✅ pre-build-check.sh PASS 確認（commit: ${CURRENT_COMMIT:0:7}）" >&2
+    echo "⚠️  push 後、Xcode Cloud Release Build（Archive）が自動起動します。" >&2
+  fi
+fi
+
+# ④ main・develop への直接 push をブロック（release/hotfix・--delete は除外）
 if echo "$COMMAND" | grep -qE "git push"; then
-  if [ "$IS_RELEASE_FLOW" = false ]; then
+  # --delete はブランチ削除のみで push 先には影響しないためスルー
+  if echo "$COMMAND" | grep -qE "(--delete|-d)\s"; then
+    : # 許可
+  elif [ "$IS_RELEASE_FLOW" = false ]; then
     if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
       echo "❌ BLOCKED: '$BRANCH' への直接 push は禁止です。PR を通してください。" >&2
       exit 2
@@ -51,7 +75,7 @@ if echo "$COMMAND" | grep -qE "git push"; then
   fi
 fi
 
-# ③ 規定外プレフィックスのブランチ作成をブロック
+# ⑤ 規定外プレフィックスのブランチ作成をブロック
 if echo "$COMMAND" | grep -qE "git (checkout -b|switch -c)"; then
   NEW_BRANCH=$(echo "$COMMAND" | grep -oE "\-(b|c)\s+\S+" | awk '{print $NF}' | head -1)
   if [ -n "$NEW_BRANCH" ]; then
