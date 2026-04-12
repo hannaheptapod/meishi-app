@@ -8,14 +8,7 @@ struct CardRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 40, height: 40)
-                Text(card.initials)
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Color.accentColor)
-            }
+            CardAvatarView(card: card, size: 40)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {

@@ -23,6 +23,8 @@ struct CardListView: View {
     @State private var isShowingBulkDeleteConfirm = false
     @State private var isShowingBulkTagSheet = false
     @State private var isShowingAIChat = false
+    // スクリーンショット撮影モード用：CardFormView を OCR 完了状態のモックで開く
+    @State private var isShowingMockOCRForm = false
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -164,13 +166,34 @@ struct CardListView: View {
                 )
                 .environmentObject(viewModel)
             }
-            .onAppear(perform: viewModel.fetchCards)
+            .onAppear {
+                viewModel.fetchCards()
+                handleScreenshotMode()
+            }
             .sheet(isPresented: $isShowingAIChat) {
                 AISearchChatView()
                     .environmentObject(viewModel)
             }
+            // スクリーンショット撮影モード用：OCR 完了状態のモックフォームを表示
+            .sheet(isPresented: $isShowingMockOCRForm) {
+                CardFormView(viewModelFactory: {
+                    ScreenshotMockSupport.makeMockOCRFinishedViewModel()
+                }, onSave: { isShowingMockOCRForm = false })
+                .environmentObject(viewModel)
+            }
         }
         .environmentObject(viewModel)
+    }
+
+    /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
+    private func handleScreenshotMode() {
+        guard ScreenshotMode.isActive, let screen = ScreenshotMode.startScreen else { return }
+        switch screen {
+        case "Tags":     isShowingTagManager = true
+        case "AIChat":   isShowingAIChat = true
+        case "FormOCR":  isShowingMockOCRForm = true
+        default: break
+        }
     }
 
     // MARK: - 選択件数タイトル
