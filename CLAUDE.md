@@ -64,7 +64,8 @@ hotfix/*   本番緊急修正。main から分岐し main と develop 両方へ�
 
 - **ブランチ名プレフィックスは `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` のみ許可。** 外部ツール・AI エージェントが自動生成した `claude/` 等を含め、規定外は `/branch` スキルで**即座にリネーム**する
 - **main・develop への直接 push・commit は絶対禁止。** 必ずブランチを切り PR を通す。違反は `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
-- **日常フロー：** `develop` → `feature/<機能名>` → PR → `develop`
+- **日常フロー：** `develop` → `feature/<機能名>` → PR 作成 → **Xcode Cloud PR Validation 通過をユーザーが確認** → `develop` へマージ（ユーザー操作）
+- **PR 作成後の Claude の役割はそこで終了。** Xcode Cloud の CI 結果確認・マージ・ブランチ削除はユーザーが行う。Claude が自律的にマージすることは**絶対禁止**
 - **本プロジェクトで使う skill は 5 個のみ**: `/branch`・`/translate`（hook 強制）、`asc-shots-pipeline`・`asc-whats-new-writer`・`asc-release-flow`（リリース手順）。`.claude/skills/asc-*/` には Blitz が 22 個の未使用 skill を同期してくるが、gitignore 済みなので無視して良い
 - **リリースフロー：**
   1. `git checkout develop && git checkout -b release/<x.y.z>`
@@ -76,8 +77,19 @@ hotfix/*   本番緊急修正。main から分岐し main と develop 両方へ�
   7. 提出後：`release/<x.y.z>` → `main`（PR）、`release/<x.y.z>` → `develop`（PR）、`main` に `vX.Y.Z` タグ、ブランチ削除
   8. リリースノート公開：`gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes` でマージ済み PR から GitHub Releases を自動生成（手書き CHANGELOG.md は管理しない方針）
 - **緊急修正フロー：** `main` から `hotfix/<内容>` を切る → `main` と `develop` の両方にマージ
-- マージ後は作業ブランチをローカル・リモートともに削除する
+- マージ後は作業ブランチをローカル・リモートともに削除する（ユーザー操作）
 - PR は機能単位でまとめる。無関係な変更を混在させない
+
+### Xcode Cloud ワークフロー（PR マージ条件）
+
+| ワークフロー | トリガー | 必須確認 |
+|---|---|---|
+| PR Validation | PR → `develop` | **Build PASS 後にユーザーがマージ** |
+| Develop Integration | push → `develop` | Build 結果を確認（自動） |
+| Release Build | push → `release/*` | Archive 成功後にユーザーが TestFlight 確認 |
+
+- **PR を作成したら Claude はそれ以上手を出さない。** Xcode Cloud が PR Validation を自動実行するため、その結果をユーザーが確認してからマージする
+- CI が失敗した場合は原因を調査・修正して再 push し、ユーザーに報告する
 
 ---
 

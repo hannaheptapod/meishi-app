@@ -37,9 +37,12 @@ if echo "$COMMAND" | grep -qE "git (commit|merge)"; then
   fi
 fi
 
-# ② main・develop への直接 push をブロック（release/hotfix は除外）
+# ② main・develop への直接 push をブロック（release/hotfix・--delete は除外）
 if echo "$COMMAND" | grep -qE "git push"; then
-  if [ "$IS_RELEASE_FLOW" = false ]; then
+  # --delete はブランチ削除のみで push 先には影響しないためスルー
+  if echo "$COMMAND" | grep -qE "(--delete|-d)\s"; then
+    : # 許可
+  elif [ "$IS_RELEASE_FLOW" = false ]; then
     if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
       echo "❌ BLOCKED: '$BRANCH' への直接 push は禁止です。PR を通してください。" >&2
       exit 2
