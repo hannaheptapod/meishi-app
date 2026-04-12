@@ -126,24 +126,24 @@ enum ScreenshotMockSupport {
 
     // MARK: - モックチャット（AISearchChatView 用）
 
-    /// 「東京の IT エンジニアを探して」 → アシスタント応答 のサンプル会話
-    /// 一致カードはサンプルデータから IT 系 2 件を選ぶ
+    /// 「IT 関連の担当者を探して」 → アシスタント応答 のサンプル会話
+    /// 「IT」タグが付いたカードのみを対象にすることで、
+    /// 重複検出デモ用カード（タグ無し）が結果に混ざらないようにする
     static func mockChatMessages(cards: [BusinessCard]) -> [AISearchService.ChatMessage] {
-        let matchedIDs: [UUID] = cards
-            .filter { card in
-                let company = card.company ?? ""
-                return company.contains("テックビジョン")
-            }
-            .compactMap { $0.id }
+        let matched: [BusinessCard] = cards.filter { card in
+            let tags = (card.tags as? Set<Tag>) ?? []
+            return tags.contains(where: { $0.name == "IT" })
+        }
+        let matchedIDs: [UUID] = matched.compactMap { $0.id }
 
         let user = AISearchService.ChatMessage(
             role: .user,
-            text: "東京の IT エンジニアを探して",
+            text: "IT 関連の担当者を探して",
             matchedCardIDs: []
         )
         let assistant = AISearchService.ChatMessage(
             role: .assistant,
-            text: "東京のテックビジョンに在籍する方を \(matchedIDs.count) 件見つけました。",
+            text: "「IT」タグが付いた名刺を \(matchedIDs.count) 件見つけました。",
             matchedCardIDs: matchedIDs
         )
         return [user, assistant]

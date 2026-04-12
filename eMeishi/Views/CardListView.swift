@@ -190,7 +190,6 @@ struct CardListView: View {
         guard ScreenshotMode.isActive, let screen = ScreenshotMode.startScreen else { return }
         switch screen {
         case "Tags":     isShowingTagManager = true
-        case "Settings": isShowingSettings = true
         case "AIChat":   isShowingAIChat = true
         case "FormOCR":  isShowingMockOCRForm = true
         default: break

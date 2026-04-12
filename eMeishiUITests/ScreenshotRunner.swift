@@ -2,7 +2,7 @@ import XCTest
 
 // MARK: - App Store スクリーンショット撮影ランナー
 //
-// 7 枚のスクリーンショットを 1 デバイス × 1 回のテスト実行で取得する。
+// 6 枚のスクリーンショットを 1 デバイス × 1 回のテスト実行で取得する。
 // 各テストメソッドはアプリを `-UITestMode` + `START_SCREEN=<name>` で起動し、
 // 該当画面が描画されるのを待ってから XCTAttachment として screenshot を保存する。
 //
@@ -16,7 +16,7 @@ import XCTest
 // 取得した PNG は `scripts/capture-shots.sh` が xcresulttool で抽出する。
 //
 // 命名規則: 01_form_ocr / 02_card_list / 03_ai_chat / 04_insights /
-//          05_duplicate / 06_tags / 07_settings
+//          05_duplicate / 06_tags
 final class ScreenshotRunnerTests: XCTestCase {
 
     private var app: XCUIApplication!
@@ -110,14 +110,5 @@ final class ScreenshotRunnerTests: XCTestCase {
         XCTAssertTrue(tagsTitle.waitForExistence(timeout: 8))
         waitForUI(1.0)
         saveScreenshot(named: "06_tags")
-    }
-
-    @MainActor
-    func test07_Settings() throws {
-        launchApp(startScreen: "Settings")
-        let settingsTitle = app.navigationBars["設定"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 8))
-        waitForUI(1.0)
-        saveScreenshot(named: "07_settings")
     }
 }
