@@ -1,4 +1,19 @@
 {
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(*.p8)",
+      "Read(./secrets/**)",
+      "Read(./private/**)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "git branch --show-current 2>/dev/null | sed 's/^/branch: /'",
+    "refreshInterval": 5
+  },
+  "respectGitignore": true,
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -16,6 +31,16 @@
           {
             "type": "command",
             "command": ".claude/hooks/guard-git.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/check-docs-sync.sh"
           }
         ]
       }
