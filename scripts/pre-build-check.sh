@@ -19,15 +19,13 @@ plist_bool() {
 }
 
 echo "=== ビルド番号 ==="
+# ビルド番号は ci_scripts/ci_post_clone.sh が Xcode Cloud で yyyymmddNNN 形式に自動生成する。
+# ローカル値の大小チェックは Xcode Cloud と二重管理になるためスキップ。
 LATEST=$(~/.blitz/bin/asc builds list --app 6761180218 --platform IOS --limit 3 2>/dev/null \
   | python3 -c "import sys,json; b=json.load(sys.stdin)['data']; print(b[0]['attributes']['version']) if b else print('none')")
 CURRENT=$(~/.blitz/bin/asc xcode version view 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['buildNumber'])")
-echo "  ASC最新: $LATEST  プロジェクト: $CURRENT"
-if [[ "$CURRENT" -gt "$LATEST" ]] 2>/dev/null; then
-  ok "ビルド番号 $CURRENT > ASC最新 $LATEST"
-else
-  fail "ビルド番号が ASC最新以下または比較不可 ($CURRENT <= $LATEST)"
-fi
+echo "  ASC最新: $LATEST  プロジェクト: $CURRENT（Xcode Cloud が自動更新するためチェックスキップ）"
+ok "ビルド番号（CI 自動管理）"
 
 echo ""
 echo "=== Info.plist 構文 ==="

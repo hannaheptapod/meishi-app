@@ -14,9 +14,8 @@
 
 全項目 **PASS** になるまでアーカイブ禁止。スクリプトが exit 1 の場合は原因を修正してから再実行。
 
-- ビルド番号は **`yyyymmddNNN`** 形式（NNN は 001 始まりの当日連番）
-- 例：2026-04-09 の1本目 → `20260409001`、2本目 → `20260409002`
-- **ビルド番号の手動変更は不要。** `ci_scripts/ci_post_clone.sh` が Xcode Cloud で自動生成する
+- ビルド番号は `ci_scripts/ci_post_clone.sh` が Xcode Cloud で **`yyyymmddNNN`** 形式に自動生成する。手動変更不要
+- バージョン番号（`MARKETING_VERSION`）のみ手動更新が必要（例：`1.0.3` → `1.0.4`）
 
 ### Step 2: ユーザー承認（必須）
 
