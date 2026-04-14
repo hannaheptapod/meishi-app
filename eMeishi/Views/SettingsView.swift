@@ -60,12 +60,20 @@ struct SettingsView: View {
     @State private var showRestartAlert = false
 
     private var iCloudSection: some View {
-        Section {
+        let cloudKitFailed = UserDefaults.standard.bool(forKey: "cloudKitContainerUnavailable")
+
+        return Section {
             Toggle(isOn: $settings.iCloudSyncEnabled) {
                 Label("iCloud同期", systemImage: "icloud")
             }
             .onChange(of: settings.iCloudSyncEnabled) {
                 showRestartAlert = true
+            }
+            // cloudKitContainerUnavailable フラグが立っている場合は警告を表示
+            if settings.iCloudSyncEnabled && cloudKitFailed {
+                Label("iCloudに接続できません。iCloudにサインインしているか確認してください。", systemImage: "exclamationmark.icloud")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
             }
         } header: {
             Text("iCloud")

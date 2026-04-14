@@ -160,6 +160,31 @@ struct PersistenceController {
             Self.verifyCloudKitContainer()
         }
 
+        // iCloud アカウント変更（サインアウト・切り替え）を検知してログ記録
+        NotificationCenter.default.addObserver(
+            forName: .CKAccountChanged,
+            object: nil,
+            queue: .main
+        ) { _ in
+            AppLogger.persistence.info("iCloud アカウント状態が変化しました — 次回起動時に同期状態を再確認します")
+            // accountStatus を再確認してフラグを更新
+            Self.verifyCloudKitContainer()
+        }
+
+        // CloudKit 同期イベント（import / export / setup）のエラーをログに記録
+        if syncEnabled {
+            NotificationCenter.default.addObserver(
+                forName: NSPersistentCloudKitContainer.eventChangedNotification,
+                object: container,
+                queue: .main
+            ) { notification in
+                guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                        as? NSPersistentCloudKitContainer.Event,
+                      let error = event.error else { return }
+                AppLogger.persistence.error("CloudKit 同期エラー: type=\(event.type.rawValue) error=\(error)")
+            }
+        }
+
         // 既存データの companyReading から法人格を除去（一度だけ実行）
         if !inMemory {
             Self.migrateCompanyReadings(context: container.viewContext)
