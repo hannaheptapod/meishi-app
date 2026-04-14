@@ -119,36 +119,9 @@ else
   fail "Debug.xcconfig INFOPLIST_FILE = $DBG_INFO （eMeishi/Info-Debug.plist 必須）"
 fi
 
-echo ""
-echo "=== 署名資産（asc）==="
-ASC_BIN="$HOME/.blitz/bin/asc"
-if [[ -x "$ASC_BIN" ]]; then
-  DIST_COUNT=$("$ASC_BIN" certificates list 2>/dev/null \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(sum(1 for c in d.get('data',[]) if c['attributes']['certificateType']=='DISTRIBUTION'))" 2>/dev/null || echo "0")
-  if [[ "$DIST_COUNT" -ge 1 ]] 2>/dev/null; then
-    ok "Distribution 証明書: $DIST_COUNT 件"
-  else
-    fail "Distribution 証明書が 0 件（asc certificates list で確認）"
-  fi
-
-  PROFILE_OK=$("$ASC_BIN" profiles list 2>/dev/null \
-    | python3 -c "
-import sys,json
-d = json.load(sys.stdin)
-for p in d.get('data', []):
-    a = p['attributes']
-    if a.get('profileType') == 'IOS_APP_STORE' and a.get('profileState') == 'ACTIVE' and a.get('name', '').startswith('$BUNDLE_ID'):
-        print('ok'); sys.exit(0)
-print('ng')
-" 2>/dev/null || echo "ng")
-  if [[ "$PROFILE_OK" == "ok" ]]; then
-    ok "IOS_APP_STORE プロファイル ACTIVE（${BUNDLE_ID}）"
-  else
-    fail "IOS_APP_STORE プロファイルが未作成または expired（asc profiles list で確認）"
-  fi
-else
-  fail "asc CLI が見つからない: $ASC_BIN"
-fi
+# 署名資産（Distribution 証明書・プロビジョニングプロファイル）は
+# Xcode Cloud の Automatic Signing が自動管理するためチェックしない。
+# ci_scripts/ci_pre_xcodebuild.sh でも [SKIP] と明記済み。
 
 echo ""
 echo "=== Usage Description ==="
