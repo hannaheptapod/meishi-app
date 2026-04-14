@@ -16,6 +16,7 @@
 
 - ビルド番号は **`yyyymmddNNN`** 形式（NNN は 001 始まりの当日連番）
 - 例：2026-04-09 の1本目 → `20260409001`、2本目 → `20260409002`
+- **ビルド番号の手動変更は不要。** `ci_scripts/ci_post_clone.sh` が Xcode Cloud で自動生成する
 
 ### Step 2: ユーザー承認（必須）
 
@@ -102,7 +103,7 @@ develop
 ```
 develop
   └─[Claude]    1. release/<x.y.z> ブランチ作成
-  └─[Claude]    2. Info.plist バージョン・ビルド番号更新
+  └─[Claude]    2. バージョン番号（MARKETING_VERSION）のみ更新 ※ビルド番号は Xcode Cloud が自動生成
   └─[Claude]    3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
   └─[Claude]    4. 結果をユーザーに提示し、明示的な承認を得る
   └─[Claude]    5. push → PR 作成（base: develop）
@@ -118,7 +119,7 @@ develop
   └─[ユーザー] 15. release ブランチ削除（ローカル・リモート）
 ```
 
-> ビルド番号は `yyyymmddNNN`（001 始まりの当日連番）。`ci_scripts/ci_post_clone.sh` が Xcode Cloud で自動設定。手動更新は `Info.plist` の `CURRENT_PROJECT_VERSION` を直接編集。
+> **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は `ci_scripts/ci_post_clone.sh` が Xcode Cloud で `yyyymmddNNN` 形式に自動設定するため、手動変更不要。
 
 ---
 
