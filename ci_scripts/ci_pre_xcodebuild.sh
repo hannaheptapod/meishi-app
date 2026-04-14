@@ -129,9 +129,23 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
   fi
 done
 
+# --- ビルド番号を YYYYMMDDNNN 形式で設定 ---
+# APP_STORE_ELIGIBLE 配布設定が有効な場合、Xcode Cloud が ci_post_clone.sh の後で
+# CURRENT_PROJECT_VERSION を CI_BUILD_NUMBER（連番）に上書きする。
+# そのため ci_post_clone.sh での sed 変更は無効化されてしまう。
+# xcodebuild 直前のこのスクリプトで xcrun agvtool を使って再設定することで確実に反映する。
+echo ""
+echo "=== ビルド番号設定 ==="
+DATE_PREFIX=$(date -u +"%Y%m%d")
+SEQ=$(printf "%03d" $(( (CI_BUILD_NUMBER % 999) + 1 )))
+NEW_BUILD_NUMBER="${DATE_PREFIX}${SEQ}"
+echo "  CI_BUILD_NUMBER: $CI_BUILD_NUMBER"
+echo "  設定ビルド番号:  $NEW_BUILD_NUMBER"
+xcrun agvtool new-version -all "$NEW_BUILD_NUMBER" 2>&1 | grep -v "^$" | sed 's/^/  /'
+ok "CURRENT_PROJECT_VERSION → $NEW_BUILD_NUMBER"
+
 # --- CI でスキップする項目 ---
 echo ""
-echo "  [SKIP] ビルド番号 vs ASC 比較 (ci_post_clone.sh で自動設定)"
 echo "  [SKIP] Distribution 証明書 (Xcode Cloud が自動管理)"
 echo "  [SKIP] プロビジョニングプロファイル (Xcode Cloud が自動管理)"
 
