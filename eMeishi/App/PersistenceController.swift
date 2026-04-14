@@ -92,17 +92,17 @@ struct PersistenceController {
     init(inMemory: Bool = false) {
         let userWantsSync = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
 
-        // iCloud 同期が有効でも、過去に CloudKit エラーが発生していればローカル専用にフォールバック
+        // 過去に CloudKit エラーが発生していれば同期を無効化（コンテナクラスは変えない）
         let cloudKitFailed = UserDefaults.standard.bool(forKey: "cloudKitContainerUnavailable")
         let syncEnabled = userWantsSync && !cloudKitFailed
         self.iCloudSyncEnabled = syncEnabled
 
-        // iCloud 同期が有効なら NSPersistentCloudKitContainer を使用
-        if syncEnabled {
-            container = NSPersistentCloudKitContainer(name: "BusinessCard")
-        } else {
-            container = NSPersistentContainer(name: "BusinessCard")
-        }
+        // 常に NSPersistentCloudKitContainer を使用する。
+        // NSPersistentContainer と NSPersistentCloudKitContainer をトグルで切り替えると、
+        // ローカル専用で初期化されたストアに後から CloudKit メタデータ（PCS 暗号鍵）を
+        // 追加しようとして _pcs_data の BAD_REQUEST が発生し同期が一切機能しなくなる。
+        // 同期を無効化したい場合は cloudKitContainerOptions = nil で制御する。
+        container = NSPersistentCloudKitContainer(name: "BusinessCard")
 
         if inMemory {
             // テスト・プレビュー用：ディスクに書き込まない
