@@ -92,17 +92,17 @@ struct PersistenceController {
     init(inMemory: Bool = false) {
         let userWantsSync = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
 
-        // iCloud 同期が有効でも、過去に CloudKit エラーが発生していればローカル専用にフォールバック
+        // 過去に CloudKit エラーが発生していれば同期を無効化（コンテナクラスは変えない）
         let cloudKitFailed = UserDefaults.standard.bool(forKey: "cloudKitContainerUnavailable")
         let syncEnabled = userWantsSync && !cloudKitFailed
         self.iCloudSyncEnabled = syncEnabled
 
-        // iCloud 同期が有効なら NSPersistentCloudKitContainer を使用
-        if syncEnabled {
-            container = NSPersistentCloudKitContainer(name: "BusinessCard")
-        } else {
-            container = NSPersistentContainer(name: "BusinessCard")
-        }
+        // 常に NSPersistentCloudKitContainer を使用する。
+        // NSPersistentContainer と NSPersistentCloudKitContainer をトグルで切り替えると、
+        // ローカル専用で初期化されたストアに後から CloudKit メタデータ（PCS 暗号鍵）を
+        // 追加しようとして _pcs_data の BAD_REQUEST が発生し同期が一切機能しなくなる。
+        // 同期を無効化したい場合は cloudKitContainerOptions = nil で制御する。
+        container = NSPersistentCloudKitContainer(name: "BusinessCard")
 
         if inMemory {
             // テスト・プレビュー用：ディスクに書き込まない
@@ -158,6 +158,31 @@ struct PersistenceController {
         // iCloud 同期有効時、CloudKit Container の可用性をバックグラウンドで確認
         if syncEnabled {
             Self.verifyCloudKitContainer()
+        }
+
+        // iCloud アカウント変更（サインアウト・切り替え）を検知してログ記録
+        NotificationCenter.default.addObserver(
+            forName: .CKAccountChanged,
+            object: nil,
+            queue: .main
+        ) { _ in
+            AppLogger.persistence.info("iCloud アカウント状態が変化しました — 次回起動時に同期状態を再確認します")
+            // accountStatus を再確認してフラグを更新
+            Self.verifyCloudKitContainer()
+        }
+
+        // CloudKit 同期イベント（import / export / setup）のエラーをログに記録
+        if syncEnabled {
+            NotificationCenter.default.addObserver(
+                forName: NSPersistentCloudKitContainer.eventChangedNotification,
+                object: container,
+                queue: .main
+            ) { notification in
+                guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                        as? NSPersistentCloudKitContainer.Event,
+                      let error = event.error else { return }
+                AppLogger.persistence.error("CloudKit 同期エラー: type=\(event.type.rawValue) error=\(error)")
+            }
         }
 
         // 既存データの companyReading から法人格を除去（一度だけ実行）

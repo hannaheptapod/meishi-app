@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# リリース前チェック sentinel（guard-git.sh が release/* push 前に確認する）
+.release-check-ok
+
 # Xcode
 #
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
