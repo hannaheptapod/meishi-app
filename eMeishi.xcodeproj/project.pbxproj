@@ -130,6 +130,7 @@
 				3979F89B2F7275F200BC90DC /* Sources */,
 				3979F89C2F7275F200BC90DC /* Frameworks */,
 				3979F89D2F7275F200BC90DC /* Resources */,
+				39FA5EFC2F84B10000AA1234 /* Set Build Number */,
 			);
 			buildRules = (
 			);
@@ -260,6 +261,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		39FA5EFC2F84B10000AA1234 /* Set Build Number */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Set Build Number";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/ci_scripts/set_build_number.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3979F89B2F7275F200BC90DC /* Sources */ = {

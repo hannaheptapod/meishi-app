@@ -129,22 +129,19 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
   fi
 done
 
-# --- ビルド番号を YYYYMMDDNNN 形式で設定 ---
-# Xcode Cloud は APP_STORE_ELIGIBLE 配布時に xcodebuild へ
-# CURRENT_PROJECT_VERSION=$CI_BUILD_NUMBER をコマンドライン引数で渡す。
-# コマンドライン引数はビルド設定の最高優先度のため、agvtool や xcconfig では上書き不可。
-# 解決策: Info.plist の CFBundleVersion を変数参照 $(CURRENT_PROJECT_VERSION) から
-# literal 値に直接書き換える。xcodebuild は literal 値をそのまま使うため、
-# CURRENT_PROJECT_VERSION=19 が渡されても影響を受けない。
+# --- ビルド番号確認（設定は Run Script Build Phase で実施）---
+# Xcode Cloud は agvtool で CFBundleVersion を CI_BUILD_NUMBER（連番）に書き換える。
+# ci_pre_xcodebuild.sh はその前に動くため上書きできない。
+# Build Phase "Set Build Number"（ci_scripts/set_build_number.sh）が
+# agvtool の後・署名前に output の Info.plist を yyyymmddNNN 形式で直接書き換える。
 echo ""
-echo "=== ビルド番号設定 ==="
+echo "=== ビルド番号 ==="
 DATE_PREFIX=$(date -u +"%Y%m%d")
 SEQ=$(printf "%03d" $(( (CI_BUILD_NUMBER % 999) + 1 )))
 NEW_BUILD_NUMBER="${DATE_PREFIX}${SEQ}"
 echo "  CI_BUILD_NUMBER: $CI_BUILD_NUMBER"
-echo "  設定ビルド番号:  $NEW_BUILD_NUMBER"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$PLIST"
-ok "CFBundleVersion → $NEW_BUILD_NUMBER (Info.plist に literal 値として書き込み)"
+echo "  設定予定ビルド番号: $NEW_BUILD_NUMBER (Build Phase で設定)"
+ok "ビルド番号確認（実際の設定は Build Phase で実施）"
 
 # --- CI でスキップする項目 ---
 echo ""
