@@ -1,178 +1,100 @@
 #!/usr/bin/env bash
 # Xcode Cloud: xcodebuild 実行後の処理
-# Archive 完了後・Xcode Cloud の再署名（エクスポート）前に実行される
-# CI_ARCHIVE_PATH のアーカイブ内 Info.plist を直接書き換えてビルド番号を上書きする
+#
+# Xcode Cloud の自動 Export は manageAppVersionAndBuildNumber=true で
+# CFBundleVersion を CI_BUILD_NUMBER に上書きする。これを避けるため、
+# ワークフローの Distribution Preparation を None に設定し、
+# ここで自前の ExportOptions.plist (manageAppVersionAndBuildNumber=false)
+# を使って xcodebuild -exportArchive + altool で TestFlight へアップロードする。
+#
+# 必要な Xcode Cloud 環境変数（Secret）:
+#   ASC_API_KEY_ID      : App Store Connect API Key の Key ID
+#   ASC_API_ISSUER_ID   : Issuer ID
+#   ASC_API_KEY_P8      : .p8 ファイルの中身全体（BEGIN/END 行含む）
 
 set -euo pipefail
 
 echo "=== ci_post_xcodebuild ($CI_XCODEBUILD_ACTION) ==="
 
-if [[ "$CI_XCODEBUILD_ACTION" == "archive" ]]; then
-  echo "  Branch:  $CI_BRANCH"
-  echo "  Commit:  $CI_COMMIT"
-  echo "  Build:   $CI_BUILD_NUMBER"
-  echo "  Workflow: $CI_WORKFLOW"
-  echo "  Archive: ${CI_ARCHIVE_PATH:-未設定}"
-
-  if [[ -n "${CI_BUILD_NUMBER:-}" ]] && [[ -n "${CI_ARCHIVE_PATH:-}" ]]; then
-    DATE_PREFIX=$(date -u +"%Y%m%d")
-    SEQ=$(printf "%03d" $(( (CI_BUILD_NUMBER % 999) + 1 )))
-    NEW_BUILD_NUMBER="${DATE_PREFIX}${SEQ}"
-
-    echo ""
-    echo "=== ビルド番号設定 ==="
-    echo "  CI_BUILD_NUMBER: $CI_BUILD_NUMBER"
-    echo "  設定値: $NEW_BUILD_NUMBER"
-
-    # アーカイブ内 App Bundle の Info.plist を更新
-    APP_PLIST="${CI_ARCHIVE_PATH}/Products/Applications/eMeishi.app/Info.plist"
-    if [[ -f "$APP_PLIST" ]]; then
-      BEFORE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PLIST")
-      /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$APP_PLIST"
-      AFTER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PLIST")
-      echo "  [OK] Archive CFBundleVersion: $BEFORE → $AFTER"
-    else
-      echo "  [WARN] $APP_PLIST が見つかりません。フォールバック検索..."
-      find "${CI_ARCHIVE_PATH}/Products" -name "Info.plist" 2>/dev/null | while read -r plist; do
-        echo "  検索結果: $plist"
-        /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$plist" && \
-          echo "  [OK] CFBundleVersion → $NEW_BUILD_NUMBER ($plist)"
-      done
-    fi
-
-    # アーカイブメタデータ（Info.plist）も更新
-    ARCHIVE_META="${CI_ARCHIVE_PATH}/Info.plist"
-    if [[ -f "$ARCHIVE_META" ]]; then
-      /usr/libexec/PlistBuddy -c "Set :ApplicationProperties:CFBundleVersion $NEW_BUILD_NUMBER" \
-        "$ARCHIVE_META" 2>/dev/null && \
-        echo "  [OK] Archive metadata CFBundleVersion → $NEW_BUILD_NUMBER" || \
-        echo "  [SKIP] Archive metadata 更新スキップ（キーなし）"
-    fi
-
-    # ============================================================
-    # エクスポート済み App Bundle をパッチして再署名
-    # ------------------------------------------------------------
-    # Xcode Cloud の export は ci_post_xcodebuild.sh より先に実行され、
-    # ExportOptions.plist に buildNumber=CI_BUILD_NUMBER（連番）を注入する。
-    # その結果 IPA の CFBundleVersion が連番で上書きされるため、
-    # ci_post_xcodebuild.sh（export 後・TestFlight アップロード前）で修正する。
-    # ============================================================
-    echo ""
-    echo "=== エクスポート済み App Bundle パッチ ==="
-
-    # デバッグ: 利用可能な CI 変数を確認
-    echo "  CI_APP_STORE_SIGNED_APP_PATH: ${CI_APP_STORE_SIGNED_APP_PATH:-未設定}"
-    echo "  CI_PRODUCT_DIRECTORY:         ${CI_PRODUCT_DIRECTORY:-未設定}"
-    echo "  CI_AD_HOC_SIGNED_APP_PATH:    ${CI_AD_HOC_SIGNED_APP_PATH:-未設定}"
-
-    # 署名 ID を取得（Apple Distribution / iPhone Distribution）
-    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
-      | grep -E '"Apple Distribution:|iPhone Distribution:' \
-      | head -1 | awk -F'"' '{print $2}' || true)
-    echo "  署名 ID: ${SIGN_ID:-（なし）}"
-
-    patch_and_resign() {
-      local app_path="$1"
-      local info_plist="${app_path}/Info.plist"
-
-      if [[ ! -f "$info_plist" ]]; then
-        echo "  [WARN] Info.plist が見つかりません: $info_plist"
-        return 1
-      fi
-
-      local current
-      current=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$info_plist" 2>/dev/null || echo "UNKNOWN")
-
-      if [[ "$current" == "$NEW_BUILD_NUMBER" ]]; then
-        echo "  [SKIP] CFBundleVersion は既に $NEW_BUILD_NUMBER"
-        return 0
-      fi
-
-      /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$info_plist"
-      echo "  CFBundleVersion: $current → $NEW_BUILD_NUMBER"
-
-      if [[ -z "${SIGN_ID:-}" ]]; then
-        echo "  [WARN] Distribution 証明書なし。再署名スキップ（署名無効になる可能性あり）"
-        return 0
-      fi
-
-      # 1. Frameworks
-      if [[ -d "${app_path}/Frameworks" ]]; then
-        while IFS= read -r -d '' fw; do
-          codesign --force --sign "$SIGN_ID" \
-            --preserve-metadata=entitlements,identifier,flags "$fw" 2>/dev/null || true
-        done < <(find "${app_path}/Frameworks" -name "*.framework" -print0 2>/dev/null)
-      fi
-
-      # 2. App Extensions
-      if [[ -d "${app_path}/PlugIns" ]]; then
-        while IFS= read -r -d '' ext; do
-          codesign --force --sign "$SIGN_ID" \
-            --preserve-metadata=entitlements "$ext" 2>/dev/null || true
-        done < <(find "${app_path}/PlugIns" -name "*.appex" -print0 2>/dev/null)
-      fi
-
-      # 3. メイン App
-      codesign --force --sign "$SIGN_ID" \
-        --preserve-metadata=entitlements,identifier,flags "$app_path"
-      echo "  [OK] 再署名完了: $app_path"
-    }
-
-    # --- 方法 A: CI_APP_STORE_SIGNED_APP_PATH ---
-    if [[ -n "${CI_APP_STORE_SIGNED_APP_PATH:-}" ]] && [[ -d "$CI_APP_STORE_SIGNED_APP_PATH" ]]; then
-      echo "  対象 (A): $CI_APP_STORE_SIGNED_APP_PATH"
-      patch_and_resign "$CI_APP_STORE_SIGNED_APP_PATH" || true
-
-    # --- 方法 B: CI_PRODUCT_DIRECTORY 内の IPA を展開してパッチ ---
-    elif [[ -n "${CI_PRODUCT_DIRECTORY:-}" ]] && [[ -d "$CI_PRODUCT_DIRECTORY" ]]; then
-      IPA_PATH=$(find "$CI_PRODUCT_DIRECTORY" -name "*.ipa" -maxdepth 3 | head -1 || true)
-      if [[ -n "$IPA_PATH" ]]; then
-        echo "  対象 (B): $IPA_PATH"
-        WORK_DIR=$(mktemp -d)
-        # エラー時に作業ディレクトリを削除
-        cleanup() { rm -rf "$WORK_DIR"; }
-        trap cleanup EXIT
-
-        cp "$IPA_PATH" "$WORK_DIR/app.ipa"
-        pushd "$WORK_DIR" >/dev/null
-        unzip -q app.ipa
-
-        PAYLOAD_APP=$(find Payload -name "*.app" -maxdepth 1 | head -1 || true)
-        if [[ -n "$PAYLOAD_APP" ]]; then
-          patch_and_resign "$PAYLOAD_APP" || true
-          # 元の IPA を上書き
-          zip -qr "$IPA_PATH" Payload/
-          echo "  [OK] IPA 更新完了"
-        else
-          echo "  [WARN] Payload/*.app が見つかりません"
-        fi
-
-        popd >/dev/null
-        rm -rf "$WORK_DIR"
-        trap - EXIT
-      else
-        echo "  [INFO] IPA が見つかりません"
-      fi
-    else
-      echo "  [INFO] CI_APP_STORE_SIGNED_APP_PATH も CI_PRODUCT_DIRECTORY も未設定"
-      echo "         次のビルドのログで上記デバッグ変数を確認してください"
-    fi
-
-    # --- フォールバック: /Volumes/workspace/tmp 以下を検索 ---
-    echo ""
-    echo "  === Workspace tmp 検索（デバッグ） ==="
-    find /Volumes/workspace/tmp -name "Info.plist" -path "*/Applications/*.app/Info.plist" 2>/dev/null | head -5 | while read -r p; do
-      VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$p" 2>/dev/null || echo "?")
-      echo "  found: $p  CFBundleVersion=$VER"
-    done || true
-
-  else
-    echo "  [SKIP] CI_BUILD_NUMBER または CI_ARCHIVE_PATH が未設定"
-  fi
+if [[ "$CI_XCODEBUILD_ACTION" != "archive" ]]; then
+  echo "  [SKIP] archive 以外は処理なし"
+  exit 0
 fi
 
-if [[ "$CI_XCODEBUILD_ACTION" == "test" ]] || [[ "$CI_XCODEBUILD_ACTION" == "test-without-building" ]]; then
-  echo "  テスト完了"
-  echo "  Branch: $CI_BRANCH"
-  echo "  Commit: $CI_COMMIT"
+echo "  Branch:   $CI_BRANCH"
+echo "  Commit:   $CI_COMMIT"
+echo "  Workflow: $CI_WORKFLOW"
+echo "  Archive:  ${CI_ARCHIVE_PATH:-未設定}"
+
+if [[ -z "${CI_ARCHIVE_PATH:-}" ]] || [[ ! -d "${CI_ARCHIVE_PATH}" ]]; then
+  echo "  [ERROR] CI_ARCHIVE_PATH が無効です"
+  exit 1
 fi
+
+# archive 内 CFBundleVersion 確認（ci_pre_xcodebuild.sh の agvtool 結果）
+APP_PLIST="${CI_ARCHIVE_PATH}/Products/Applications/eMeishi.app/Info.plist"
+if [[ -f "$APP_PLIST" ]]; then
+  CURRENT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PLIST")
+  echo "  Archive CFBundleVersion: $CURRENT_VERSION"
+fi
+
+# --- 環境変数チェック ---
+if [[ -z "${ASC_API_KEY_ID:-}" ]] || [[ -z "${ASC_API_ISSUER_ID:-}" ]] || [[ -z "${ASC_API_KEY_P8:-}" ]]; then
+  echo "  [ERROR] ASC_API_KEY_ID / ASC_API_ISSUER_ID / ASC_API_KEY_P8 が未設定です"
+  echo "         Xcode Cloud の環境変数（Secret）に追加してください"
+  exit 1
+fi
+
+# --- .p8 ファイルを altool が読める場所に配置 ---
+PRIVATE_KEYS_DIR="$HOME/private_keys"
+mkdir -p "$PRIVATE_KEYS_DIR"
+P8_FILE="${PRIVATE_KEYS_DIR}/AuthKey_${ASC_API_KEY_ID}.p8"
+printf '%s' "$ASC_API_KEY_P8" > "$P8_FILE"
+chmod 600 "$P8_FILE"
+echo "  [OK] .p8 ファイル配置: $P8_FILE"
+
+# --- 自前 Export ---
+EXPORT_DIR="${CI_PRIMARY_REPOSITORY_PATH}/build/export"
+EXPORT_OPTIONS="${CI_PRIMARY_REPOSITORY_PATH}/ci_scripts/ExportOptions.plist"
+rm -rf "$EXPORT_DIR"
+mkdir -p "$EXPORT_DIR"
+
+echo ""
+echo "=== 自前 Export（manageAppVersionAndBuildNumber=false） ==="
+xcodebuild -exportArchive \
+  -archivePath "$CI_ARCHIVE_PATH" \
+  -exportPath "$EXPORT_DIR" \
+  -exportOptionsPlist "$EXPORT_OPTIONS" \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath "$P8_FILE" \
+  -authenticationKeyID "$ASC_API_KEY_ID" \
+  -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
+
+IPA_PATH=$(find "$EXPORT_DIR" -name "*.ipa" -maxdepth 2 | head -1)
+if [[ -z "$IPA_PATH" ]]; then
+  echo "  [ERROR] IPA が生成されませんでした"
+  ls -la "$EXPORT_DIR"
+  exit 1
+fi
+echo "  [OK] IPA 生成: $IPA_PATH"
+
+# IPA 内 CFBundleVersion 確認
+TMP_VERIFY=$(mktemp -d)
+unzip -q "$IPA_PATH" -d "$TMP_VERIFY"
+VERIFY_PLIST=$(find "$TMP_VERIFY/Payload" -name "Info.plist" -maxdepth 2 | head -1)
+if [[ -f "$VERIFY_PLIST" ]]; then
+  IPA_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$VERIFY_PLIST")
+  echo "  IPA CFBundleVersion: $IPA_VERSION"
+fi
+rm -rf "$TMP_VERIFY"
+
+# --- TestFlight アップロード ---
+echo ""
+echo "=== TestFlight アップロード（altool） ==="
+xcrun altool --upload-app \
+  --type ios \
+  --file "$IPA_PATH" \
+  --apiKey "$ASC_API_KEY_ID" \
+  --apiIssuer "$ASC_API_ISSUER_ID"
+
+echo "  [OK] アップロード完了"
