@@ -75,7 +75,7 @@ chore/*    ビルド設定・依存関係等
 | 担当 | 範囲 |
 |---|---|
 | **Claude** | ブランチ作成・実装・コミット・push・PR 作成・CI 失敗時の修正 |
-| **ユーザー** | CI 確認・PR マージ・ブランチ削除・タグ打ち・App Store 提出最終判断 |
+| **ユーザー** | CI 確認・PR マージ・ブランチ削除・App Store 提出最終判断 |
 | **Xcode Cloud** | PR Validation / Develop Integration / Release Build を自動実行 |
 
 **Claude は PR を作成したらそこで手を止める。マージは絶対に自律実行しない。**
@@ -105,7 +105,7 @@ develop
   └─[ユーザー]   2. MARKETING_VERSION を手動更新（Xcode → Target → General → Version）
   └─[Claude]     3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
   └─[Claude]     4. 結果をユーザーに提示し、明示的な承認を得る
-  └─[Claude]     5. commit → push
+  └─[Claude]     5. commit → push（`guard-git.sh` が sentinel 確認: pre-build-check.sh PASS 後の HEAD と一致必須）
   └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight 配信）
   └─[ユーザー]   7. TestFlight で動作確認
   └─[両者]       8. 問題あり → 修正 commit → push（手順 5 に戻る）
@@ -157,12 +157,14 @@ develop
 ### フェーズ 6: 後片付け（審査通過後）
 
 ```
-  └─[ユーザー] 1. release/<x.y.z> → main に PR 作成・マージ
-  └─[ユーザー] 2. release/<x.y.z> → develop に PR 作成・マージ
-  └─[Xcode Cloud] 3. Develop Integration 自動起動
-  └─[Claude]   4. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes --target main）
+  └─[Claude]   1. release/<x.y.z> → main に PR 作成
+  └─[ユーザー] 2. PR マージ
+  └─[Claude]   3. release/<x.y.z> → develop に PR 作成
+  └─[ユーザー] 4. PR マージ
+  └─[Xcode Cloud] 5. Develop Integration 自動起動
+  └─[Claude]   6. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes --target main）
                ※ タグは gh release create が自動作成するため git tag 不要
-  └─[ユーザー] 5. release ブランチ削除（ローカル・リモート）
+  └─[ユーザー] 7. release ブランチ削除（ローカル・リモート）
 ```
 
 > **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は Xcode Cloud が `CI_BUILD_NUMBER`（連番）を自動注入するため、手動変更不要。
@@ -176,11 +178,12 @@ main
   └─[Claude]    1. hotfix/<内容> ブランチ作成（main から分岐）
   └─[ユーザー]  2. MARKETING_VERSION をパッチ更新（例: 1.0.4 → 1.0.5）
   └─[Claude]    3. 修正 commit → push → PR（base: main）
-  └─[Xcode Cloud] 4. PR Validation 自動起動
-  └─[ユーザー]  5. CI 確認 → main へマージ
-  └─[ユーザー]  6. hotfix → release/<x.y.z> として扱うか別途 release/ 分岐して Archive を起動
-  └─[両者]      7. フェーズ 3〜6 と同じ流れで提出・公開
-  └─[ユーザー]  8. hotfix/<内容> → develop へもマージ
+               ※ PR Validation は main 向け PR では自動起動しない
+  └─[ユーザー]  4. PR マージ → main へ取り込み
+  └─[ユーザー]  5. hotfix → release/<x.y.z> として扱うか別途 release/ 分岐して Archive を起動
+  └─[両者]      6. フェーズ 3〜6 と同じ流れで提出・公開
+  └─[Claude]    7. hotfix/<内容> → develop への PR 作成
+  └─[ユーザー]  8. PR マージ
   └─[ユーザー]  9. ブランチ削除（ローカル・リモート）
 ```
 
