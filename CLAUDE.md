@@ -35,7 +35,7 @@
 6. 実装内容が CLAUDE.md と README.md の記述とズレていないか確認し、ズレがあれば同じ PR で更新する
 
 <important>
-## 必須スキル（hook で強制。違反時はユーザーが検知する）
+## 必須スキル（hook で強制）
 
 ユーザーのプロンプトを受け取ったら、コード修正やファイル読み込みの**前に**、
 以下の 2 つのスキルをこの順で実行せよ:
@@ -43,11 +43,22 @@
 1. `/branch` — ブランチ確認・規定外プレフィックスなら即リネーム・main/develop なら作業ブランチを作成
 2. `/translate` — ユーザーの指示を「ユーザー語→エンジニア語→リポジトリの具体箇所」に 2 段階翻訳
 
-この 2 つを**スキップしてはならない**。hook の `<user-prompt-submit-hook>` メッセージでも同じ指示が届く。
+### hook による自動ブロック一覧（exit 2・テキスト警告ではなく仕組みで防止）
 
-**hook による自動ブロック（`.claude/hooks/guard-git.sh`）：**
-- `main` / `develop` への直接コミット・マージ・push → **exit 2 でブロック**
-- `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックスでのブランチ作成 → **exit 2 でブロック**
+| hook | 対象操作 | ブロック条件 |
+|---|---|---|
+| `guard-git.sh` | `git commit` / `git merge` | `main` / `develop` ブランチ上で実行 |
+| `guard-git.sh` | `git push` | `main` / `develop` への直接 push |
+| `guard-git.sh` | `git push`（release/* 向け） | `release/*` ブランチ以外から push、または sentinel 不一致 |
+| `guard-git.sh` | `git push --force` / `--force-with-lease` | 無条件ブロック |
+| `guard-git.sh` | `git push --tags` / タグ push | 無条件ブロック |
+| `guard-git.sh` | `git reset --hard` | 無条件ブロック |
+| `guard-git.sh` | `git clean -f` | 無条件ブロック |
+| `guard-git.sh` | `git branch -D` | `main` / `develop` / `release/*` が対象の場合ブロック |
+| `guard-git.sh` | ブランチ作成 | `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス |
+| `guard-files.sh` | Edit / Write | `project.pbxproj` の直接編集（Xcode で行うこと） |
+| `guard-files.sh` | Edit / Write | `.xcdatamodeld/` 配下の直接編集（Xcode + マイグレーション手順） |
+| `guard-files.sh` | Edit / Write | `.env` / `.p8` / `secrets/` / `private/` への書き込み |
 </important>
 
 ---
@@ -105,7 +116,7 @@ develop
   └─[ユーザー]   2. MARKETING_VERSION を手動更新（Xcode → Target → General → Version）
   └─[Claude]     3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
   └─[Claude]     4. 結果をユーザーに提示し、明示的な承認を得る
-  └─[Claude]     5. commit → push
+  └─[Claude]     5. commit → push（`guard-git.sh` が sentinel 確認: pre-build-check.sh PASS 後の HEAD と一致必須）
   └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight 配信）
   └─[ユーザー]   7. TestFlight で動作確認
   └─[両者]       8. 問題あり → 修正 commit → push（手順 5 に戻る）
@@ -236,7 +247,7 @@ main
 
 ## 開発者メモ（罠・注意点）
 
-- **Xcode プロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない。** Xcode 16 の File System Synchronized Groups により、`eMeishi/` 配下に Swift ファイルを追加すれば自動的にビルド対象になる
+- **Xcode プロジェクトファイル（.xcodeproj）は Claude Code が直接編集しない（`project.pbxproj` は `guard-files.sh` がブロック）。** Xcode 16 の File System Synchronized Groups により、`eMeishi/` 配下に Swift ファイルを追加すれば自動的にビルド対象になる
 - **Blitz が `.claude/rules/blitz.md`・`.claude/rules/teenybase.md`・`.claude/agents/reviewer.md`・`.claude/skills/asc-*/`・`.agents/`・`backend/` を起動ごとに上書き再生成する。** いずれも `.gitignore` で透明化してあるため `git status` に出なければ正常。Teenybase は本アプリで不使用（`backend/` のコードを一切 import していない）なので再生成されても放置して良い
 - Foundation Models はシミュレータで動作しない（実機 iPhone 15 Pro 以降 + Apple Intelligence 有効が必要）
 - Anemll Qwen3-0.6B-ctx512 はシミュレータでも動作するが低速（ANE 不使用・CPU 推論）
