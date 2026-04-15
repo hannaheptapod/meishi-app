@@ -201,6 +201,8 @@ ci_scripts/
 - TestFlight 配信は Xcode Cloud の Release Build ワークフローの Distribution Preparation（App Store Connect）+ Post-Action（Internal Testing）で行う
 - `ci_pre_xcodebuild.sh` は `scripts/pre-build-check.sh` の CI 版。asc CLI 依存の 3 項目（ビルド番号比較・証明書・プロファイル）はスキップ
 - テストプラン `eMeishi-CI.xctestplan` は ScreenshotRunnerTests を除外（App Store スクリーンショット専用のため CI では不要）
+- **`release/*` への push は必ず Archive + TestFlight 配信を起動する。** ASC 提出後は `asc review submissions-update --canceled=true` で取り下げない限り push 禁止
+- **メタデータ（What's New・スクリーンショット等）の変更は `release/*` に載せず、`chore/release-*-metadata` ブランチで develop に流す**（build に無関係なため）
 
 ## ライセンス
 
