@@ -130,10 +130,12 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
 done
 
 # --- ビルド番号を YYYYMMDDNNN 形式で設定 ---
-# APP_STORE_ELIGIBLE 配布設定が有効な場合、Xcode Cloud が ci_post_clone.sh の後で
-# CURRENT_PROJECT_VERSION を CI_BUILD_NUMBER（連番）に上書きする。
-# そのため ci_post_clone.sh での sed 変更は無効化されてしまう。
-# xcodebuild 直前のこのスクリプトで xcrun agvtool を使って再設定することで確実に反映する。
+# Xcode Cloud は APP_STORE_ELIGIBLE 配布時に xcodebuild へ
+# CURRENT_PROJECT_VERSION=$CI_BUILD_NUMBER をコマンドライン引数で渡す。
+# コマンドライン引数はビルド設定の最高優先度のため、agvtool や xcconfig では上書き不可。
+# 解決策: Info.plist の CFBundleVersion を変数参照 $(CURRENT_PROJECT_VERSION) から
+# literal 値に直接書き換える。xcodebuild は literal 値をそのまま使うため、
+# CURRENT_PROJECT_VERSION=19 が渡されても影響を受けない。
 echo ""
 echo "=== ビルド番号設定 ==="
 DATE_PREFIX=$(date -u +"%Y%m%d")
@@ -141,8 +143,8 @@ SEQ=$(printf "%03d" $(( (CI_BUILD_NUMBER % 999) + 1 )))
 NEW_BUILD_NUMBER="${DATE_PREFIX}${SEQ}"
 echo "  CI_BUILD_NUMBER: $CI_BUILD_NUMBER"
 echo "  設定ビルド番号:  $NEW_BUILD_NUMBER"
-xcrun agvtool new-version -all "$NEW_BUILD_NUMBER" 2>&1 | grep -v "^$" | sed 's/^/  /'
-ok "CURRENT_PROJECT_VERSION → $NEW_BUILD_NUMBER"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$PLIST"
+ok "CFBundleVersion → $NEW_BUILD_NUMBER (Info.plist に literal 値として書き込み)"
 
 # --- CI でスキップする項目 ---
 echo ""
