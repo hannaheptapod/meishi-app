@@ -55,7 +55,7 @@
 ## ブランチ・PR 戦略（Git Flow・厳守）
 
 ```
-main       本番リリース済み。タグ（v1.0, v1.1）を打つ
+main       本番リリース済み。gh release create でタグ・GitHub Release を作成
 develop    次リリースの統合ブランチ。常に動作する状態を保つ
 feature/*  1 機能 1 ブランチ。develop から分岐し develop へ PR
 fix/*      バグ修正。develop から分岐し develop へ PR
@@ -201,7 +201,7 @@ main
 
 1. **`release/*` への push は Archive + TestFlight 配信を必ず起動する。** ASC 提出前は何回 push してもよいが、提出後は `asc review submissions-update --canceled=true` で取り下げない限り push 禁止
 2. **メタデータのみの変更は `release/*` に載せない。** build に無関係なので `chore/release-*-metadata` ブランチで develop に流す
-3. **main への直接 commit/push は hook がブロック。** 例外なし
+3. **main・develop への直接 commit/push は hook がブロック。** 例外なし
 
 ---
 
