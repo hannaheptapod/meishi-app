@@ -7,6 +7,9 @@
 # Claude Code 生成ファイル（Blitz 等）
 .claude/launch.json
 
+# ASC CLI ローカル作業ディレクトリ
+.asc/
+
 # Xcode
 #
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
