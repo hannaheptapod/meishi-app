@@ -279,7 +279,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "bash \"${SRCROOT}/ci_scripts/set_build_number.sh\"\n";
+			shellScript = "[ -z \"${CI_BUILD_NUMBER:-}\" ] && exit 0\nDATE_PREFIX=$(date -u +\"%Y%m%d\")\nSEQ=$(printf \"%03d\" $(( (CI_BUILD_NUMBER % 999) + 1 )))\nNEW_BUILD_NUMBER=\"${DATE_PREFIX}${SEQ}\"\nPROCESSED_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n[ -f \"$PROCESSED_PLIST\" ] && /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $NEW_BUILD_NUMBER\" \"$PROCESSED_PLIST\" && echo \"note: CFBundleVersion set to $NEW_BUILD_NUMBER\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

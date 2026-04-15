@@ -9,3 +9,6 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS =
 
 // テスト可能性不要（最適化優先）
 ENABLE_TESTABILITY = NO
+
+// Run Script Build Phase からビルド成果物を書き換えるため sandbox を無効化
+ENABLE_USER_SCRIPT_SANDBOXES = NO
