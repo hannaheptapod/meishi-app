@@ -166,14 +166,12 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 |---|---|---|---|
 | PR Validation | PR → `develop` | Build | **なし** |
 | Develop Integration | push → `develop` | Build | **なし** |
-| Release Build | push → `release/*` | Archive | **なし** |
+| Release Build | push → `release/*` | Archive + TestFlight 配信 | **なし** |
 
 - Xcode Cloud の初期セットアップ済み（GitHub 連携・署名・App 確認）
 - `ci_scripts/` にビルド番号自動生成・バリデーション・ログのスクリプト配置済み
 - `eMeishi-CI.xctestplan` 作成済み（ScreenshotRunnerTests を除外）
 - テストアクションは ASC API の `testDestinations` 形式問題で未設定
-- Release Build の TestFlight 自動デプロイ（Post-Action）は未設定
-
 ### 目標（To Be）
 
 | ワークフロー | トリガー | アクション | テスト実行 |
@@ -185,8 +183,7 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 ### 残作業
 
 1. PR Validation・Develop Integration に TEST アクション追加（`testDestinations` の正しい形式で再設定）
-2. Release Build に TestFlight デプロイの Post-Action 追加
-3. develop マージ後の初回ビルド成功を確認
+2. develop マージ後の初回ビルド成功を確認
 
 ### CI スクリプト構成
 
