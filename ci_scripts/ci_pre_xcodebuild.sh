@@ -129,19 +129,28 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
   fi
 done
 
-# --- ビルド番号確認（設定は Run Script Build Phase で実施）---
-# Xcode Cloud は agvtool で CFBundleVersion を CI_BUILD_NUMBER（連番）に書き換える。
-# ci_pre_xcodebuild.sh はその前に動くため上書きできない。
-# Build Phase "Set Build Number"（ci_scripts/set_build_number.sh）が
-# agvtool の後・署名前に output の Info.plist を yyyymmddNNN 形式で直接書き換える。
+# --- ビルド番号設定 ---
+# Xcode Cloud は ci_pre_xcodebuild.sh より先に agvtool で CURRENT_PROJECT_VERSION を
+# CI_BUILD_NUMBER（連番整数）に書き換える。
+# ci_pre_xcodebuild.sh は agvtool 実行後・xcodebuild 実行前に動くため、
+# ここで agvtool を再実行することで yyyymmddNNN 形式に上書きできる。
 echo ""
-echo "=== ビルド番号 ==="
+echo "=== ビルド番号設定 ==="
 DATE_PREFIX=$(date -u +"%Y%m%d")
 SEQ=$(printf "%03d" $(( (CI_BUILD_NUMBER % 999) + 1 )))
 NEW_BUILD_NUMBER="${DATE_PREFIX}${SEQ}"
 echo "  CI_BUILD_NUMBER: $CI_BUILD_NUMBER"
-echo "  設定予定ビルド番号: $NEW_BUILD_NUMBER (Build Phase で設定)"
-ok "ビルド番号確認（実際の設定は Build Phase で実施）"
+echo "  設定値: $NEW_BUILD_NUMBER"
+
+if [[ "$CI_XCODEBUILD_ACTION" == "archive" ]]; then
+  xcrun agvtool new-version -all "$NEW_BUILD_NUMBER"
+  ACTUAL=$(xcrun agvtool what-version -terse)
+  echo "  [OK] agvtool 設定完了: $ACTUAL"
+  ok "ビルド番号 agvtool 設定完了"
+else
+  echo "  [SKIP] archive 以外のため agvtool スキップ"
+  ok "ビルド番号確認（archive 以外はスキップ）"
+fi
 
 # --- CI でスキップする項目 ---
 echo ""
