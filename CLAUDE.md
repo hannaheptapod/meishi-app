@@ -160,9 +160,9 @@ develop
   └─[ユーザー] 1. release/<x.y.z> → main に PR 作成・マージ
   └─[ユーザー] 2. release/<x.y.z> → develop に PR 作成・マージ
   └─[Xcode Cloud] 3. Develop Integration 自動起動
-  └─[ユーザー] 4. main に vX.Y.Z タグを打つ
-  └─[Claude]   5. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes）
-  └─[ユーザー] 6. release ブランチ削除（ローカル・リモート）
+  └─[Claude]   4. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes --target main）
+               ※ タグは gh release create が自動作成するため git tag 不要
+  └─[ユーザー] 5. release ブランチ削除（ローカル・リモート）
 ```
 
 > **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は Xcode Cloud が `CI_BUILD_NUMBER`（連番）を自動注入するため、手動変更不要。
