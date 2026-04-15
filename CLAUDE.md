@@ -14,8 +14,8 @@
 
 全項目 **PASS** になるまでアーカイブ禁止。スクリプトが exit 1 の場合は原因を修正してから再実行。
 
-- ビルド番号は **`yyyymmddNNN`** 形式（NNN は 001 始まりの当日連番）
-- 例：2026-04-09 の1本目 → `20260409001`、2本目 → `20260409002`
+- ビルド番号（`CURRENT_PROJECT_VERSION`）は Xcode Cloud の `CI_BUILD_NUMBER`（連番整数）をそのまま使う。手動変更不要
+- バージョン番号（`MARKETING_VERSION`）のみ手動更新が必要（例：`1.0.3` → `1.0.4`）
 
 ### Step 2: ユーザー承認（必須）
 
@@ -97,41 +97,91 @@ develop
 
 ---
 
-### フェーズ 2: リリースフロー
+### フェーズ 2: リリース準備（TestFlight 検証ループ）
 
 ```
 develop
-  └─[Claude]    1. release/<x.y.z> ブランチ作成
-  └─[Claude]    2. Info.plist バージョン・ビルド番号更新
-  └─[Claude]    3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
-  └─[Claude]    4. 結果をユーザーに提示し、明示的な承認を得る
-  └─[Claude]    5. push → PR 作成（base: develop）
-  └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight）
-  └─[ユーザー]  7. Archive 成功・TestFlight 配信を確認
-  └─[Claude]    8. スクリーンショット撮影（shots-preflight.sh → asc-shots-pipeline）
-  └─[Claude]    9. What's New 更新（asc-whats-new-writer スキル）
-  └─[Claude]   10. 提出前ヘルスチェック → 審査提出（asc-release-flow スキル）
-  └─[ユーザー] 11. release/<x.y.z> → main への PR 作成・マージ
-  └─[ユーザー] 12. release/<x.y.z> → develop への PR 作成・マージ
-  └─[ユーザー] 13. main に vX.Y.Z タグを打つ
-  └─[Claude]   14. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes）
-  └─[ユーザー] 15. release ブランチ削除（ローカル・リモート）
+  └─[Claude]     1. release/<x.y.z> ブランチ作成（develop から分岐）
+  └─[ユーザー]   2. MARKETING_VERSION を手動更新（Xcode → Target → General → Version）
+  └─[Claude]     3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
+  └─[Claude]     4. 結果をユーザーに提示し、明示的な承認を得る
+  └─[Claude]     5. commit → push
+  └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight 配信）
+  └─[ユーザー]   7. TestFlight で動作確認
+  └─[両者]       8. 問題あり → 修正 commit → push（手順 5 に戻る）
+                    ※合格ビルドが決まるまで 5〜7 を繰り返す。
+                      push のたびに Archive が走り、ビルド番号が進む。
 ```
 
-> ビルド番号は `yyyymmddNNN`（001 始まりの当日連番）。`ci_scripts/ci_post_clone.sh` が Xcode Cloud で自動設定。手動更新は `Info.plist` の `CURRENT_PROJECT_VERSION` を直接編集。
+> **release/\* への push は「ASC 提出前」なら何回でも可。** TestFlight 検証で bug が見つかったら普通に修正 commit を積んで push する。合格ビルドが決まった時点（= ASC 提出開始時点）が境界線。**提出後は取り下げない限り push 禁止**（詳細はフェーズ 5）。
+
+### フェーズ 3: メタデータ準備（Xcode Cloud は動かない）
+
+```
+develop
+  └─[Claude]    1. chore/release-<x.y.z>-metadata ブランチ作成
+  └─[Claude]    2. metadata/version/<x.y.z>/ja.json に What's New を記載
+  └─[Claude]    3. （UI 変更があれば）./scripts/shots-preflight.sh → スクリーンショット撮影
+  └─[Claude]    4. commit → push → PR（base: develop）
+  └─[Xcode Cloud] 5. PR Validation 自動起動
+  └─[ユーザー]  6. CI 確認 → マージ
+  └─[Xcode Cloud] 7. Develop Integration 自動起動
+```
+
+> **メタデータは build に無関係なので `release/*` に載せない。** develop 側で管理することで `release/*` の Archive に影響させない。
+
+### フェーズ 4: ストア提出（Xcode Cloud は動かない）
+
+```
+  └─[Claude] 1. asc release stage --copy-metadata-from <前バージョン> --exclude-fields whatsNew --build <合格ビルドID> --confirm
+  └─[Claude] 2. asc localizations update --version <id> --locale ja --whats-new "..."
+  └─[Claude] 3. （UI 変更があれば）スクリーンショットを ASC にアップロード
+  └─[Claude] 4. asc validate --app <id> --version <x.y.z> で readiness 確認
+  └─[Claude] 5. asc review submissions-create → items-add → submissions-submit --confirm
+```
+
+> **ここから release/<x.y.z> へは絶対 push しない。** 提出済みバージョンには差し替えできないため、新ビルドが生まれても宙に浮く。
+
+### フェーズ 5: 審査中の修正（Reject 対応・提出後のバグ発見）
+
+```
+  └─[Claude]   1. asc review submissions-update --canceled=true で提出取り下げ
+  └─[Claude]   2. 修正 commit → release/<x.y.z> に push
+  └─[Xcode Cloud] 3. Release Build 自動起動（新ビルド生成）
+  └─[ユーザー] 4. TestFlight で再検証
+  └─[両者]     5. フェーズ 3〜4 をやり直し
+```
+
+> **提出後の push は必ず「取り下げ → push → 再提出」のセットで行う。** 取り下げずに push すると宙ぶらりんのビルドが生まれるだけ。
+
+### フェーズ 6: 後片付け（審査通過後）
+
+```
+  └─[ユーザー] 1. release/<x.y.z> → main に PR 作成・マージ
+  └─[ユーザー] 2. release/<x.y.z> → develop に PR 作成・マージ
+  └─[Xcode Cloud] 3. Develop Integration 自動起動
+  └─[ユーザー] 4. main に vX.Y.Z タグを打つ
+  └─[Claude]   5. GitHub Releases 作成（gh release create vX.Y.Z --generate-notes）
+  └─[ユーザー] 6. release ブランチ削除（ローカル・リモート）
+```
+
+> **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は Xcode Cloud が `CI_BUILD_NUMBER`（連番）を自動注入するため、手動変更不要。
 
 ---
 
-### フェーズ 3: 緊急修正フロー（hotfix）
+### フェーズ 7: 緊急修正フロー（hotfix・本番障害対応）
 
 ```
 main
   └─[Claude]    1. hotfix/<内容> ブランチ作成（main から分岐）
-  └─[Claude]    2. 修正・コミット・push → PR 作成（base: main）
-  └─[Xcode Cloud] 3. PR Validation 自動起動
-  └─[ユーザー]  4. CI 確認 → main への PR マージ・タグ
-  └─[ユーザー]  5. hotfix/<内容> → develop への PR 作成・マージ
-  └─[ユーザー]  6. ブランチ削除（ローカル・リモート）
+  └─[ユーザー]  2. MARKETING_VERSION をパッチ更新（例: 1.0.4 → 1.0.5）
+  └─[Claude]    3. 修正 commit → push → PR（base: main）
+  └─[Xcode Cloud] 4. PR Validation 自動起動
+  └─[ユーザー]  5. CI 確認 → main へマージ
+  └─[ユーザー]  6. hotfix → release/<x.y.z> として扱うか別途 release/ 分岐して Archive を起動
+  └─[両者]      7. フェーズ 3〜6 と同じ流れで提出・公開
+  └─[ユーザー]  8. hotfix/<内容> → develop へもマージ
+  └─[ユーザー]  9. ブランチ削除（ローカル・リモート）
 ```
 
 ---
@@ -142,7 +192,13 @@ main
 |---|---|---|---|
 | PR Validation | PR → `develop` | Build | PR 作成で自動起動。CI 失敗なら修正して再 push |
 | Develop Integration | push → `develop` | Build | マージ後に自動起動。失敗はユーザーに報告 |
-| Release Build | push → `release/*` | Archive | push で自動起動。失敗なら原因調査・修正 |
+| Release Build | push → `release/*` | Archive + TestFlight 配信 | push で自動起動。**ASC 提出後は禁止** |
+
+### 絶対ルール
+
+1. **`release/*` への push は Archive + TestFlight 配信を必ず起動する。** ASC 提出前は何回 push してもよいが、提出後は `asc review submissions-update --canceled=true` で取り下げない限り push 禁止
+2. **メタデータのみの変更は `release/*` に載せない。** build に無関係なので `chore/release-*-metadata` ブランチで develop に流す
+3. **main への直接 commit/push は hook がブロック。** 例外なし
 
 ---
 
