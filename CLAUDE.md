@@ -14,7 +14,7 @@
 
 全項目 **PASS** になるまでアーカイブ禁止。スクリプトが exit 1 の場合は原因を修正してから再実行。
 
-- ビルド番号は `ci_scripts/ci_post_clone.sh` が Xcode Cloud で **`yyyymmddNNN`** 形式に自動生成する。手動変更不要
+- ビルド番号（`CURRENT_PROJECT_VERSION`）は Xcode Cloud の `CI_BUILD_NUMBER`（連番整数）をそのまま使う。手動変更不要
 - バージョン番号（`MARKETING_VERSION`）のみ手動更新が必要（例：`1.0.3` → `1.0.4`）
 
 ### Step 2: ユーザー承認（必須）
@@ -118,7 +118,7 @@ develop
   └─[ユーザー] 15. release ブランチ削除（ローカル・リモート）
 ```
 
-> **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は `ci_scripts/ci_post_clone.sh` が Xcode Cloud で `yyyymmddNNN` 形式に自動設定するため、手動変更不要。
+> **バージョン番号（MARKETING_VERSION）のみ手動更新。** Xcode → Target → General → Version フィールドで変更する（`project.pbxproj` を Claude が直接編集しないため）。ビルド番号（CURRENT_PROJECT_VERSION）は Xcode Cloud が `CI_BUILD_NUMBER`（連番）を自動注入するため、手動変更不要。
 
 ---
 

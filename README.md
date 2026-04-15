@@ -192,11 +192,13 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 
 ```
 ci_scripts/
-├── ci_post_clone.sh        # ビルド番号 YYYYMMDDNNN 自動生成
-├── ci_pre_xcodebuild.sh    # ビルド前バリデーション（19 項目、archive 時のみブロック）
+├── ci_post_clone.sh        # クローン後ログ（特別な処理なし）
+├── ci_pre_xcodebuild.sh    # ビルド前バリデーション（Info.plist 整合性・xcconfig 等）
 └── ci_post_xcodebuild.sh   # ビルド後ログ出力
 ```
 
+- ビルド番号（`CURRENT_PROJECT_VERSION`）は Xcode Cloud が `CI_BUILD_NUMBER`（連番）を自動注入する。カスタム形式は使わない
+- TestFlight 配信は Xcode Cloud の Release Build ワークフローの Distribution Preparation（App Store Connect）+ Post-Action（Internal Testing）で行う
 - `ci_pre_xcodebuild.sh` は `scripts/pre-build-check.sh` の CI 版。asc CLI 依存の 3 項目（ビルド番号比較・証明書・プロファイル）はスキップ
 - テストプラン `eMeishi-CI.xctestplan` は ScreenshotRunnerTests を除外（App Store スクリーンショット専用のため CI では不要）
 
