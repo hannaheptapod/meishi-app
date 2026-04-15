@@ -19,7 +19,7 @@ plist_bool() {
 }
 
 echo "=== ビルド番号 ==="
-# ビルド番号は ci_scripts/ci_post_clone.sh が Xcode Cloud で yyyymmddNNN 形式に自動生成する。
+# ビルド番号（CURRENT_PROJECT_VERSION）は Xcode Cloud が CI_BUILD_NUMBER を自動注入する。
 # ローカル値の大小チェックは Xcode Cloud と二重管理になるためスキップ。
 LATEST=$(~/.blitz/bin/asc builds list --app 6761180218 --platform IOS --limit 3 2>/dev/null \
   | python3 -c "import sys,json; b=json.load(sys.stdin)['data']; print(b[0]['attributes']['version']) if b else print('none')")
