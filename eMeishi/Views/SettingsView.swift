@@ -239,15 +239,11 @@ struct SettingsView: View {
                 Label("サポート", systemImage: "questionmark.circle")
             }
             LabeledContent("バージョン", value: appVersion)
-            LabeledContent("ビルド", value: buildNumber)
         }
     }
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
-    }
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
 }

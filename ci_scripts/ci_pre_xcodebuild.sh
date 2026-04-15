@@ -129,9 +129,16 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
   fi
 done
 
+# --- ビルド番号 ---
+# Xcode Cloud が CI_BUILD_NUMBER（連番整数）を CURRENT_PROJECT_VERSION に自動注入する
+# 標準挙動に委ねる。カスタム形式（yyyymmddNNN など）は使わない。
+echo ""
+echo "=== ビルド番号 ==="
+echo "  CI_BUILD_NUMBER: ${CI_BUILD_NUMBER:-?} （Xcode Cloud が自動注入）"
+ok "ビルド番号（Xcode Cloud 自動管理）"
+
 # --- CI でスキップする項目 ---
 echo ""
-echo "  [SKIP] ビルド番号 vs ASC 比較 (ci_post_clone.sh で自動設定)"
 echo "  [SKIP] Distribution 証明書 (Xcode Cloud が自動管理)"
 echo "  [SKIP] プロビジョニングプロファイル (Xcode Cloud が自動管理)"
 

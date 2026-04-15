@@ -116,7 +116,7 @@ develop
   └─[ユーザー]   2. MARKETING_VERSION を手動更新（Xcode → Target → General → Version）
   └─[Claude]     3. ./scripts/pre-build-check.sh 実行・全 PASS を確認
   └─[Claude]     4. 結果をユーザーに提示し、明示的な承認を得る
-  └─[Claude]     5. commit → push（`guard-git.sh` が sentinel 確認: pre-build-check.sh PASS 後の HEAD と一致必須）
+  └─[Claude]     5. commit → push
   └─[Xcode Cloud] 6. Release Build 自動起動（Archive → TestFlight 配信）
   └─[ユーザー]   7. TestFlight で動作確認
   └─[両者]       8. 問題あり → 修正 commit → push（手順 5 に戻る）
