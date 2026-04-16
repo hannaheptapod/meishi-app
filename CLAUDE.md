@@ -100,9 +100,9 @@ develop
   └─[Claude] feature/<機能名> ブランチ作成
        ├─[Claude] 実装・コミット・push
        ├─[Claude] PR 作成（base: develop）
-       ├─[Xcode Cloud] PR Validation 自動起動（Build）
+       ├─[Xcode Cloud] PR Validation 自動起動（Build + Test）
        ├─[ユーザー] CI 結果確認 → PR マージ
-       ├─[Xcode Cloud] Develop Integration 自動起動（Build）
+       ├─[Xcode Cloud] Develop Integration 自動起動（Build + Test）
        └─[ユーザー] ブランチ削除（ローカル・リモート）
 ```
 
@@ -204,8 +204,8 @@ main
 
 | ワークフロー | トリガー | アクション | Claude の対応 |
 |---|---|---|---|
-| PR Validation | PR → `develop` | Build | PR 作成で自動起動。CI 失敗なら修正して再 push |
-| Develop Integration | push → `develop` | Build | マージ後に自動起動。失敗はユーザーに報告 |
+| PR Validation | PR → `develop` | Build + Test | PR 作成で自動起動。CI 失敗なら修正して再 push |
+| Develop Integration | push → `develop` | Build + Test | マージ後に自動起動。失敗はユーザーに報告 |
 | Release Build | push → `release/*` | Archive + TestFlight 配信 | push で自動起動。**ASC 提出後は禁止** |
 
 ### 絶対ルール

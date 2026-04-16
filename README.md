@@ -125,10 +125,16 @@ meishi-app/
 │   ├── AppIcon.icon/                           # アプリアイコン
 │   └── Assets.xcassets                         # アクセントカラー
 ├── eMeishiTests/
-│   └── eMeishiTests.swift                      # 機能テスト網羅的に実装済み
+│   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
+│   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
+│   ├── InsightsServiceTests.swift              # InsightsService の会社別・エリア別・職種別・月別集計
+│   └── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
 ├── eMeishiUITests/
-│   ├── eMeishiUITests.swift                  # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
-│   └── eMeishiUITestsLaunchTests.swift       # 起動テスト
+│   ├── eMeishiUITests.swift                    # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
+│   ├── eMeishiUITestsLaunchTests.swift         # 起動テスト
+│   └── ScreenshotRunner.swift                  # App Store スクリーンショット撮影（CI では除外）
+├── eMeishi-CI.xctestplan                           # CI 用テストプラン（ScreenshotRunner 除外）
+├── eMeishi-Unit.xctestplan                         # PR Validation 用 Unit テストプラン（Unit テストのみ）
 ├── scripts/
 │   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
 ├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
@@ -160,30 +166,14 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 
 ## CI/CD（Xcode Cloud）
 
-### 現状（As Is）
-
-| ワークフロー | トリガー | アクション | テスト実行 |
+| ワークフロー | トリガー | アクション | テストプラン |
 |---|---|---|---|
-| PR Validation | PR → `develop` | Build | **なし** |
-| Develop Integration | push → `develop` | Build | **なし** |
-| Release Build | push → `release/*` | Archive + TestFlight 配信 | **なし** |
+| PR Validation | PR → `develop` | Build + **Test** | `eMeishi-Unit`（Unit テストのみ） |
+| Develop Integration | push → `develop` | Build + **Test** | `eMeishi-CI`（Unit + UI テスト、ScreenshotRunner 除外） |
+| Release Build | push → `release/*` | **Archive → TestFlight** | なし |
 
 - Xcode Cloud の初期セットアップ済み（GitHub 連携・署名・App 確認）
 - `ci_scripts/` にビルド番号自動生成・バリデーション・ログのスクリプト配置済み
-- `eMeishi-CI.xctestplan` 作成済み（ScreenshotRunnerTests を除外）
-- テストアクションは ASC API の `testDestinations` 形式問題で未設定
-### 目標（To Be）
-
-| ワークフロー | トリガー | アクション | テスト実行 |
-|---|---|---|---|
-| PR Validation | PR → `develop` | Build + **Test** | **Unit Tests のみ** |
-| Develop Integration | push → `develop` | Build + **Test** | **Unit + UI Tests**（eMeishi-CI.xctestplan） |
-| Release Build | push → `release/*` | Archive → **TestFlight** | なし（Archive のみ） |
-
-### 残作業
-
-1. PR Validation・Develop Integration に TEST アクション追加（`testDestinations` の正しい形式で再設定）
-2. develop マージ後の初回ビルド成功を確認
 
 ### CI スクリプト構成
 
