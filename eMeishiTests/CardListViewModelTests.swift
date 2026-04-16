@@ -263,6 +263,10 @@ struct CardListViewModelSortTests {
         try context.save()
 
         let vm = CardListViewModel(context: context)
+        // SettingsStore.shared(UserDefaults)は並列テスト間で共有されるため、
+        // 初期sortKeyを.name以外に固定して「新しいキーへの切替」分岐を確実に通す
+        vm.sortKey = .createdAt
+        vm.sortAscending = false
 
         // 名前に切り替えたら昇順がデフォルト
         vm.toggleSort(key: .name)
