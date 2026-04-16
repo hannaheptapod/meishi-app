@@ -89,6 +89,18 @@ struct PersistenceController {
     /// iCloud 同期が有効かどうか
     let iCloudSyncEnabled: Bool
 
+    // NSManagedObjectModel を静的にキャッシュして並列初期化でのレース条件を防ぐ。
+    // Swift Testing はテストを並列実行するため、複数の PersistenceController(inMemory:) が
+    // 同時に生成されると NSPersistentCloudKitContainer(name:) 内部のモデルロードで
+    // CFBasicHashAddValue のレースが発生しクラッシュする。static let で一度だけロードし共有する。
+    private static let managedObjectModel: NSManagedObjectModel = {
+        guard let url = Bundle.main.url(forResource: "BusinessCard", withExtension: "momd"),
+              let model = NSManagedObjectModel(contentsOf: url) else {
+            fatalError("NSManagedObjectModel 'BusinessCard.momd' が見つかりません")
+        }
+        return model
+    }()
+
     init(inMemory: Bool = false) {
         let userWantsSync = !inMemory && UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
 
@@ -102,7 +114,8 @@ struct PersistenceController {
         // ローカル専用で初期化されたストアに後から CloudKit メタデータ（PCS 暗号鍵）を
         // 追加しようとして _pcs_data の BAD_REQUEST が発生し同期が一切機能しなくなる。
         // 同期を無効化したい場合は cloudKitContainerOptions = nil で制御する。
-        container = NSPersistentCloudKitContainer(name: "BusinessCard")
+        container = NSPersistentCloudKitContainer(name: "BusinessCard",
+                                                  managedObjectModel: Self.managedObjectModel)
 
         if inMemory {
             // テスト・プレビュー用：ディスクに書き込まない
@@ -122,12 +135,18 @@ struct PersistenceController {
                                       forKey: NSPersistentStoreFileProtectionKey)
             }
 
-            // Persistent History Tracking を常に有効化
+            // Persistent History Tracking: 本番ストアのみ有効化
             // iCloud 同期ON時は NSPersistentCloudKitContainer が必要とし、
             // 同期OFF時も過去に同期ONで開いたストアの互換性を維持するため必須
             // （未設定だと Read Only モードに強制される）
-            description.setOption(true as NSNumber,
-                                  forKey: NSPersistentHistoryTrackingKey)
+            // in-memory テストストアでは無効化する。有効にすると Swift Testing の
+            // 並列実行で複数の PersistenceController(inMemory: true) が同時に
+            // _PFPersistentHistoryModel のキャッシュを構築しようとして
+            // CFBasicHashAddValue / EXC_BAD_ACCESS が発生するため。
+            if !inMemory {
+                description.setOption(true as NSNumber,
+                                      forKey: NSPersistentHistoryTrackingKey)
+            }
 
             // iCloud 同期の CloudKit コンテナ設定
             if syncEnabled {
@@ -150,10 +169,17 @@ struct PersistenceController {
             }
         }
         self.loadError = loadErr
-        // 別スレッドからの変更を自動マージ
-        container.viewContext.automaticallyMergesChangesFromParent = true
-        // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）
-        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        // 別スレッドからの変更を自動マージ（本番ストアのみ）
+        // in-memory テストストアでは無効化する。有効にすると Swift Testing の並列実行で
+        // 複数の PersistenceController(inMemory: true) が同時に
+        // viewContext.automaticallyMergesChangesFromParent = true を呼び出し、
+        // 内部の performBlockAndWait がメインスレッドに集中して NSMutableSet の
+        // ミューテーションエラー（EXC_CRASH SIGABRT）が発生するため。
+        if !inMemory {
+            container.viewContext.automaticallyMergesChangesFromParent = true
+            // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）
+            container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        }
 
         // iCloud 同期有効時、CloudKit Container の可用性をバックグラウンドで確認
         if syncEnabled {

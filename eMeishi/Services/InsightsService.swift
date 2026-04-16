@@ -76,27 +76,46 @@ class InsightsService {
     }
 
     /// 住所から都道府県+市区を抽出
+    /// - 政令指定都市（横浜市西区など）は市までで止め、区は含めない
+    /// - 東京23区は「東京都○○区」まで返す
     private func extractPrefectureCity(_ address: String) -> String {
-        // 都道府県パターン
-        let prefPattern = "(北海道|(?:東京|京都|大阪)府|.{2,3}県)"
-        // 市区町村パターン
-        let cityPattern = "(.{1,5}(?:市|区|町|村))"
+        // 都道府県パターン（東京都・大阪府・京都府・北海道・各県を網羅）
+        let prefPattern = "(北海道|東京都|(?:大阪|京都)府|.{2,3}県)"
 
-        var result = ""
-        if let prefRegex = try? NSRegularExpression(pattern: prefPattern),
-           let match = prefRegex.firstMatch(in: address, range: NSRange(address.startIndex..., in: address)),
-           let range = Range(match.range(at: 1), in: address) {
-            result = String(address[range])
+        guard let prefRegex = try? NSRegularExpression(pattern: prefPattern),
+              let prefMatch = prefRegex.firstMatch(in: address,
+                                                   range: NSRange(address.startIndex..., in: address)),
+              let prefRange = Range(prefMatch.range(at: 1), in: address) else {
+            return ""
+        }
+        let prefecture = String(address[prefRange])
+        let rest = String(address[prefRange.upperBound...])
+
+        // 市を優先して抽出（「横浜市西区」の場合は「横浜市」で止める）
+        if let cityRegex = try? NSRegularExpression(pattern: "^.{1,5}市"),
+           let cityMatch = cityRegex.firstMatch(in: rest,
+                                                range: NSRange(rest.startIndex..., in: rest)),
+           let cityRange = Range(cityMatch.range, in: rest) {
+            return prefecture + String(rest[cityRange])
         }
 
-        if let cityRegex = try? NSRegularExpression(pattern: prefPattern + cityPattern),
-           let match = cityRegex.firstMatch(in: address, range: NSRange(address.startIndex..., in: address)),
-           match.numberOfRanges >= 3,
-           let range = Range(match.range(at: 2), in: address) {
-            result += String(address[range])
+        // 市がない場合は区（東京23区など）を抽出
+        if let wardRegex = try? NSRegularExpression(pattern: "^.{1,5}区"),
+           let wardMatch = wardRegex.firstMatch(in: rest,
+                                                range: NSRange(rest.startIndex..., in: rest)),
+           let wardRange = Range(wardMatch.range, in: rest) {
+            return prefecture + String(rest[wardRange])
         }
 
-        return result
+        // 町・村にも対応
+        if let townRegex = try? NSRegularExpression(pattern: "^.{1,5}[町村]"),
+           let townMatch = townRegex.firstMatch(in: rest,
+                                                range: NSRange(rest.startIndex..., in: rest)),
+           let townRange = Range(townMatch.range, in: rest) {
+            return prefecture + String(rest[townRange])
+        }
+
+        return prefecture
     }
 
     // MARK: - 職種カテゴリ別集計

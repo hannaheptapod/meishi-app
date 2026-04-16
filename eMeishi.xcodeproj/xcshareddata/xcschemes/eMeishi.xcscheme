@@ -34,6 +34,9 @@
             reference = "container:eMeishi-CI.xctestplan"
             default = "YES">
          </TestPlanReference>
+         <TestPlanReference
+            reference = "container:eMeishi-Unit.xctestplan">
+         </TestPlanReference>
       </TestPlans>
    </TestAction>
    <LaunchAction
