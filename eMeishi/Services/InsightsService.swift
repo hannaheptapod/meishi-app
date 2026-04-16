@@ -4,6 +4,7 @@ import CoreData
 // 人脈インサイトサービス
 // 名刺データをCoreData集約クエリで分析し、会社別・エリア別・職種別の統計を返す
 // LLM不使用・純粋なデータ集計
+@MainActor
 class InsightsService {
 
     static let shared = InsightsService()

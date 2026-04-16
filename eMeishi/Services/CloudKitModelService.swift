@@ -18,7 +18,7 @@ import CryptoKit
 ///   - weightChunk0〜4:         weight.bin チャンク（embed:0-1, ffn:2-3, lmhead:4）
 ///   - weightChunkCount:        チャンク総数（= 5）
 ///   - tokenizerAsset:          tokenizer.json
-class CloudKitModelService {
+actor CloudKitModelService {
 
     static let shared = CloudKitModelService()
 

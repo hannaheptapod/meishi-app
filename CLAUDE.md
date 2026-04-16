@@ -57,7 +57,7 @@
 | `guard-git.sh` | `git reset --hard` | 無条件ブロック |
 | `guard-git.sh` | `git clean -f` | 無条件ブロック |
 | `guard-git.sh` | `git branch -D` | `main` / `develop` / `release/*` が対象の場合ブロック |
-| `guard-git.sh` | ブランチ作成 | `feature/` `fix/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス |
+| `guard-git.sh` | ブランチ作成 | `feature/` `fix/` `refactor/` `release/` `hotfix/` `docs/` `chore/` 以外のプレフィックス |
 | `guard-files.sh` | Edit / Write | `project.pbxproj` の直接編集（Xcode で行うこと） |
 | `guard-files.sh` | Edit / Write | `.xcdatamodeld/` 配下の直接編集（Xcode + マイグレーション手順） |
 | `guard-files.sh` | Edit / Write | `.env` / `.p8` / `secrets/` / `private/` への書き込み |
@@ -72,13 +72,14 @@ main       本番リリース済み。gh release create でタグ・GitHub Relea
 develop    次リリースの統合ブランチ。常に動作する状態を保つ
 feature/*  1 機能 1 ブランチ。develop から分岐し develop へ PR
 fix/*      バグ修正。develop から分岐し develop へ PR
+refactor/* 挙動変更なしのコード構造改善。develop から分岐し develop へ PR
 release/*  App Store 提出前の最終調整のみ。機能追加禁止
 hotfix/*   本番緊急修正。main から分岐し main と develop 両方へマージ
 docs/*     ドキュメント更新
 chore/*    ビルド設定・依存関係等
 ```
 
-- **ブランチ名プレフィックスは上記 6 種のみ許可。** 規定外（`claude/` 等）は `/branch` スキルで**即座にリネーム**する
+- **ブランチ名プレフィックスは上記 7 種のみ許可。** 規定外（`claude/` 等）は `/branch` スキルで**即座にリネーム**する
 - **main・develop への直接 push・commit は絶対禁止。** `.claude/hooks/guard-git.sh` が自動ブロック（exit 2）する
 - **PR は機能単位でまとめる。** 無関係な変更を混在させない
 - **本プロジェクトで使う skill は 5 個のみ**: `/branch`・`/translate`（hook 強制）、`asc-shots-pipeline`・`asc-whats-new-writer`・`asc-release-flow`（リリース手順）

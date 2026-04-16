@@ -128,7 +128,7 @@ if echo "$COMMAND" | grep -qE "git (checkout -b|switch -c)"; then
   NEW_BRANCH=$(echo "$COMMAND" | grep -oE "\-(b|c)\s+\S+" | awk '{print $NF}' | head -1)
   if [ -n "$NEW_BRANCH" ]; then
     VALID=false
-    for p in feature fix release hotfix docs chore; do
+    for p in feature fix refactor release hotfix docs chore; do
       if echo "$NEW_BRANCH" | grep -q "^${p}/"; then
         VALID=true
         break
@@ -136,7 +136,7 @@ if echo "$COMMAND" | grep -qE "git (checkout -b|switch -c)"; then
     done
     if [ "$VALID" = false ]; then
       echo "❌ BLOCKED: ブランチ名 '$NEW_BRANCH' は規定外プレフィックスです。" >&2
-      echo "  使用可能: feature/ fix/ release/ hotfix/ docs/ chore/" >&2
+      echo "  使用可能: feature/ fix/ refactor/ release/ hotfix/ docs/ chore/" >&2
       echo "  → /branch を実行して正しいブランチ名を生成してください。" >&2
       exit 2
     fi

@@ -14,7 +14,7 @@ struct RecognizedLine {
 }
 
 // Vision Framework を使って名刺画像からテキストを抽出するサービス
-class OCRService {
+actor OCRService {
 
     private static let ciContext = CIContext()
 

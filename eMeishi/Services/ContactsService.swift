@@ -3,7 +3,7 @@ import Contacts
 import os
 
 // iPhoneの連絡先との連携サービス
-class ContactsService {
+actor ContactsService {
 
     static let shared = ContactsService()
 
