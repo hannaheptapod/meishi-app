@@ -4,7 +4,8 @@
       "id" : "B2C3D4E5-F6A7-8B9C-0D1E-2F3A4B5C6D7E",
       "name" : "Configuration 1",
       "options" : {
-
+        "maximumTestExecutionTimeAllowance" : 60,
+        "testExecutionOrdering" : "random"
       }
     }
   ],
@@ -17,6 +18,7 @@
   },
   "testTargets" : [
     {
+      "parallelizable" : true,
       "skippedTests" : [
         "CloudKitModelUploadTests"
       ],
