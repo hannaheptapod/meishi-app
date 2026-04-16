@@ -92,7 +92,7 @@ struct CardAvatarView: View {
 }
 
 #if DEBUG
-#Preview("CardAvatarView パターン") {
+#Preview("CardAvatarView パターン") { @MainActor in
     let context = PersistenceController.preview.container.viewContext
 
     func makeCard(last: String?, first: String?, company: String?) -> BusinessCard {

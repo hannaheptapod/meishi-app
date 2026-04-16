@@ -49,9 +49,10 @@ class LocalLLMService: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var isInferencing:    Bool = false
 
-    private(set) var embedModel:  MLModel? = nil
-    private(set) var ffnModel:    MLModel? = nil
-    private(set) var lmheadModel: MLModel? = nil
+    // MLModel は non-Sendable。@MainActor 内でのみアクセスするが Swift の sending 検査を回避するため unsafe
+    nonisolated(unsafe) private(set) var embedModel:  MLModel? = nil
+    nonisolated(unsafe) private(set) var ffnModel:    MLModel? = nil
+    nonisolated(unsafe) private(set) var lmheadModel: MLModel? = nil
     private(set) var tokenizer:   Qwen25Tokenizer? = nil
     private var ffnState: MLState? = nil  // iOS 18+ stateful KV cache
 
