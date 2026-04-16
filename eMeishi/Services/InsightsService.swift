@@ -34,9 +34,10 @@ class InsightsService {
 
     // MARK: - 公開API
 
-    func generateInsights(context: NSManagedObjectContext) -> Insights {
+    func generateInsights(context: NSManagedObjectContext? = nil) -> Insights {
         var insights = Insights()
 
+        let context = context ?? PersistenceController.shared.container.viewContext
         let request = BusinessCard.fetchRequest()
         guard let cards = try? context.fetch(request) else { return insights }
 

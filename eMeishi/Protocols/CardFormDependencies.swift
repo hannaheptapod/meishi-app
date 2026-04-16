@@ -34,7 +34,7 @@ extension LocalLLMService: LocalLLMServiceProtocol {}
 // MARK: - AutoTag
 
 protocol AutoTagServiceProtocol {
-    func suggestTags(cardInfo: AutoTagService.CardInfo, tags: [Tag]) async -> [UUID]
+    func suggestTags(cardInfo: AutoTagService.CardInfo, tags: [AutoTagService.TagInfo]) async -> [UUID]
 }
 
 extension AutoTagService: AutoTagServiceProtocol {}

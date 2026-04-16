@@ -233,10 +233,13 @@ class CardFormViewModel: ObservableObject {
         Task { @MainActor in
             defer { isLoadingTagSuggestions = false }
 
-            let tags = fetchAllTags()
-            guard !tags.isEmpty else { return }
+            let tagInfos = fetchAllTags().compactMap { tag -> AutoTagService.TagInfo? in
+                guard let id = tag.id, let name = tag.name else { return nil }
+                return AutoTagService.TagInfo(id: id, name: name)
+            }
+            guard !tagInfos.isEmpty else { return }
 
-            let suggested = await autoTagService.suggestTags(cardInfo: cardInfo, tags: tags)
+            let suggested = await autoTagService.suggestTags(cardInfo: cardInfo, tags: tagInfos)
             suggestedTagIDs = Set(suggested)
         }
     }

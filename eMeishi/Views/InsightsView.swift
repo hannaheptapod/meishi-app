@@ -5,7 +5,6 @@ import SwiftUI
 struct InsightsView: View {
 
     @State private var insights: InsightsService.Insights?
-    @Environment(\.managedObjectContext) private var context
 
     var body: some View {
         List {
@@ -92,7 +91,7 @@ struct InsightsView: View {
         .navigationTitle("インサイト")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            insights = InsightsService.shared.generateInsights(context: context)
+            insights = InsightsService.shared.generateInsights()
         }
     }
 

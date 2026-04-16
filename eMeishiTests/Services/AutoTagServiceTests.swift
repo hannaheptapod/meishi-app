@@ -1,5 +1,5 @@
 import Testing
-import CoreData
+import Foundation
 @testable import eMeishi
 
 // MARK: - AutoTagService テスト（AI エンジン選択・ガード条件）
@@ -29,14 +29,11 @@ struct AutoTagServiceTests {
         SettingsStore.shared.readingMethod = .localLLM
         defer { SettingsStore.shared.readingMethod = original }
 
-        let ctx = makeTestContext()
-        let tag = eMeishi.Tag(context: ctx)
-        tag.id   = UUID()
-        tag.name = "IT"
+        let tagInfo = AutoTagService.TagInfo(id: UUID(), name: "IT")
 
         let result = await AutoTagService.shared.suggestTags(
             cardInfo: AutoTagService.CardInfo(company: "テック株式会社"),
-            tags: [tag]
+            tags: [tagInfo]
         )
         #expect(result.isEmpty)
     }
