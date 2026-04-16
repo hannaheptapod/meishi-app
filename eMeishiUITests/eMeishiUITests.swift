@@ -183,7 +183,8 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testLongPressShowsContextMenu() throws {
-        let card = cardRow("山田 太郎")
+        // 非お気に入りの山田花子を使用（山田太郎はpreviewデータでisFavorite=true）
+        let card = cardRow("山田 花子")
         showContextMenu(for: card)
 
         // コンテキストメニューの項目が表示される
@@ -196,7 +197,8 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testContextMenuFavoriteToggle() throws {
-        let card = cardRow("山田 太郎")
+        // 非お気に入り→お気に入りへのトグルを検証するので、初期状態が非お気に入りのカードを使う
+        let card = cardRow("山田 花子")
         showContextMenu(for: card)
 
         // お気に入りに追加
