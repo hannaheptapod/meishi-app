@@ -77,9 +77,8 @@ class AutoTagService {
         }.joined(separator: "\n")
 
         let instructions = """
-            名刺情報に該当するタグの番号のみ出力せよ。
-            会社名・部署・役職・業種からタグの意味に直接合致するもののみ選べ。
-            曖昧なものは除外。出力: 番号のみカンマ区切り。該当なしは none。
+            名刺情報の内容からタグの意味に合致するものの番号のみ出力せよ。
+            明確に合致するもののみ選べ。曖昧なものは除外。出力: 番号のみカンマ区切り。該当なしは none。
             """
         let session = LanguageModelSession(instructions: instructions)
         let options = GenerationOptions(temperature: 0)
@@ -138,12 +137,12 @@ class AutoTagService {
     /// カード情報を1行のサマリに変換
     private func buildCardSummary(_ info: CardInfo) -> String {
         var parts: [String] = []
-        if !info.company.isEmpty    { parts.append("company=\(info.company)") }
-        if !info.department.isEmpty { parts.append("department=\(info.department)") }
-        if !info.title.isEmpty      { parts.append("title=\(info.title)") }
-        if !info.address.isEmpty    { parts.append("address=\(info.address)") }
-        if !info.email.isEmpty      { parts.append("email=\(info.email)") }
-        return parts.joined(separator: " ")
+        if !info.company.isEmpty    { parts.append("会社: \(info.company)") }
+        if !info.department.isEmpty { parts.append("部署: \(info.department)") }
+        if !info.title.isEmpty      { parts.append("役職: \(info.title)") }
+        if !info.address.isEmpty    { parts.append("住所: \(info.address)") }
+        if !info.email.isEmpty      { parts.append("メール: \(info.email)") }
+        return parts.joined(separator: " / ")
     }
 
     /// 1タグ1回の forward pass で yes/no 分類（Qwen）

@@ -286,9 +286,10 @@ struct CardFormView: View {
                                     }
                                 } label: {
                                     HStack(spacing: 4) {
-                                        Image(systemName: "checkmark")
-                                            .font(.caption2)
-                                            .opacity(selected ? 1 : 0)
+                                        if selected {
+                                            Image(systemName: "checkmark")
+                                                .font(.caption2)
+                                        }
                                         Circle()
                                             .fill(tag.color)
                                             .frame(width: 8, height: 8)
