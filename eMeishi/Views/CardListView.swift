@@ -227,7 +227,7 @@ struct CardListView: View {
             Menu {
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
-                        DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: {
+                        DuplicateListView(pairs: $viewModel.duplicatePairs, onMerge: {
                             viewModel.fetchCards()
                             viewModel.detectDuplicates()
                         })
