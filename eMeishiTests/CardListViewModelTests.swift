@@ -1,0 +1,456 @@
+import Testing
+import CoreData
+@testable import eMeishi
+
+// Swift Testing の Tag と CoreData の Tag エンティティが衝突するため別名を用意
+private typealias CardTag = eMeishi.Tag
+
+// MARK: - テスト用ヘルパー
+
+/// テスト用インメモリ CoreData コンテキストを生成する
+@MainActor
+private func makeTestContext() -> NSManagedObjectContext {
+    PersistenceController(inMemory: true).container.viewContext
+}
+
+/// テスト用 BusinessCard を生成する
+@MainActor
+private func makeCard(
+    context: NSManagedObjectContext,
+    lastName: String? = nil,
+    lastNameReading: String? = nil,
+    firstName: String? = nil,
+    company: String? = nil,
+    title: String? = nil,
+    email: String? = nil,
+    phone: String? = nil,
+    address: String? = nil,
+    isFavorite: Bool = false,
+    createdAt: Date = Date()
+) -> BusinessCard {
+    let card = BusinessCard(context: context)
+    card.id               = UUID()
+    card.lastName         = lastName
+    card.lastNameReading  = lastNameReading
+    card.firstName        = firstName
+    card.company          = company
+    card.title            = title
+    card.email            = email
+    card.phone            = phone
+    card.address          = address
+    card.isFavorite       = isFavorite
+    card.createdAt        = createdAt
+    card.updatedAt        = createdAt
+    return card
+}
+
+/// テスト用 Tag を生成する
+@MainActor
+private func makeTag(context: NSManagedObjectContext, name: String, colorHex: String = "#FF0000") -> CardTag {
+    let tag = CardTag(context: context)
+    tag.id = UUID()
+    tag.name = name
+    tag.colorHex = colorHex
+    tag.createdAt = Date()
+    return tag
+}
+
+// MARK: - 検索フィルタ
+
+@MainActor
+struct CardListViewModelSearchTests {
+
+    @Test func searchByFullName() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        _ = makeCard(context: context, lastName: "佐藤", firstName: "花子")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "山田"
+        #expect(vm.filteredCards.count == 1)
+        #expect(vm.filteredCards.first?.lastName == "山田")
+    }
+
+    @Test func searchByCompany() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田", company: "アルファテック")
+        _ = makeCard(context: context, lastName: "佐藤", company: "ベータシステムズ")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "ベータ"
+        #expect(vm.filteredCards.count == 1)
+        #expect(vm.filteredCards.first?.company == "ベータシステムズ")
+    }
+
+    @Test func searchByEmail() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田", email: "taro@example.com")
+        _ = makeCard(context: context, lastName: "佐藤", email: "hanako@test.jp")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "example.com"
+        #expect(vm.filteredCards.count == 1)
+    }
+
+    @Test func searchIsCaseAndDiacriticInsensitive() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "YAMADA", company: "Café Company")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "cafe"
+        #expect(vm.filteredCards.count == 1)
+    }
+
+    @Test func emptySearchReturnsAllCards() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        _ = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = ""
+        #expect(vm.filteredCards.count == 2)
+    }
+
+    @Test func whitespaceOnlySearchReturnsAllCards() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        _ = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "   "
+        #expect(vm.filteredCards.count == 2)
+        #expect(vm.isSearchActive == false)
+    }
+
+    @Test func isSearchActiveReflectsTrimmedText() throws {
+        let context = makeTestContext()
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "山田"
+        #expect(vm.isSearchActive == true)
+        vm.searchText = ""
+        #expect(vm.isSearchActive == false)
+    }
+}
+
+// MARK: - お気に入り・タグフィルタ
+
+@MainActor
+struct CardListViewModelFilterTests {
+
+    @Test func favoritesOnlyFilter() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田", isFavorite: true)
+        _ = makeCard(context: context, lastName: "佐藤", isFavorite: false)
+        _ = makeCard(context: context, lastName: "鈴木", isFavorite: true)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleFavoritesFilter()
+        #expect(vm.showFavoritesOnly == true)
+        #expect(vm.filteredCards.count == 2)
+        #expect(vm.filteredCards.allSatisfy { $0.isFavorite })
+    }
+
+    @Test func tagFilterRequiresAllSelectedTags() throws {
+        let context = makeTestContext()
+        let tagA = makeTag(context: context, name: "重要")
+        let tagB = makeTag(context: context, name: "営業")
+
+        let card1 = makeCard(context: context, lastName: "山田")
+        card1.addToTags(tagA)
+
+        let card2 = makeCard(context: context, lastName: "佐藤")
+        card2.addToTags(tagA)
+        card2.addToTags(tagB)
+
+        let card3 = makeCard(context: context, lastName: "鈴木")
+        card3.addToTags(tagB)
+
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleTagFilter(tagA)
+        vm.toggleTagFilter(tagB)
+        // 両方のタグを持つカードのみ
+        #expect(vm.filteredCards.count == 1)
+        #expect(vm.filteredCards.first?.lastName == "佐藤")
+    }
+
+    @Test func toggleTagFilterRemovesOnSecondCall() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        #expect(vm.selectedTagIDs.isEmpty)
+
+        vm.toggleTagFilter(tag)
+        #expect(vm.selectedTagIDs.contains(tag.id!))
+
+        vm.toggleTagFilter(tag)
+        #expect(vm.selectedTagIDs.isEmpty)
+    }
+
+    @Test func favoriteAndTagFiltersCombine() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+
+        let card1 = makeCard(context: context, lastName: "山田", isFavorite: true)
+        card1.addToTags(tag)
+
+        let card2 = makeCard(context: context, lastName: "佐藤", isFavorite: false)
+        card2.addToTags(tag)
+
+        let card3 = makeCard(context: context, lastName: "鈴木", isFavorite: true)
+        // タグなし
+
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleFavoritesFilter()
+        vm.toggleTagFilter(tag)
+        // お気に入り AND タグ「重要」
+        #expect(vm.filteredCards.count == 1)
+        #expect(vm.filteredCards.first?.lastName == "山田")
+    }
+
+    @Test func isFilterActiveReflectsState() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "T")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        #expect(vm.isFilterActive == false)
+        vm.toggleFavoritesFilter()
+        #expect(vm.isFilterActive == true)
+        vm.toggleFavoritesFilter()
+        #expect(vm.isFilterActive == false)
+        vm.toggleTagFilter(tag)
+        #expect(vm.isFilterActive == true)
+    }
+}
+
+// MARK: - ソート
+
+@MainActor
+struct CardListViewModelSortTests {
+
+    @Test func toggleSortSameKeyReversesDirection() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.sortKey = .createdAt
+        vm.sortAscending = false
+
+        vm.toggleSort(key: .createdAt)
+        #expect(vm.sortAscending == true)
+
+        vm.toggleSort(key: .createdAt)
+        #expect(vm.sortAscending == false)
+    }
+
+    @Test func toggleSortNewKeyUsesSensibleDefault() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+
+        // 名前に切り替えたら昇順がデフォルト
+        vm.toggleSort(key: .name)
+        #expect(vm.sortKey == .name)
+        #expect(vm.sortAscending == true)
+
+        // 登録日時に切り替えたら降順（新しい順）がデフォルト
+        vm.toggleSort(key: .createdAt)
+        #expect(vm.sortKey == .createdAt)
+        #expect(vm.sortAscending == false)
+    }
+
+    @Test func createdAtSortRespectsAscendingFlag() throws {
+        let context = makeTestContext()
+        let old = makeCard(context: context, lastName: "古い",
+                           createdAt: Date(timeIntervalSinceReferenceDate: 0))
+        let new = makeCard(context: context, lastName: "新しい",
+                           createdAt: Date(timeIntervalSinceReferenceDate: 10_000_000))
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.sortKey = .createdAt
+        vm.sortAscending = false
+        vm.fetchCards()
+        #expect(vm.cards.first?.id == new.id)
+
+        vm.sortAscending = true
+        vm.fetchCards()
+        #expect(vm.cards.first?.id == old.id)
+    }
+
+    @Test func nameSortUsesReadingWhenAvailable() throws {
+        let context = makeTestContext()
+        // ふりがなで比較した場合: あ(aさとう) < い(いとう) < や(やまだ)
+        // 漢字コードポイント順とは結果が異なることを確認
+        _ = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ")
+        _ = makeCard(context: context, lastName: "伊藤", lastNameReading: "いとう")
+        _ = makeCard(context: context, lastName: "佐藤", lastNameReading: "さとう")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.sortKey = .name
+        vm.sortAscending = true
+        vm.fetchCards()
+        let names = vm.cards.compactMap { $0.lastNameReading }
+        #expect(names == ["いとう", "さとう", "やまだ"])
+    }
+}
+
+// MARK: - 一括操作・選択
+
+@MainActor
+struct CardListViewModelBulkOperationTests {
+
+    @Test func selectedCardsReturnsMatchingIds() throws {
+        let context = makeTestContext()
+        let a = makeCard(context: context, lastName: "山田")
+        let b = makeCard(context: context, lastName: "佐藤")
+        _ = makeCard(context: context, lastName: "鈴木")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        let selected = vm.selectedCards(from: [a.id, b.id])
+        #expect(selected.count == 2)
+        #expect(selected.map(\.id).contains(a.id))
+        #expect(selected.map(\.id).contains(b.id))
+    }
+
+    @Test func toggleBulkFavoriteTurnsAllOn() throws {
+        let context = makeTestContext()
+        let a = makeCard(context: context, lastName: "山田", isFavorite: false)
+        let b = makeCard(context: context, lastName: "佐藤", isFavorite: false)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleBulkFavorite(ids: [a.id, b.id])
+        #expect(a.isFavorite == true)
+        #expect(b.isFavorite == true)
+    }
+
+    @Test func toggleBulkFavoriteTurnsAllOffWhenAllOn() throws {
+        let context = makeTestContext()
+        let a = makeCard(context: context, lastName: "山田", isFavorite: true)
+        let b = makeCard(context: context, lastName: "佐藤", isFavorite: true)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleBulkFavorite(ids: [a.id, b.id])
+        #expect(a.isFavorite == false)
+        #expect(b.isFavorite == false)
+    }
+
+    @Test func addTagToCardsAppliesToAll() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+        let a = makeCard(context: context, lastName: "山田")
+        let b = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.addTagToCards(tag: tag, ids: [a.id, b.id])
+
+        let aTags = (a.tags as? Set<CardTag>) ?? []
+        let bTags = (b.tags as? Set<CardTag>) ?? []
+        #expect(aTags.contains(tag))
+        #expect(bTags.contains(tag))
+    }
+
+    @Test func removeTagFromCardsRemovesFromAll() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+        let a = makeCard(context: context, lastName: "山田")
+        a.addToTags(tag)
+        let b = makeCard(context: context, lastName: "佐藤")
+        b.addToTags(tag)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.removeTagFromCards(tag: tag, ids: [a.id, b.id])
+
+        let aTags = (a.tags as? Set<CardTag>) ?? []
+        let bTags = (b.tags as? Set<CardTag>) ?? []
+        #expect(!aTags.contains(tag))
+        #expect(!bTags.contains(tag))
+    }
+
+    @Test func deleteCardsRemovesFromContext() throws {
+        let context = makeTestContext()
+        let a = makeCard(context: context, lastName: "山田")
+        let b = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.deleteCards([a])
+
+        #expect(vm.cards.count == 1)
+        #expect(vm.cards.first?.id == b.id)
+    }
+
+    @Test func deleteAllCardsEmptiesList() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        _ = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.deleteAllCards()
+
+        #expect(vm.cards.isEmpty)
+    }
+}
+
+// MARK: - タグ管理
+
+@MainActor
+struct CardListViewModelTagTests {
+
+    @Test func createTagAppendsToList() throws {
+        let context = makeTestContext()
+        let vm = CardListViewModel(context: context)
+        let before = vm.allTags.count
+
+        vm.createTag(name: "新規タグ", colorHex: "#00FF00")
+        #expect(vm.allTags.count == before + 1)
+        #expect(vm.allTags.contains { $0.name == "新規タグ" })
+    }
+
+    @Test func deleteTagRemovesFromList() throws {
+        let context = makeTestContext()
+        let vm = CardListViewModel(context: context)
+        vm.createTag(name: "消すタグ", colorHex: "#FF0000")
+        let tag = try #require(vm.allTags.first { $0.name == "消すタグ" })
+
+        vm.deleteTag(tag)
+        #expect(!vm.allTags.contains { $0.name == "消すタグ" })
+    }
+
+    @Test func toggleTagOnCardTogglesMembership() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+        let card = makeCard(context: context, lastName: "山田")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.toggleTag(tag, on: card)
+        #expect(((card.tags as? Set<CardTag>) ?? []).contains(tag))
+
+        vm.toggleTag(tag, on: card)
+        #expect(!((card.tags as? Set<CardTag>) ?? []).contains(tag))
+    }
+}

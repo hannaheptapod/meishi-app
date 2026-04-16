@@ -40,10 +40,8 @@ final class ScreenshotRunnerTests: XCTestCase {
     }
 
     /// アプリの状態が落ち着くのを待つ（シート展開・onAppear 完了など）
-    private func waitForUI(_ seconds: TimeInterval = 2.0) {
-        let exp = expectation(description: "wait \(seconds)s")
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exp.fulfill() }
-        wait(for: [exp], timeout: seconds + 1)
+    private func waitForUI(_ seconds: TimeInterval = 2.0) async {
+        try? await Task.sleep(for: .seconds(seconds))
     }
 
     /// アプリ全体のスクリーンショットを XCTAttachment として保存
@@ -58,57 +56,57 @@ final class ScreenshotRunnerTests: XCTestCase {
     // MARK: - 撮影テスト
 
     @MainActor
-    func test01_FormOCR() throws {
+    func test01_FormOCR() async throws {
         launchApp(startScreen: "FormOCR")
         // CardFormView シートのナビゲーションタイトル「名刺を追加」が表示されるまで待つ
         let title = app.navigationBars["名刺を追加"]
         XCTAssertTrue(title.waitForExistence(timeout: 8))
-        waitForUI(1.5)
+        await waitForUI(1.5)
         saveScreenshot(named: "01_form_ocr")
     }
 
     @MainActor
-    func test02_CardList() throws {
+    func test02_CardList() async throws {
         launchApp(startScreen: "List")
         XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 8))
-        waitForUI(1.0)
+        await waitForUI(1.0)
         saveScreenshot(named: "02_card_list")
     }
 
     @MainActor
-    func test03_AIChat() throws {
+    func test03_AIChat() async throws {
         launchApp(startScreen: "AIChat")
         let chatTitle = app.navigationBars["AI検索"]
         XCTAssertTrue(chatTitle.waitForExistence(timeout: 8))
-        waitForUI(1.5)
+        await waitForUI(1.5)
         saveScreenshot(named: "03_ai_chat")
     }
 
     @MainActor
-    func test04_Insights() throws {
+    func test04_Insights() async throws {
         launchApp(startScreen: "Insights")
         let insightsTitle = app.navigationBars["インサイト"]
         XCTAssertTrue(insightsTitle.waitForExistence(timeout: 8))
         // 集計完了（バーが描画される）まで少し待つ
-        waitForUI(2.0)
+        await waitForUI(2.0)
         saveScreenshot(named: "04_insights")
     }
 
     @MainActor
-    func test05_Duplicate() throws {
+    func test05_Duplicate() async throws {
         launchApp(startScreen: "Duplicate")
         let dupTitle = app.navigationBars["重複チェック"]
         XCTAssertTrue(dupTitle.waitForExistence(timeout: 8))
-        waitForUI(1.5)
+        await waitForUI(1.5)
         saveScreenshot(named: "05_duplicate")
     }
 
     @MainActor
-    func test06_TagManagement() throws {
+    func test06_TagManagement() async throws {
         launchApp(startScreen: "Tags")
         let tagsTitle = app.navigationBars["タグ管理"]
         XCTAssertTrue(tagsTitle.waitForExistence(timeout: 8))
-        waitForUI(1.0)
+        await waitForUI(1.0)
         saveScreenshot(named: "06_tags")
     }
 }

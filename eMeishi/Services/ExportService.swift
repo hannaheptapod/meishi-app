@@ -47,6 +47,11 @@ class ExportService {
         return url
     }
 
+    // ISO8601DateFormatter は並列呼び出しごとに生成すると ICU 内部の初期化が
+    // 競合してヒープ破壊を起こすため、static で一度だけ生成して共有する。
+    // ICU は内部 mutex で string(from:) の並列実行を保護しているため安全。
+    private static let iso8601Formatter = ISO8601DateFormatter()
+
     private func csvRow(from card: BusinessCard) -> String {
         let fields: [String?] = [
             card.lastName,
@@ -59,7 +64,7 @@ class ExportService {
             card.address,
             card.website,
             card.notes,
-            card.createdAt.map { ISO8601DateFormatter().string(from: $0) }
+            card.createdAt.map { Self.iso8601Formatter.string(from: $0) }
         ]
         return fields
             .map { escapeCsv($0 ?? "") }
