@@ -396,10 +396,11 @@ class CardListViewModel: ObservableObject {
     }
 
     private func performExport(_ cards: [BusinessCard], label: String,
-                               export: ([BusinessCard]) throws -> URL) {
+                               export: ([CardExportDTO]) throws -> URL) {
         guard !cards.isEmpty else { return }
+        let dtos = cards.map { $0.toExportDTO() }
         do {
-            exportItem = ExportItem(url: try export(cards))
+            exportItem = ExportItem(url: try export(dtos))
         } catch {
             errorMessage = "\(label)に失敗しました: \(error.localizedDescription)"
         }
@@ -413,9 +414,10 @@ class CardListViewModel: ObservableObject {
     }
 
     func saveToContacts(card: BusinessCard) {
+        let dto = card.toExportDTO()
         Task { @MainActor in
             do {
-                try await ContactsService.shared.export(card: card)
+                try await ContactsService.shared.export(card: dto)
             } catch {
                 errorMessage = error.localizedDescription
             }

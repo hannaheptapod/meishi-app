@@ -35,11 +35,11 @@ struct DuplicateCheckerAITests {
         let checker = DuplicateChecker(threshold: 0.75)
 
         let ai  = await checker.findDuplicatesWithAI(in: [a, b])
-        let aID = a.objectID
-        let bID = b.objectID
+        let aURI = a.objectID.uriRepresentation().absoluteString
+        let bURI = b.objectID.uriRepresentation().absoluteString
         #expect(ai.contains { pair in
-            (pair.cardA.objectID == aID && pair.cardB.objectID == bID) ||
-            (pair.cardA.objectID == bID && pair.cardB.objectID == aID)
+            (pair.cardAIDURI == aURI && pair.cardBIDURI == bURI) ||
+            (pair.cardAIDURI == bURI && pair.cardBIDURI == aURI)
         })
     }
 

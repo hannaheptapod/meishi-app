@@ -48,6 +48,43 @@ func makeCard(
     return card
 }
 
+/// テスト用 CardExportDTO を生成する（CoreData 不要・ExportService 系テスト用）
+func makeDTO(
+    lastName: String? = nil,
+    firstName: String? = nil,
+    company: String? = nil,
+    department: String? = nil,
+    title: String? = nil,
+    email: String? = nil,
+    phone: String? = nil,
+    address: String? = nil,
+    website: String? = nil,
+    notes: String? = nil,
+    imageData: Data? = nil,
+    createdAt: Date? = nil
+) -> CardExportDTO {
+    let phoneList: [String] = {
+        guard let phone, !phone.isEmpty else { return [] }
+        return phone.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }()
+    return CardExportDTO(
+        lastName: lastName,
+        firstName: firstName,
+        company: company,
+        department: department,
+        title: title,
+        phoneList: phoneList,
+        email: email,
+        address: address,
+        website: website,
+        notes: notes,
+        imageData: imageData,
+        createdAt: createdAt
+    )
+}
+
 /// テスト用 RecognizedLine を生成する（midX/midY で中心位置を指定）
 func makeLine(
     _ text: String,

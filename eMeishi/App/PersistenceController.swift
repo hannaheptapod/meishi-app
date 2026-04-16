@@ -255,3 +255,18 @@ struct PersistenceController {
         UserDefaults.standard.set(true, forKey: key)
     }
 }
+
+// MARK: - URI 文字列から BusinessCard を解決するヘルパー
+// DuplicatePair の Sendable 化に伴い、View 側で URI 文字列から BusinessCard を
+// 復元する必要が生じたため、PersistentStoreCoordinator 経由の解決を集約する。
+
+extension NSManagedObjectContext {
+    /// `NSManagedObjectID.uriRepresentation().absoluteString` から BusinessCard を解決する。
+    /// 削除済み・URI 不正・別エンティティの場合は nil を返す。
+    func businessCard(forURIString uri: String) -> BusinessCard? {
+        guard let url = URL(string: uri),
+              let id = persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url)
+        else { return nil }
+        return try? existingObject(with: id) as? BusinessCard
+    }
+}
