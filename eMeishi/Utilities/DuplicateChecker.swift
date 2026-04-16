@@ -1,4 +1,5 @@
 import Foundation
+import CoreData
 import CoreML
 
 // 名前・会社名の類似度判定により重複候補を検出するユーティリティ
