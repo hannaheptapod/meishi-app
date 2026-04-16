@@ -26,7 +26,7 @@ class AutoTagService {
     ///   - cardInfo: 名刺のフィールド情報（会社・部署・役職など）
     ///   - tags: 既存タグ一覧
     /// - Returns: 該当すると判定されたタグのID一覧
-    func suggestTags(cardInfo: CardInfo, tags: [Tag]) async -> [UUID] {
+    func suggestTags(cardInfo: CardInfo, tags: [TagInfo]) async -> [UUID] {
         guard !tags.isEmpty else { return [] }
         // タグが多すぎる場合は最初の20個に制限（レイテンシ対策）
         let targetTags = Array(tags.prefix(20))
@@ -56,6 +56,14 @@ class AutoTagService {
         }
     }
 
+    // MARK: - Sendable DTO
+
+    /// NSManagedObject（Tag）の代わりにアクター境界を安全に越えられる Sendable 型
+    struct TagInfo: Sendable {
+        let id: UUID
+        let name: String
+    }
+
     // MARK: - カード情報構造体
 
     struct CardInfo {
@@ -71,10 +79,10 @@ class AutoTagService {
 
     #if canImport(FoundationModels)
     @available(iOS 26.0, *)
-    private func suggestTagsWithFoundationModels(cardSummary: String, tags: [Tag]) async -> [UUID] {
+    private func suggestTagsWithFoundationModels(cardSummary: String, tags: [TagInfo]) async -> [UUID] {
         let tagList = tags.enumerated().compactMap { (i, tag) -> String? in
-            guard let name = tag.name, !name.isEmpty else { return nil }
-            return "\(i): \(name)"
+            guard !tag.name.isEmpty else { return nil }
+            return "\(i): \(tag.name)"
         }.joined(separator: "\n")
 
         let instructions = """
@@ -100,8 +108,8 @@ class AutoTagService {
             var seen = Set<UUID>()
             for num in numbers {
                 guard num >= 0 && num < tags.count,
-                      let tagID = tags[num].id,
-                      !seen.contains(tagID) else { continue }
+                      !seen.contains(tags[num].id) else { continue }
+                let tagID = tags[num].id
                 seen.insert(tagID)
                 result.append(tagID)
             }
@@ -115,20 +123,20 @@ class AutoTagService {
 
     // MARK: - Qwen（タグ1件ずつ yes/no 判定・非対応端末フォールバック）
 
-    private func suggestTagsWithQwen(cardSummary: String, tags: [Tag]) async -> [UUID] {
+    private func suggestTagsWithQwen(cardSummary: String, tags: [TagInfo]) async -> [UUID] {
         let llm = LocalLLMService.shared
         guard let models = llm.ensureModelLoaded() else { return [] }
 
         var suggestedIDs: [UUID] = []
         for tag in tags {
-            guard let tagID = tag.id, let tagName = tag.name, !tagName.isEmpty else { continue }
+            guard !tag.name.isEmpty else { continue }
             let matches = await classifyTagMatchWithQwen(
-                tagName: tagName,
+                tagName: tag.name,
                 cardSummary: cardSummary,
                 prefill: models.prefill,
                 tokenizer: models.tokenizer
             )
-            if matches { suggestedIDs.append(tagID) }
+            if matches { suggestedIDs.append(tag.id) }
         }
         return suggestedIDs
     }

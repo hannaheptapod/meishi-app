@@ -191,7 +191,7 @@ struct PersistenceController {
             forName: .CKAccountChanged,
             object: nil,
             queue: .main
-        ) { _ in
+        ) { @Sendable _ in
             AppLogger.persistence.info("iCloud アカウント状態が変化しました — 次回起動時に同期状態を再確認します")
             // accountStatus を再確認してフラグを更新
             Self.verifyCloudKitContainer()
@@ -203,7 +203,7 @@ struct PersistenceController {
                 forName: NSPersistentCloudKitContainer.eventChangedNotification,
                 object: container,
                 queue: .main
-            ) { notification in
+            ) { @Sendable notification in
                 guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
                         as? NSPersistentCloudKitContainer.Event,
                       let error = event.error else { return }

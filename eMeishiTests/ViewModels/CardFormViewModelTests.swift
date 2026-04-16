@@ -46,7 +46,7 @@ private final class MockLLMService: LocalLLMServiceProtocol {
 /// 固定 UUID リストを返す AutoTag モック
 private final class MockAutoTagService: AutoTagServiceProtocol {
     var returnedIDs: [UUID] = []
-    func suggestTags(cardInfo: AutoTagService.CardInfo, tags: [eMeishi.Tag]) async -> [UUID] {
+    func suggestTags(cardInfo: AutoTagService.CardInfo, tags: [AutoTagService.TagInfo]) async -> [UUID] {
         returnedIDs
     }
 }
