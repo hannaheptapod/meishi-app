@@ -70,6 +70,7 @@ private func makeLine(
 
 // MARK: - BusinessCard 計算プロパティ テスト
 
+@MainActor
 struct BusinessCardPropertiesTests {
 
     let context = makeTestContext()
@@ -172,6 +173,7 @@ struct DuplicateCheckerSimilarityTests {
 
 // MARK: - DuplicateChecker 重複検出テスト
 
+@MainActor
 struct DuplicateCheckerFindTests {
 
     let context = makeTestContext()
@@ -256,6 +258,7 @@ struct DuplicateCheckerFindTests {
 
 // MARK: - ExportService CSV テスト
 
+@MainActor
 struct ExportServiceCSVTests {
 
     let service = ExportService()
@@ -337,6 +340,7 @@ struct ExportServiceCSVTests {
 
 // MARK: - ExportService vCard テスト
 
+@MainActor
 struct ExportServiceVCardTests {
 
     let service = ExportService()
@@ -996,6 +1000,7 @@ struct MergeLogicTests {
 
 // MARK: - 重複検出の法人格正規化テスト
 
+@MainActor
 struct DuplicateCheckerLegalEntityTests {
 
     @Test func duplicateDetectionNormalizesCompanySuffix() {
