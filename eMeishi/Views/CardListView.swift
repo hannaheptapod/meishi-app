@@ -245,6 +245,7 @@ struct CardListView: View {
                     Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
                 }
                 .disabled(viewModel.isImporting)
+                .accessibilityIdentifier("importFromContacts")
                 if !viewModel.cards.isEmpty {
                     Divider()
                     Button { viewModel.exportCSV() } label: {
@@ -258,6 +259,7 @@ struct CardListView: View {
                 Button { isShowingTagManager = true } label: {
                     Label("タグ管理", systemImage: "tag")
                 }
+                .accessibilityIdentifier("tagManager")
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
                         InsightsView()
@@ -269,6 +271,7 @@ struct CardListView: View {
                 Button { isShowingSettings = true } label: {
                     Label("設定", systemImage: "gearshape")
                 }
+                .accessibilityIdentifier("settingsMenu")
             } label: {
                 Label("メニュー", systemImage: "ellipsis")
             }
