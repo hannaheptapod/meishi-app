@@ -7,7 +7,10 @@ import CoreData
 // Foundation Models は実機 + Apple Intelligence 環境でしか動かないため、
 // テスト可能なのは「エンジン非依存のガード条件」と「Qwen モデル未ロード時の挙動」のみ。
 
+// SettingsStore.shared.readingMethod を書き換えるテストが含まれるため、
+// 並列実行時の干渉を防ぐために Suite 内を直列化する
 @MainActor
+@Suite(.serialized)
 struct AutoTagServiceTests {
 
     // タグが空の場合は AI 呼び出しなしに即 [] を返す（全 readingMethod 共通）
