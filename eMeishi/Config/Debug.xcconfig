@@ -9,3 +9,7 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
 
 // テスト可能性（Unit/UIテスト実行に必要）
 ENABLE_TESTABILITY = YES
+
+// Swift 6 移行: Strict Concurrency 警告を有効化（targeted = 自分のコードのみ検査）
+// complete に昇格後 SWIFT_VERSION = 6.0 に切替 → Issue #147 Phase 1
+SWIFT_STRICT_CONCURRENCY = targeted
