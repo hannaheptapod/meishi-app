@@ -29,6 +29,16 @@ final class EMeishiUITests: XCTestCase {
         app.sheets.count > 0
     }
 
+    /// SwiftUI Menu の項目を取得する（iOS 26 で menuItems として公開される場合がある）
+    private func menuItem(identifier: String) -> XCUIElement {
+        let asButton = app.buttons[identifier]
+        if asButton.exists { return asButton }
+        let asMenuItem = app.menuItems[identifier]
+        if asMenuItem.exists { return asMenuItem }
+        // どちらにも見つからない場合は descendants 全体から探す
+        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
     /// confirmationDialog を閉じる（iOS 26: キャンセルボタンが非表示のためシート外タップで閉じる）
     private func dismissConfirmationDialog() {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
@@ -287,13 +297,17 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testEllipsisMenuShowsOptions() throws {
         let ellipsisMenu = app.buttons["ellipsisMenu"]
-        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: 5))
+        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
         ellipsisMenu.tap()
 
         // メニュー項目が表示される
-        XCTAssertTrue(app.buttons["連絡先からインポート"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["タグ管理"].exists)
-        XCTAssertTrue(app.buttons["設定"].exists)
+        // iOS 26 の SwiftUI Menu では buttons / menuItems のどちらで公開されるか
+        // バージョンによって異なるため、accessibilityIdentifier を付与した上で両方を探す
+        XCTAssertTrue(
+            menuItem(identifier: "importFromContacts").waitForExistence(timeout: Self.defaultTimeout)
+        )
+        XCTAssertTrue(menuItem(identifier: "tagManager").exists)
+        XCTAssertTrue(menuItem(identifier: "settingsMenu").exists)
     }
 
     // MARK: - フィルタ時のカウント表示
