@@ -95,7 +95,8 @@ struct DuplicateChecker {
 
         guard !candidates.isEmpty else { return pairs }
 
-        switch SettingsStore.shared.readingMethod {
+        let readingMethod = await MainActor.run { SettingsStore.shared.readingMethod }
+        switch readingMethod {
         case .appleIntelligence:
             #if canImport(FoundationModels)
             if #available(iOS 26.0, *) {

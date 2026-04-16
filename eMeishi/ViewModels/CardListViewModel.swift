@@ -31,6 +31,7 @@ struct CardSection: Identifiable {
 }
 
 // 名刺一覧画面のViewModel
+@MainActor
 class CardListViewModel: ObservableObject {
 
     @Published var cards: [BusinessCard] = []
@@ -375,7 +376,7 @@ class CardListViewModel: ObservableObject {
         duplicatePairs = checker.findDuplicates(in: cards)
         // 非同期: AI二次判定でボーダーライン候補を追加
         let snapshot = cards
-        Task { @MainActor in
+        Task {
             let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
             // カードが差し替えられていたら反映しない
             guard snapshot.count == self.cards.count else { return }
@@ -415,7 +416,7 @@ class CardListViewModel: ObservableObject {
 
     func saveToContacts(card: BusinessCard) {
         let dto = card.toExportDTO()
-        Task { @MainActor in
+        Task {
             do {
                 try await ContactsService.shared.export(card: dto)
             } catch {
@@ -429,7 +430,7 @@ class CardListViewModel: ObservableObject {
     func importFromContacts() {
         guard !isImporting else { return }
         isImporting = true
-        Task { @MainActor in
+        Task {
             defer { isImporting = false }
             do {
                 let contacts = try await ContactsService.shared.importContacts()

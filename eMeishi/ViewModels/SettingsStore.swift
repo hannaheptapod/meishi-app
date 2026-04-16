@@ -30,9 +30,10 @@ enum ReadingMethod: String, CaseIterable, Identifiable {
 }
 
 // アプリ設定の永続化管理（UserDefaults）
+@MainActor
 class SettingsStore: ObservableObject {
 
-    static let shared = SettingsStore()
+    @MainActor static let shared = SettingsStore()
 
     // MARK: - 読み取り方法
 
