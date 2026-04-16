@@ -13,6 +13,7 @@ import FoundationModels
 /// 1. まずクエリを分析し、フィールド特定可能な検索（住所・名前・会社名）はルールベースで直接フィルタ
 /// 2. 概念的検索（「食品関係」「IT系」等）のみ LLM に委譲
 /// 3. LLM にはフィルタ済み候補ではなく全カードを渡すが、判定はカード単位の yes/no
+@MainActor
 class AISearchService {
 
     static let shared = AISearchService()

@@ -3,6 +3,9 @@ import Contacts
 import os
 
 // iPhoneの連絡先との連携サービス
+// NOTE: BusinessCard（@MainActor）を直接受け取るため @MainActor class を選択。
+// Phase 3 で Sendable DTO に置換後、actor への変換を検討する。
+@MainActor
 class ContactsService {
 
     static let shared = ContactsService()

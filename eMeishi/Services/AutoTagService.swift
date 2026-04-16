@@ -14,6 +14,7 @@ import FoundationModels
 //   Qwen: 各タグについて1回 forward pass で yes/no 分類（非対応端末フォールバック）
 //
 // フォールバック: モデル未対応・未ロード時は空配列を返す
+@MainActor
 class AutoTagService {
 
     static let shared = AutoTagService()
