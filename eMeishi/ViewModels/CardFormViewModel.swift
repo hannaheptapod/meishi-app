@@ -8,6 +8,7 @@ import FoundationModels
 #endif
 
 // 名刺の新規作成・編集フォームのViewModel
+@MainActor
 class CardFormViewModel: ObservableObject {
 
     @Published var lastName: String = ""
@@ -89,7 +90,7 @@ class CardFormViewModel: ObservableObject {
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
         // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
         self.isProcessingOCR = true
-        ocrTask = Task { @MainActor [weak self] in
+        ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
             let cardImage = await self.ocrService.detectAndCropCard(from: image)
@@ -117,7 +118,7 @@ class CardFormViewModel: ObservableObject {
         self.settings = settings
         self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
         self.isProcessingOCR = true
-        ocrTask = Task { @MainActor [weak self] in
+        ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             await populateFromOCR(image: croppedImage)
         }
@@ -158,7 +159,6 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - OCR + AI意味分析
 
-    @MainActor
     func populateFromOCR(image: UIImage) async {
         isProcessingOCR = true
         ocrStage = "文字を認識中..."
@@ -230,7 +230,7 @@ class CardFormViewModel: ObservableObject {
         guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty || !cardInfo.address.isEmpty else { return }
 
         isLoadingTagSuggestions = true
-        Task { @MainActor in
+        Task {
             defer { isLoadingTagSuggestions = false }
 
             let tagInfos = fetchAllTags().compactMap { tag -> AutoTagService.TagInfo? in

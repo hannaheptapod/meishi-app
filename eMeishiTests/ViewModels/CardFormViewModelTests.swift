@@ -52,6 +52,7 @@ private final class MockAutoTagService: AutoTagServiceProtocol {
 }
 
 /// readingMethod を制御できる Settings モック
+@MainActor
 private struct MockSettings: SettingsProviding {
     var readingMethod: ReadingMethod
 }

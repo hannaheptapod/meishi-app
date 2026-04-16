@@ -41,6 +41,7 @@ extension AutoTagService: AutoTagServiceProtocol {}
 
 // MARK: - 設定
 
+@MainActor
 protocol SettingsProviding {
     var readingMethod: ReadingMethod { get }
 }
