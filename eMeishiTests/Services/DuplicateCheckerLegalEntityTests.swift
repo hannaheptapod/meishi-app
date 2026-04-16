@@ -4,6 +4,7 @@ import CoreData
 
 // MARK: - 重複検出の法人格正規化テスト
 
+@MainActor
 struct DuplicateCheckerLegalEntityTests {
 
     @Test func duplicateDetectionNormalizesCompanySuffix() {

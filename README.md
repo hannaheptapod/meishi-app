@@ -127,6 +127,10 @@ meishi-app/
 ├── eMeishiTests/
 │   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
 │   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化
+│   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
+│   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
+│   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
 │   ├── InsightsServiceTests.swift              # InsightsService の会社別・エリア別・職種別・月別集計
 │   └── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
 ├── eMeishiUITests/

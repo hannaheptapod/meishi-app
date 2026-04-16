@@ -4,6 +4,7 @@ import CoreData
 
 // MARK: - ExportService CSV テスト
 
+@MainActor
 struct ExportServiceCSVTests {
 
     let service = ExportService()

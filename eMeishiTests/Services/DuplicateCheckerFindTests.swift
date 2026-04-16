@@ -4,6 +4,7 @@ import CoreData
 
 // MARK: - DuplicateChecker 重複検出テスト
 
+@MainActor
 struct DuplicateCheckerFindTests {
 
     let context = makeTestContext()

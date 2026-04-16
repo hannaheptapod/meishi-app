@@ -4,6 +4,7 @@ import CoreData
 
 // MARK: - BusinessCard 計算プロパティ テスト
 
+@MainActor
 struct BusinessCardPropertiesTests {
 
     let context = makeTestContext()
