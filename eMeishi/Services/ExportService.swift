@@ -23,15 +23,15 @@ class ExportService {
 
     // MARK: - CSV エクスポート
 
-    /// 複数の BusinessCard を CSV 形式の文字列に変換する
-    func csvString(from cards: [BusinessCard]) -> String {
+    /// 複数の名刺 DTO を CSV 形式の文字列に変換する
+    func csvString(from cards: [CardExportDTO]) -> String {
         let header = "姓,名,会社名,部署,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時"
         let rows = cards.map { csvRow(from: $0) }
         return ([header] + rows).joined(separator: "\n")
     }
 
     /// CSV を一時ファイルに書き出して URL を返す
-    func exportCSV(from cards: [BusinessCard]) throws -> URL {
+    func exportCSV(from cards: [CardExportDTO]) throws -> URL {
         let csv = csvString(from: cards)
         let url = temporaryFileURL(name: "meishi_export", ext: "csv")
         // BOM付きUTF-8 でExcel等での文字化けを防ぐ
@@ -52,7 +52,7 @@ class ExportService {
     // ICU は内部 mutex で string(from:) の並列実行を保護しているため安全。
     private static let iso8601Formatter = ISO8601DateFormatter()
 
-    private func csvRow(from card: BusinessCard) -> String {
+    private func csvRow(from card: CardExportDTO) -> String {
         let fields: [String?] = [
             card.lastName,
             card.firstName,
@@ -82,13 +82,13 @@ class ExportService {
 
     // MARK: - vCard エクスポート
 
-    /// 複数の BusinessCard を vCard 3.0 形式の文字列に変換する
-    func vCardString(from cards: [BusinessCard]) -> String {
+    /// 複数の名刺 DTO を vCard 3.0 形式の文字列に変換する
+    func vCardString(from cards: [CardExportDTO]) -> String {
         cards.map { vCard(from: $0) }.joined(separator: "\n")
     }
 
     /// vCard を一時ファイルに書き出して URL を返す
-    func exportVCard(from cards: [BusinessCard]) throws -> URL {
+    func exportVCard(from cards: [CardExportDTO]) throws -> URL {
         let vcf = vCardString(from: cards)
         let url = temporaryFileURL(name: "meishi_export", ext: "vcf")
         do {
@@ -101,7 +101,7 @@ class ExportService {
         return url
     }
 
-    private func vCard(from card: BusinessCard) -> String {
+    private func vCard(from card: CardExportDTO) -> String {
         var lines = ["BEGIN:VCARD", "VERSION:3.0"]
 
         let last  = card.lastName  ?? ""

@@ -15,11 +15,21 @@ struct DuplicateMergeView: View {
 
     private let context = PersistenceController.shared.container.viewContext
 
+    /// ID から解決した BusinessCard ペア。両方が non-nil の場合のみマージ UI を表示する。
+    @State private var cardA: BusinessCard?
+    @State private var cardB: BusinessCard?
+    @State private var didResolve = false
+
     var body: some View {
         NavigationStack {
-            List {
-                headerSection
-                fieldRows
+            Group {
+                if let cardA, let cardB {
+                    mergeContent(cardA: cardA, cardB: cardB)
+                } else if didResolve {
+                    missingCardView
+                } else {
+                    ProgressView().controlSize(.small)
+                }
             }
             .navigationTitle("名刺をマージ")
             .navigationBarTitleDisplayMode(.inline)
@@ -27,9 +37,11 @@ struct DuplicateMergeView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("マージ") { isShowingMergeConfirm = true }
-                        .bold()
+                if cardA != nil && cardB != nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("マージ") { isShowingMergeConfirm = true }
+                            .bold()
+                    }
                 }
             }
             .confirmationDialog(
@@ -40,17 +52,43 @@ struct DuplicateMergeView: View {
                 Button("マージして1枚にまとめる", role: .destructive) { merge() }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("「\(pair.cardB.fullName.isEmpty ? "名前なし" : pair.cardB.fullName)」は削除されます。この操作は取り消せません。")
+                if let cardB {
+                    Text("「\(cardB.fullName.isEmpty ? "名前なし" : cardB.fullName)」は削除されます。この操作は取り消せません。")
+                }
             }
         }
+        .task {
+            cardA = context.businessCard(forURIString: pair.cardAIDURI)
+            cardB = context.businessCard(forURIString: pair.cardBIDURI)
+            didResolve = true
+        }
+    }
+
+    // MARK: - メインコンテンツ
+
+    @ViewBuilder
+    private func mergeContent(cardA: BusinessCard, cardB: BusinessCard) -> some View {
+        List {
+            headerSection(cardA: cardA, cardB: cardB)
+            fieldRows(cardA: cardA, cardB: cardB)
+        }
+    }
+
+    // 削除済み等で解決失敗した場合の表示
+    private var missingCardView: some View {
+        ContentUnavailableView(
+            "名刺が見つかりません",
+            systemImage: "exclamationmark.triangle",
+            description: Text("対象の名刺が削除されたため、マージできません。")
+        )
     }
 
     // MARK: - ヘッダー（類似度 + 両カードのサマリー）
 
-    private var headerSection: some View {
+    private func headerSection(cardA: BusinessCard, cardB: BusinessCard) -> some View {
         Section {
             HStack(spacing: 12) {
-                cardHeader(pair.cardA, side: .a)
+                cardHeader(cardA, side: .a)
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.left.arrow.right")
                         .foregroundStyle(.secondary)
@@ -62,7 +100,7 @@ struct DuplicateMergeView: View {
                         .background(scoreColor(pair.score), in: Capsule())
                         .accessibilityLabel("類似度 \(pair.scoreText)")
                 }
-                cardHeader(pair.cardB, side: .b)
+                cardHeader(cardB, side: .b)
             }
             .padding(.vertical, 4)
         } header: {
@@ -93,22 +131,22 @@ struct DuplicateMergeView: View {
 
     // MARK: - フィールド行（縦並び・選択しやすい設計）
 
-    private var fieldRows: some View {
+    private func fieldRows(cardA: BusinessCard, cardB: BusinessCard) -> some View {
         Group {
-            mergeRow(label: "名前",   aVal: pair.cardA.fullName,   bVal: pair.cardB.fullName,   binding: $selections.name)
-            mergeRow(label: "会社名", aVal: pair.cardA.company,    bVal: pair.cardB.company,    binding: $selections.company)
-            mergeRow(label: "部署",   aVal: pair.cardA.department, bVal: pair.cardB.department, binding: $selections.department)
-            mergeRow(label: "役職",   aVal: pair.cardA.title,      bVal: pair.cardB.title,      binding: $selections.title)
+            mergeRow(label: "名前",   aVal: cardA.fullName,   bVal: cardB.fullName,   binding: $selections.name)
+            mergeRow(label: "会社名", aVal: cardA.company,    bVal: cardB.company,    binding: $selections.company)
+            mergeRow(label: "部署",   aVal: cardA.department, bVal: cardB.department, binding: $selections.department)
+            mergeRow(label: "役職",   aVal: cardA.title,      bVal: cardB.title,      binding: $selections.title)
             mergeRow(
                 label: "電話",
-                aVal: pair.cardA.phoneList.isEmpty ? nil : pair.cardA.phoneList.joined(separator: "\n"),
-                bVal: pair.cardB.phoneList.isEmpty ? nil : pair.cardB.phoneList.joined(separator: "\n"),
+                aVal: cardA.phoneList.isEmpty ? nil : cardA.phoneList.joined(separator: "\n"),
+                bVal: cardB.phoneList.isEmpty ? nil : cardB.phoneList.joined(separator: "\n"),
                 binding: $selections.phone
             )
-            mergeRow(label: "メール", aVal: pair.cardA.email,   bVal: pair.cardB.email,   binding: $selections.email)
-            mergeRow(label: "住所",   aVal: pair.cardA.address, bVal: pair.cardB.address, binding: $selections.address)
-            mergeRow(label: "Web",    aVal: pair.cardA.website, bVal: pair.cardB.website, binding: $selections.website)
-            mergeRow(label: "メモ",   aVal: pair.cardA.notes,   bVal: pair.cardB.notes,   binding: $selections.notes)
+            mergeRow(label: "メール", aVal: cardA.email,   bVal: cardB.email,   binding: $selections.email)
+            mergeRow(label: "住所",   aVal: cardA.address, bVal: cardB.address, binding: $selections.address)
+            mergeRow(label: "Web",    aVal: cardA.website, bVal: cardB.website, binding: $selections.website)
+            mergeRow(label: "メモ",   aVal: cardA.notes,   bVal: cardB.notes,   binding: $selections.notes)
         }
     }
 
@@ -163,8 +201,11 @@ struct DuplicateMergeView: View {
     // MARK: - マージ実行
 
     private func merge() {
-        let a = pair.cardA
-        let b = pair.cardB
+        guard let a = cardA, let b = cardB else {
+            onComplete()
+            dismiss()
+            return
+        }
 
         // cardB が既に削除済みの場合はスキップ
         guard !b.isDeleted, b.managedObjectContext != nil else {
