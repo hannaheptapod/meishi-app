@@ -124,6 +124,25 @@ fi
 # ci_scripts/ci_pre_xcodebuild.sh でも [SKIP] と明記済み。
 
 echo ""
+echo "=== Swift 言語モード ==="
+# Swift 6 移行完了後（Phase 6 完了時）に SWIFT_STRICT_CONCURRENCY を complete に昇格し、
+# SWIFT_VERSION = 6.0 に切替。それまでは targeted で警告のみ（Issue #147）
+REL_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$RELEASE_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+DBG_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+if [[ -n "$REL_STRICT" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Release) = $REL_STRICT"
+else
+  ok "SWIFT_STRICT_CONCURRENCY (Release) 未設定（minimal 相当）"
+fi
+if [[ -n "$DBG_STRICT" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Debug) = $DBG_STRICT"
+else
+  ok "SWIFT_STRICT_CONCURRENCY (Debug) 未設定（minimal 相当）"
+fi
+# Phase 6 完了後はここで SWIFT_VERSION = 6.0 を強制チェックする（現在はスキップ）
+# TODO(swift6-phase6): SWIFT_VERSION = 6.0 チェック（project.pbxproj の全 6 構成）
+
+echo ""
 echo "=== Usage Description ==="
 for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDescription NSPhotoLibraryUsageDescription; do
   if grep -q "$key" "$PLIST"; then

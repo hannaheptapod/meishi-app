@@ -12,3 +12,7 @@ ENABLE_TESTABILITY = NO
 
 // Run Script Build Phase からビルド成果物を書き換えるため sandbox を無効化
 ENABLE_USER_SCRIPT_SANDBOXING = NO
+
+// Swift 6 移行: Strict Concurrency 警告を有効化（targeted = 自分のコードのみ検査）
+// complete に昇格後 SWIFT_VERSION = 6.0 に切替 → Issue #147 Phase 1
+SWIFT_STRICT_CONCURRENCY = targeted
