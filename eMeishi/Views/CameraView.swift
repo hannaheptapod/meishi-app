@@ -87,7 +87,8 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
         picker.dismiss(animated: false) { [weak self] in
             self?.presentPicker()
             // present のアニメーション完了を待ってからスナップショットを除去
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(0.05))
                 self?.removeSnapshot()
             }
         }

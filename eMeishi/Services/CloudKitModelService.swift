@@ -105,7 +105,7 @@ actor CloudKitModelService {
     /// perRecordResultBlock コールバック内（operation 生存中）で完結させる。
     func downloadModel(modelDir: URL,
                        tokenizerDestination: URL,
-                       progress: @escaping (Double) -> Void) async throws {
+                       progress: @escaping @Sendable @MainActor (Double) -> Void) async throws {
         // Step 1: 小ファイル + weightChunkCount + SHA256 を一括取得
         let smallKeys: [String] = modelConfigs.flatMap { config in
             [config.coremlDataField, config.metadataField, config.modelMilField, config.sha256Field]
@@ -153,7 +153,7 @@ actor CloudKitModelService {
             }
         }
 
-        progress(1.0)
+        await progress(1.0)
     }
 
     // MARK: - SHA256 検証
@@ -190,12 +190,12 @@ actor CloudKitModelService {
     // MARK: - レコード1件取得（desiredKeys で絞り込み）
 
     private func fetchRecord(desiredKeys: [String],
-                             progress: @escaping (Double) -> Void) async throws -> CKRecord {
+                             progress: @escaping @Sendable @MainActor (Double) -> Void) async throws -> CKRecord {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
             let operation = CKFetchRecordsOperation(recordIDs: [modelRecordID])
             operation.qualityOfService = .userInitiated
             operation.desiredKeys = desiredKeys
-            operation.perRecordProgressBlock = { _, p in progress(p) }
+            operation.perRecordProgressBlock = { _, p in Task { await progress(p) } }
             operation.perRecordResultBlock = { _, result in
                 switch result {
                 case .success(let record): continuation.resume(returning: record)

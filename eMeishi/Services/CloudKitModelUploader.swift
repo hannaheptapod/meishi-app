@@ -44,7 +44,7 @@ enum CloudKitModelUploader {
                      firstChunkIndex: 4),
     ]
 
-    static func uploadCorrectModels(status: @escaping (String) -> Void) async {
+    static func uploadCorrectModels(status: @escaping @Sendable @MainActor (String) -> Void) async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let base = docs.appendingPathComponent("LocalLLM")
 
@@ -88,7 +88,7 @@ enum CloudKitModelUploader {
             for (field, path) in smallFiles {
                 let url = base.appendingPathComponent(path)
                 guard FileManager.default.fileExists(atPath: url.path) else {
-                    await MainActor.run { status("エラー: \(path) が見つかりません") }
+                    status("エラー: \(path) が見つかりません")
                     return
                 }
                 record[field] = CKAsset(fileURL: url)
