@@ -5,13 +5,9 @@ import CoreData
 // Swift Testing の Tag と CoreData の Tag エンティティが衝突するため別名を用意
 private typealias CardTag = eMeishi.Tag
 
-// MARK: - テスト用ヘルパー
-
-/// テスト用インメモリ CoreData コンテキストを生成する
-@MainActor
-private func makeTestContext() -> NSManagedObjectContext {
-    PersistenceController(inMemory: true).container.viewContext
-}
+// MARK: - テスト用ヘルパー（CardListViewModelTests 専用）
+// makeTestContext() は TestHelpers.swift の共有版を使用。
+// makeCard はお気に入り・登録日時など CardListViewModel 固有のパラメータを持つため個別定義。
 
 /// テスト用 BusinessCard を生成する
 @MainActor

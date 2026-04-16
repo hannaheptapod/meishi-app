@@ -43,8 +43,11 @@ class CardFormViewModel: ObservableObject {
 
     private let context: NSManagedObjectContext
     private var card: BusinessCard?
-    private let ocrService = OCRService()
-    private let classifier = CardFieldClassifier()
+    private let ocrService: OCRServiceProtocol
+    private let classifier: CardFieldClassifierProtocol
+    private let llmService: LocalLLMServiceProtocol
+    private let autoTagService: AutoTagServiceProtocol
+    private let settings: SettingsProviding
     private var ocrTask: Task<Void, Never>?
 
     deinit {
@@ -53,15 +56,35 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - 初期化（新規作成）
 
-    init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
+    init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
+         ocrService: OCRServiceProtocol = OCRService(),
+         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
+         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
+         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
+         settings: SettingsProviding = SettingsStore.shared) {
         self.context = context
+        self.ocrService = ocrService
+        self.classifier = classifier
+        self.llmService = llmService
+        self.autoTagService = autoTagService
+        self.settings = settings
     }
 
     // MARK: - 初期化（カメラ撮影画像からOCR）
 
     init(image: UIImage,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
+         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
+         ocrService: OCRServiceProtocol = OCRService(),
+         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
+         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
+         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
+         settings: SettingsProviding = SettingsStore.shared) {
         self.context = context
+        self.ocrService = ocrService
+        self.classifier = classifier
+        self.llmService = llmService
+        self.autoTagService = autoTagService
+        self.settings = settings
         // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
         // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
@@ -69,7 +92,7 @@ class CardFormViewModel: ObservableObject {
         ocrTask = Task { @MainActor [weak self] in
             guard let self, !Task.isCancelled else { return }
             // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
-            let cardImage = await ocrService.detectAndCropCard(from: image)
+            let cardImage = await self.ocrService.detectAndCropCard(from: image)
             guard !Task.isCancelled else { return }
             // 補正済み画像で保存データを上書き
             self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
@@ -80,8 +103,18 @@ class CardFormViewModel: ObservableObject {
     // MARK: - 初期化（切り抜き済み画像からOCR・矩形検出スキップ）
 
     init(croppedImage: UIImage,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
+         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
+         ocrService: OCRServiceProtocol = OCRService(),
+         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
+         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
+         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
+         settings: SettingsProviding = SettingsStore.shared) {
         self.context = context
+        self.ocrService = ocrService
+        self.classifier = classifier
+        self.llmService = llmService
+        self.autoTagService = autoTagService
+        self.settings = settings
         self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
         self.isProcessingOCR = true
         ocrTask = Task { @MainActor [weak self] in
@@ -93,9 +126,19 @@ class CardFormViewModel: ObservableObject {
     // MARK: - 初期化（既存カードの編集）
 
     init(card: BusinessCard,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext) {
+         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
+         ocrService: OCRServiceProtocol = OCRService(),
+         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
+         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
+         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
+         settings: SettingsProviding = SettingsStore.shared) {
         self.card = card
         self.context = context
+        self.ocrService = ocrService
+        self.classifier = classifier
+        self.llmService = llmService
+        self.autoTagService = autoTagService
+        self.settings = settings
         lastName        = card.lastName        ?? ""
         lastNameReading = card.lastNameReading ?? ""
         firstName       = card.firstName       ?? ""
@@ -131,7 +174,7 @@ class CardFormViewModel: ObservableObject {
 
             ocrStage = "フィールドを分析中..."
 
-            switch SettingsStore.shared.readingMethod {
+            switch settings.readingMethod {
             case .automatic:
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) {
@@ -193,7 +236,7 @@ class CardFormViewModel: ObservableObject {
             let tags = fetchAllTags()
             guard !tags.isEmpty else { return }
 
-            let suggested = await AutoTagService.shared.suggestTags(cardInfo: cardInfo, tags: tags)
+            let suggested = await autoTagService.suggestTags(cardInfo: cardInfo, tags: tags)
             suggestedTagIDs = Set(suggested)
         }
     }
@@ -302,7 +345,7 @@ class CardFormViewModel: ObservableObject {
             return nil
 
         case .qwen:
-            return await LocalLLMService.shared.classifyUnclassifiedLines(unclassifiedLines)
+            return await llmService.classifyUnclassifiedLines(unclassifiedLines)
 
         case .none:
             return nil
@@ -388,7 +431,7 @@ class CardFormViewModel: ObservableObject {
 
     // 明示指定モード: AIアシスト（Qwen）
     private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
-        guard LocalLLMService.shared.isModelAvailable else {
+        guard llmService.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
             await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
@@ -398,7 +441,7 @@ class CardFormViewModel: ObservableObject {
 
     // 自動モード: LocalLLM → Classifier のフォールバック
     private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
-        if !LocalLLMService.shared.isModelAvailable {
+        if !llmService.isModelAvailable {
             shouldPromptLLMDownload = true
             await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
