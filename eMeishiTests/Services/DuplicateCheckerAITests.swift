@@ -7,7 +7,10 @@ import CoreData
 // Foundation Models / Qwen いずれも実行環境に依存するため、
 // テスト可能なのは「ルールベース結果との等価性」と「モデル未ロード時の非追加」のみ。
 
+// SettingsStore.shared.readingMethod を書き換えるテストが含まれるため、
+// 並列実行時の干渉を防ぐために Suite 内を直列化する
 @MainActor
+@Suite(.serialized)
 struct DuplicateCheckerAITests {
 
     let context = makeTestContext()
