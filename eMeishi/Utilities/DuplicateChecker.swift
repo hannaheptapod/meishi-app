@@ -1,4 +1,5 @@
 import Foundation
+import CoreData
 import CoreML
 
 // 名前・会社名の類似度判定により重複候補を検出するユーティリティ
@@ -179,7 +180,7 @@ struct DuplicateChecker {
 // MARK: - 重複ペアモデル
 
 struct DuplicatePair: Identifiable {
-    let id = UUID()
+    var id: String { "\(cardA.objectID)-\(cardB.objectID)" }
     let cardA: BusinessCard
     let cardB: BusinessCard
     /// 類似スコア（0.0〜1.0）

@@ -3,7 +3,7 @@ import SwiftUI
 // 重複候補の一覧画面
 struct DuplicateListView: View {
 
-    let pairs: [DuplicatePair]
+    @Binding var pairs: [DuplicatePair]
     let onMerge: () -> Void
 
     @State private var selectedPair: DuplicatePair? = nil
