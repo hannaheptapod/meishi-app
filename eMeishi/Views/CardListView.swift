@@ -291,7 +291,8 @@ struct CardListView: View {
                     batchImages = images
                     if !images.isEmpty {
                         // batchImages の更新を SwiftUI に反映させてから sheet を表示する
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        Task {
+                            try? await Task.sleep(for: .seconds(0.1))
                             isReviewingBatch = true
                         }
                     }
@@ -678,7 +679,8 @@ private struct SearchBarSparklesInjector: UIViewRepresentable {
 
     private func retryInject(from view: UIView, coordinator: Coordinator, attempts: Int) {
         guard attempts > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        Task {
+            try? await Task.sleep(for: .seconds(0.15))
             if self.inject(from: view, coordinator: coordinator) { return }
             self.retryInject(from: view, coordinator: coordinator, attempts: attempts - 1)
         }

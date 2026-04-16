@@ -97,6 +97,7 @@ class CardListViewModel: ObservableObject {
         // 閾値が変わったら重複検出を再実行
         SettingsStore.shared.$duplicateThreshold
             .dropFirst()
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.detectDuplicates() }
             .store(in: &cancellables)
     }

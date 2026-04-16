@@ -593,7 +593,7 @@ class LocalLLMService: ObservableObject {
             modelDir: dir,
             tokenizerDestination: dir.appendingPathComponent("tokenizer.json")
         ) { [weak self] p in
-            Task { @MainActor in self?.downloadProgress = p }
+            self?.downloadProgress = p
         }
 
         isModelAvailable = checkModelFiles()
