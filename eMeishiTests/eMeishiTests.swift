@@ -826,6 +826,7 @@ struct LegalEntityTermsTests {
 
 // MARK: - DuplicatePair モデルテスト
 
+@MainActor
 struct DuplicatePairModelTests {
 
     let context = makeTestContext()
@@ -864,6 +865,7 @@ struct DuplicatePairModelTests {
 
 // MARK: - マージロジック テスト（DuplicateMergeView.merge() の CoreData 相当）
 
+@MainActor
 struct MergeLogicTests {
 
     let context = makeTestContext()
