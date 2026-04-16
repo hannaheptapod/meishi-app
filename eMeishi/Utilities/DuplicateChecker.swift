@@ -179,7 +179,7 @@ struct DuplicateChecker {
 // MARK: - 重複ペアモデル
 
 struct DuplicatePair: Identifiable {
-    let id = UUID()
+    var id: String { "\(cardA.objectID)-\(cardB.objectID)" }
     let cardA: BusinessCard
     let cardB: BusinessCard
     /// 類似スコア（0.0〜1.0）

@@ -97,6 +97,7 @@ struct DuplicateMergeView: View {
         Group {
             mergeRow(label: "名前",   aVal: pair.cardA.fullName,   bVal: pair.cardB.fullName,   binding: $selections.name)
             mergeRow(label: "会社名", aVal: pair.cardA.company,    bVal: pair.cardB.company,    binding: $selections.company)
+            mergeRow(label: "部署",   aVal: pair.cardA.department, bVal: pair.cardB.department, binding: $selections.department)
             mergeRow(label: "役職",   aVal: pair.cardA.title,      bVal: pair.cardB.title,      binding: $selections.title)
             mergeRow(
                 label: "電話",
@@ -165,19 +166,37 @@ struct DuplicateMergeView: View {
         let a = pair.cardA
         let b = pair.cardB
 
+        // cardB が既に削除済みの場合はスキップ
+        guard !b.isDeleted, b.managedObjectContext != nil else {
+            onComplete()
+            dismiss()
+            return
+        }
+
         // 名前フィールドは名前マージ選択に従って両カードから取得
         if selections.name == .b {
-            a.lastName  = b.lastName  ?? ""
-            a.firstName = b.firstName ?? ""
+            a.lastName        = b.lastName        ?? ""
+            a.lastNameReading = b.lastNameReading ?? ""
+            a.firstName       = b.firstName       ?? ""
+            a.firstNameReading = b.firstNameReading ?? ""
         }
-        a.company   = selections.company   == .a ? (a.company   ?? "") : (b.company   ?? "")
-        a.title     = selections.title     == .a ? (a.title     ?? "") : (b.title     ?? "")
-        a.phone     = selections.phone     == .a ? (a.phone     ?? "") : (b.phone     ?? "")
-        a.email     = selections.email     == .a ? (a.email     ?? "") : (b.email     ?? "")
-        a.address   = selections.address   == .a ? (a.address   ?? "") : (b.address   ?? "")
-        a.website   = selections.website   == .a ? (a.website   ?? "") : (b.website   ?? "")
-        a.notes     = selections.notes     == .a ? (a.notes     ?? "") : (b.notes     ?? "")
+        a.company    = selections.company    == .a ? (a.company    ?? "") : (b.company    ?? "")
+        a.department = selections.department == .a ? (a.department ?? "") : (b.department ?? "")
+        a.title      = selections.title      == .a ? (a.title      ?? "") : (b.title      ?? "")
+        a.phone      = selections.phone      == .a ? (a.phone      ?? "") : (b.phone      ?? "")
+        a.email      = selections.email      == .a ? (a.email      ?? "") : (b.email      ?? "")
+        a.address    = selections.address    == .a ? (a.address    ?? "") : (b.address    ?? "")
+        a.website    = selections.website    == .a ? (a.website    ?? "") : (b.website    ?? "")
+        a.notes      = selections.notes      == .a ? (a.notes      ?? "") : (b.notes      ?? "")
         if a.imageData == nil { a.imageData = b.imageData }
+
+        // cardB のタグを cardA に転送（未保持のものだけ追加）
+        if let bTags = b.tags as? Set<Tag> {
+            for tag in bTags {
+                a.addToTags(tag)
+            }
+        }
+
         a.updatedAt = Date()
 
         context.delete(b)
@@ -202,12 +221,13 @@ struct DuplicateMergeView: View {
 private enum Side { case a, b }
 
 private struct FieldSelections {
-    var name:    Side = .a
-    var company: Side = .a
-    var title:   Side = .a
-    var phone:   Side = .a
-    var email:   Side = .a
-    var address: Side = .a
-    var website: Side = .a
-    var notes:   Side = .a
+    var name:       Side = .a
+    var company:    Side = .a
+    var department: Side = .a
+    var title:      Side = .a
+    var phone:      Side = .a
+    var email:      Side = .a
+    var address:    Side = .a
+    var website:    Side = .a
+    var notes:      Side = .a
 }

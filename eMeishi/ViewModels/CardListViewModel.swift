@@ -371,7 +371,15 @@ class CardListViewModel: ObservableObject {
 
     func detectDuplicates() {
         let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
+        // 即時: ルールベースで表示
         duplicatePairs = checker.findDuplicates(in: cards)
+        // 非同期: AI二次判定でボーダーライン候補を追加
+        let snapshot = cards
+        Task { @MainActor in
+            let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
+            guard snapshot.count == self.cards.count else { return }
+            self.duplicatePairs = enhanced
+        }
     }
 
     // MARK: - エクスポート
