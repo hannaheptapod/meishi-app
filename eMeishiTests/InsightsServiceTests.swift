@@ -2,12 +2,9 @@ import Testing
 import CoreData
 @testable import eMeishi
 
-// MARK: - テスト用ヘルパー
-
-@MainActor
-private func makeTestContext() -> NSManagedObjectContext {
-    PersistenceController(inMemory: true).container.viewContext
-}
+// MARK: - テスト用ヘルパー（InsightsServiceTests 専用）
+// makeTestContext() は TestHelpers.swift の共有版を使用。
+// makeCard は InsightsService 固有のパラメータ（createdAt 等）を持つため個別定義。
 
 @MainActor
 private func makeCard(
