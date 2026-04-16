@@ -1176,3 +1176,103 @@ struct DuplicateCheckerLegalEntityTests {
         }
     }
 }
+
+// MARK: - AutoTagService テスト（AI エンジン選択・ガード条件）
+//
+// Foundation Models は実機 + Apple Intelligence 環境でしか動かないため、
+// テスト可能なのは「エンジン非依存のガード条件」と「Qwen モデル未ロード時の挙動」のみ。
+
+@MainActor
+struct AutoTagServiceTests {
+
+    // タグが空の場合は AI 呼び出しなしに即 [] を返す（全 readingMethod 共通）
+    @Test func suggestTagsWithEmptyTagsReturnsEmpty() async {
+        let result = await AutoTagService.shared.suggestTags(
+            cardInfo: AutoTagService.CardInfo(company: "テスト株式会社"),
+            tags: []
+        )
+        #expect(result.isEmpty)
+    }
+
+    // readingMethod=.localLLM でモデル未ロードなら [] を返す
+    // テスト環境に Qwen モデルファイルが存在しないため ensureModelLoaded() が nil を返す
+    @Test func suggestTagsLocalLLMWithoutModelReturnsEmpty() async {
+        let original = SettingsStore.shared.readingMethod
+        SettingsStore.shared.readingMethod = .localLLM
+        defer { SettingsStore.shared.readingMethod = original }
+
+        let ctx = makeTestContext()
+        let tag = eMeishi.Tag(context: ctx)
+        tag.id   = UUID()
+        tag.name = "IT"
+
+        let result = await AutoTagService.shared.suggestTags(
+            cardInfo: AutoTagService.CardInfo(company: "テック株式会社"),
+            tags: [tag]
+        )
+        #expect(result.isEmpty)
+    }
+}
+
+// MARK: - DuplicateChecker AI 二次判定テスト
+//
+// Foundation Models / Qwen いずれも実行環境に依存するため、
+// テスト可能なのは「ルールベース結果との等価性」と「モデル未ロード時の非追加」のみ。
+
+@MainActor
+struct DuplicateCheckerAITests {
+
+    let context = makeTestContext()
+
+    // ボーダーラインペアが存在しない場合（全ペアが閾値以上）は findDuplicates と同じ結果
+    @Test func findDuplicatesWithAIMatchesRuleBasedWhenNoBorderline() async {
+        // 完全一致ペア → score=1.0（閾値以上・ボーダーラインなし）
+        let a = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let b = makeCard(context: context, lastName: "山田", firstName: "太郎")
+        let checker = DuplicateChecker(threshold: 0.75)
+
+        let ruled = checker.findDuplicates(in: [a, b])
+        let ai    = await checker.findDuplicatesWithAI(in: [a, b])
+
+        #expect(Set(ruled.map { $0.id }) == Set(ai.map { $0.id }))
+    }
+
+    // 閾値以上のペアは AI 判定結果に必ず含まれる（デグレなし）
+    @Test func findDuplicatesWithAIPreservesConfirmedPairs() async {
+        let a = makeCard(context: context, lastName: "田中", firstName: "花子")
+        let b = makeCard(context: context, lastName: "田中", firstName: "花子")
+        let checker = DuplicateChecker(threshold: 0.75)
+
+        let ai  = await checker.findDuplicatesWithAI(in: [a, b])
+        let aID = a.objectID
+        let bID = b.objectID
+        #expect(ai.contains { pair in
+            (pair.cardA.objectID == aID && pair.cardB.objectID == bID) ||
+            (pair.cardA.objectID == bID && pair.cardB.objectID == aID)
+        })
+    }
+
+    // Qwen モデル未ロード時はボーダーラインペアが結果に追加されない
+    //
+    // スコア計算（threshold=0.75, lowerBound=0.5）:
+    //   fullName: "山田 太郎" vs "山田 次郎" → levenshtein=1/5文字 → nameSim=0.80
+    //   company:  "ABC" vs "XYZ" → levenshtein=3/3文字 → companySim=0.0
+    //   score = 0.80*0.7 + 0.0*0.3 = 0.56 → ボーダーライン（0.5以上・0.75未満）
+    @Test func findDuplicatesWithAIBorderlineNotAddedWithoutModel() async {
+        let original = SettingsStore.shared.readingMethod
+        SettingsStore.shared.readingMethod = .localLLM
+        defer { SettingsStore.shared.readingMethod = original }
+
+        let a = makeCard(context: context, lastName: "山田", firstName: "太郎", company: "ABC")
+        let b = makeCard(context: context, lastName: "山田", firstName: "次郎", company: "XYZ")
+        let checker = DuplicateChecker(threshold: 0.75)
+
+        // ルールベースではペアなし（score=0.56 < threshold=0.75）
+        let ruled = checker.findDuplicates(in: [a, b])
+        #expect(ruled.isEmpty)
+
+        // Qwen 未ロードのためボーダーラインペアは追加されない
+        let ai = await checker.findDuplicatesWithAI(in: [a, b])
+        #expect(ai.isEmpty)
+    }
+}

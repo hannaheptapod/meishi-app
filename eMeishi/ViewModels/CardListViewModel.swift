@@ -377,6 +377,7 @@ class CardListViewModel: ObservableObject {
         let snapshot = cards
         Task { @MainActor in
             let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
+            // カードが差し替えられていたら反映しない
             guard snapshot.count == self.cards.count else { return }
             self.duplicatePairs = enhanced
         }

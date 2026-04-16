@@ -184,7 +184,7 @@ class CardFormViewModel: ObservableObject {
             website: website
         )
         // 空の場合はスキップ
-        guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty else { return }
+        guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty || !cardInfo.address.isEmpty else { return }
 
         isLoadingTagSuggestions = true
         Task { @MainActor in
