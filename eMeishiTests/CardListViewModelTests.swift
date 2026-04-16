@@ -207,7 +207,7 @@ struct CardListViewModelFilterTests {
         let card2 = makeCard(context: context, lastName: "佐藤", isFavorite: false)
         card2.addToTags(tag)
 
-        let card3 = makeCard(context: context, lastName: "鈴木", isFavorite: true)
+        _ = makeCard(context: context, lastName: "鈴木", isFavorite: true)
         // タグなし
 
         try context.save()
