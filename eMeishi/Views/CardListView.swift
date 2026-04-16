@@ -227,7 +227,10 @@ struct CardListView: View {
             Menu {
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
-                        DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
+                        DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: {
+                            viewModel.fetchCards()
+                            viewModel.detectDuplicates()
+                        })
                     } label: {
                         Label(
                             viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
