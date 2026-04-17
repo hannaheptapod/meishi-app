@@ -81,6 +81,10 @@ meishi-app/
 │   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
 │   │   ├── BatchReviewView.swift               # 連続撮影後の一括確認（CardFormViewを順番に表示）
 │   │   ├── AISearchChatView.swift              # AI自然言語検索のチャットUI
+│   │   ├── Billing/
+│   │   │   ├── PaywallView.swift               # Pro 購入・復元・機能紹介シート（コンテキスト別）
+│   │   │   ├── PaywallFeatureListView.swift    # Pro 機能一覧（現在コンテキストを先頭表示）
+│   │   │   └── ManageSubscriptionButton.swift  # App Store サブスクリプション管理画面を開くボタン
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
@@ -97,6 +101,12 @@ meishi-app/
 │   │   ├── CardFormViewModel.swift
 │   │   └── SettingsStore.swift                 # UserDefaults ラッパー・ReadingMethod enum
 │   ├── Services/
+│   │   ├── Billing/
+│   │   │   ├── StoreService.swift              # StoreKit 2 商品取得・購入・復元・Transaction 監視
+│   │   │   ├── EntitlementStore.swift          # hasPro / isGrandfathered / hasAccess を @Published 管理
+│   │   │   ├── GrandfatherStore.swift          # Pro リリース前ユーザーへの永続無料アクセス判定
+│   │   │   ├── ProductIdentifier.swift         # SKU 定数（proMonthly / proYearly）
+│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative）
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
 │   │   ├── ContactsService.swift
@@ -132,13 +142,16 @@ meishi-app/
 │   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
 │   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
 │   ├── InsightsServiceTests.swift              # InsightsService の会社別・エリア別・職種別・月別集計
-│   └── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
+│   ├── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
+│   └── Billing/
+│       └── BillingTests.swift                  # GrandfatherStore・EntitlementStore・ProductIdentifier・PaywallContext
 ├── eMeishiUITests/
 │   ├── eMeishiUITests.swift                    # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
 │   ├── eMeishiUITestsLaunchTests.swift         # 起動テスト
 │   └── ScreenshotRunner.swift                  # App Store スクリーンショット撮影（CI では除外）
 ├── eMeishi-CI.xctestplan                           # CI 用テストプラン（ScreenshotRunner 除外）
 ├── eMeishi-Unit.xctestplan                         # PR Validation 用 Unit テストプラン（Unit テストのみ）
+├── Configuration.storekit                          # StoreKit Configuration（Xcode テスト用・proMonthly/proYearly・Family Sharing 有効）
 ├── scripts/
 │   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
 ├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
