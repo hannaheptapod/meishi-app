@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - 会社名判定
 
+@MainActor
 struct FieldDetectorCompanyTests {
 
     @Test func detectsJapaneseCompanySuffix() {
@@ -24,6 +25,7 @@ struct FieldDetectorCompanyTests {
 
 // MARK: - 部署名判定
 
+@MainActor
 struct FieldDetectorDepartmentTests {
 
     @Test func detectsDepartmentSuffix() {
@@ -54,6 +56,7 @@ struct FieldDetectorDepartmentTests {
 
 // MARK: - 役職判定
 
+@MainActor
 struct FieldDetectorJobTitleTests {
 
     @Test func detectsJapaneseTitle() {
@@ -80,6 +83,7 @@ struct FieldDetectorJobTitleTests {
 
 // MARK: - 建物名判定
 
+@MainActor
 struct FieldDetectorBuildingTests {
 
     @Test func detectsBuildingWithSuffix() {
@@ -109,6 +113,7 @@ struct FieldDetectorBuildingTests {
 
 // MARK: - 住所判定
 
+@MainActor
 struct FieldDetectorAddressTests {
 
     @Test func detectsPostalCode() {

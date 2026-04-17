@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - SpecialToken ID テスト
 
+@MainActor
 struct SpecialTokenTests {
 
     @Test func tokenIDsMatchQwenSpec() {
