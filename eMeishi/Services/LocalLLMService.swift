@@ -1,5 +1,5 @@
 import Foundation
-import CoreML
+@preconcurrency import CoreML
 import Accelerate
 import Combine
 import os
@@ -54,7 +54,7 @@ class LocalLLMService: ObservableObject {
     nonisolated(unsafe) private(set) var ffnModel:    MLModel? = nil
     nonisolated(unsafe) private(set) var lmheadModel: MLModel? = nil
     private(set) var tokenizer:   Qwen25Tokenizer? = nil
-    nonisolated(unsafe) private var ffnState: MLState? = nil  // iOS 18+ stateful KV cache
+    private var ffnState: MLState? = nil  // iOS 18+ stateful KV cache
 
     // MARK: - ファイルパス
 
