@@ -16,6 +16,7 @@ struct EMeishiApp: App {
     @State private var showPrivacyOverlay = false
     @State private var showQwenDownloadPrompt = false
     @State private var showCoreDataError = false
+    @State private var showGrandfatheredAnnouncement = false
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
     private let settings = SettingsStore.shared
@@ -59,6 +60,7 @@ struct EMeishiApp: App {
                 guard !isUITest else { return }
                 await startBillingServices()
                 checkAndPromptQwenDownload()
+                checkAndShowGrandfatheredAnnouncement()
             }
             .alert("データベースエラー", isPresented: $showCoreDataError) {
                 Button("OK") {}
@@ -69,6 +71,11 @@ struct EMeishiApp: App {
                 if persistenceController.loadError != nil {
                     showCoreDataError = true
                 }
+            }
+            .alert("eMeishi Pro が登場しました", isPresented: $showGrandfatheredAnnouncement) {
+                Button("OK") {}
+            } message: {
+                Text("既存のお客様には、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。")
             }
             .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
                 Button("ダウンロード（約570MB）") {
@@ -99,6 +106,14 @@ struct EMeishiApp: App {
         EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
         StoreService.shared.startTransactionListener()
         await EntitlementStore.shared.refresh()
+    }
+
+    /// Grandfather ユーザーへの Pro リリース初回告知
+    private func checkAndShowGrandfatheredAnnouncement() {
+        guard GrandfatherStore.shared.isGrandfathered,
+              !settings.didShowProAnnouncement else { return }
+        settings.didShowProAnnouncement = true
+        showGrandfatheredAnnouncement = true
     }
 
     /// Foundation Models 非対応端末で初回起動時に Qwen ダウンロードを促す

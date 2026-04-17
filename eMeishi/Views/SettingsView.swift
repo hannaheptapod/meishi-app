@@ -6,6 +6,7 @@ import FoundationModels
 struct SettingsView: View {
 
     @EnvironmentObject private var listViewModel: CardListViewModel
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @ObservedObject private var settings = SettingsStore.shared
 
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +14,7 @@ struct SettingsView: View {
     @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
+    @State private var isShowingPaywall = false
 #if DEBUG
     @State private var showSeedConfirm = false
 #endif
@@ -20,6 +22,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                proSection
                 iCloudSection
                 securitySection
                 advancedLinkSection
@@ -43,6 +46,10 @@ struct SettingsView: View {
                 Text("既存のデータは削除されません。")
             }
 #endif
+            .sheet(isPresented: $isShowingPaywall) {
+                PaywallView(context: .aiSearch)
+                    .environmentObject(entitlementStore)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -51,6 +58,34 @@ struct SettingsView: View {
                         Image(systemName: "xmark")
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Pro
+
+    private var proSection: some View {
+        Section("eMeishi Pro") {
+            if entitlementStore.hasPro {
+                Label("Pro 有効", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                ManageSubscriptionButton()
+            } else if entitlementStore.isGrandfathered {
+                Label("Founder アクセス（AI 自然言語検索 無料）", systemImage: "person.badge.clock.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                Button("Pro の新機能を見る") {
+                    isShowingPaywall = true
+                }
+            } else {
+                Button("eMeishi Pro にアップグレード") {
+                    isShowingPaywall = true
+                }
+                .fontWeight(.semibold)
+                Button("購入を復元") {
+                    Task { await StoreService.shared.restorePurchases() }
+                }
+                .foregroundStyle(.secondary)
             }
         }
     }
