@@ -36,6 +36,7 @@ struct EMeishiApp: App {
             ZStack {
                 rootView
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                    .environmentObject(EntitlementStore.shared)
 
                 // App Switcher プライバシーオーバーレイ
                 if showPrivacyOverlay {
@@ -56,6 +57,7 @@ struct EMeishiApp: App {
             }
             .task {
                 guard !isUITest else { return }
+                await startBillingServices()
                 checkAndPromptQwenDownload()
             }
             .alert("データベースエラー", isPresented: $showCoreDataError) {
@@ -90,6 +92,13 @@ struct EMeishiApp: App {
         } else {
             ContentView()
         }
+    }
+
+    private func startBillingServices() async {
+        GrandfatherStore.shared.evaluate()
+        EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
+        StoreService.shared.startTransactionListener()
+        await EntitlementStore.shared.refresh()
     }
 
     /// Foundation Models 非対応端末で初回起動時に Qwen ダウンロードを促す
