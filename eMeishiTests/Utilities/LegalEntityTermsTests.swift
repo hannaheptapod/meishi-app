@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - 法人格（LegalEntityTerms）テスト
 
+@MainActor
 struct LegalEntityTermsTests {
 
     // MARK: - stripKanji

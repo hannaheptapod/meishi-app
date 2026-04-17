@@ -4,6 +4,7 @@ import Foundation
 
 // MARK: - ExportService vCard テスト
 
+@MainActor
 struct ExportServiceVCardTests {
 
     let service = ExportService()

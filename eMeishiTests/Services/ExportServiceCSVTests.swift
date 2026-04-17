@@ -4,6 +4,7 @@ import Foundation
 
 // MARK: - ExportService CSV テスト
 
+@MainActor
 struct ExportServiceCSVTests {
 
     let service = ExportService()

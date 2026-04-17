@@ -2,19 +2,22 @@ import XCTest
 
 // MARK: - 名刺アプリ UIテスト
 
+@MainActor
 final class EMeishiUITests: XCTestCase {
 
     private var app: XCUIApplication!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
+        try await super.setUp()
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-UITestMode"]
         app.launch()
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         app = nil
+        try await super.tearDown()
     }
 
     // MARK: - ヘルパー

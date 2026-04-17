@@ -32,6 +32,7 @@ private func makeGroupCard(
 
 // MARK: - sectionKey テスト
 
+@MainActor
 struct CardGroupingServiceSectionKeyTests {
 
     // ひらがな各行

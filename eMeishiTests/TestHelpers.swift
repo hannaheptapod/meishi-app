@@ -7,11 +7,13 @@ import CoreGraphics
 // eMeishiTests 全 Suite で共通して使用するファクトリ関数。
 
 /// テスト用インメモリ CoreData コンテキストを生成する
+@MainActor
 func makeTestContext() -> NSManagedObjectContext {
     PersistenceController(inMemory: true).container.viewContext
 }
 
 /// テスト用 BusinessCard を生成する
+@MainActor
 func makeCard(
     context: NSManagedObjectContext,
     lastName: String? = nil,

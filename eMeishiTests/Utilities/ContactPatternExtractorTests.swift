@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - メールアドレス抽出
 
+@MainActor
 struct ContactPatternExtractorEmailTests {
 
     @Test func extractsStandardEmail() {
@@ -31,6 +32,7 @@ struct ContactPatternExtractorEmailTests {
 
 // MARK: - 電話番号抽出
 
+@MainActor
 struct ContactPatternExtractorPhoneTests {
 
     @Test func extractsHyphenatedLocalNumber() {
@@ -55,6 +57,7 @@ struct ContactPatternExtractorPhoneTests {
 
 // MARK: - URL 抽出
 
+@MainActor
 struct ContactPatternExtractorURLTests {
 
     @Test func extractsHttpsURL() {
@@ -84,6 +87,7 @@ struct ContactPatternExtractorURLTests {
 
 // MARK: - firstMatch / matches
 
+@MainActor
 struct ContactPatternExtractorMatchTests {
 
     @Test func firstMatchReturnsMatchedSubstring() {

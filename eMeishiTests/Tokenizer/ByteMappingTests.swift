@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - Qwen25Tokenizer バイトマッピング テスト
 
+@MainActor
 struct ByteMappingTests {
 
     // GPT-2方式の bytes_to_unicode が全256バイトを網羅するか

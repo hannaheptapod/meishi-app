@@ -1,4 +1,4 @@
-import CoreData
+@preconcurrency import CoreData
 import CloudKit
 import os
 
@@ -192,9 +192,10 @@ struct PersistenceController {
             object: nil,
             queue: .main
         ) { @Sendable _ in
-            AppLogger.persistence.info("iCloud アカウント状態が変化しました — 次回起動時に同期状態を再確認します")
-            // accountStatus を再確認してフラグを更新
-            Self.verifyCloudKitContainer()
+            Task { @MainActor in
+                AppLogger.persistence.info("iCloud アカウント状態が変化しました — 次回起動時に同期状態を再確認します")
+                Self.verifyCloudKitContainer()
+            }
         }
 
         // CloudKit 同期イベント（import / export / setup）のエラーをログに記録

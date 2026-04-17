@@ -57,35 +57,37 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - 初期化（新規作成）
 
-    init(context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
-         ocrService: OCRServiceProtocol = OCRService(),
-         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
-         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
-         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
-         settings: SettingsProviding = SettingsStore.shared) {
-        self.context = context
-        self.ocrService = ocrService
-        self.classifier = classifier
-        self.llmService = llmService
-        self.autoTagService = autoTagService
-        self.settings = settings
+    // デフォルト引数式は nonisolated で評価されるため @MainActor シングルトンを直接参照できない。
+    // ? = nil にして @MainActor な init 本体内で解決する。
+    init(context: NSManagedObjectContext? = nil,
+         ocrService: OCRServiceProtocol? = nil,
+         classifier: CardFieldClassifierProtocol? = nil,
+         llmService: LocalLLMServiceProtocol? = nil,
+         autoTagService: AutoTagServiceProtocol? = nil,
+         settings: SettingsProviding? = nil) {
+        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        self.ocrService   = ocrService   ?? OCRService()
+        self.classifier   = classifier   ?? CardFieldClassifier()
+        self.llmService   = llmService   ?? LocalLLMService.shared
+        self.autoTagService = autoTagService ?? AutoTagService.shared
+        self.settings     = settings     ?? SettingsStore.shared
     }
 
     // MARK: - 初期化（カメラ撮影画像からOCR）
 
     init(image: UIImage,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
-         ocrService: OCRServiceProtocol = OCRService(),
-         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
-         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
-         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
-         settings: SettingsProviding = SettingsStore.shared) {
-        self.context = context
-        self.ocrService = ocrService
-        self.classifier = classifier
-        self.llmService = llmService
-        self.autoTagService = autoTagService
-        self.settings = settings
+         context: NSManagedObjectContext? = nil,
+         ocrService: OCRServiceProtocol? = nil,
+         classifier: CardFieldClassifierProtocol? = nil,
+         llmService: LocalLLMServiceProtocol? = nil,
+         autoTagService: AutoTagServiceProtocol? = nil,
+         settings: SettingsProviding? = nil) {
+        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        self.ocrService   = ocrService   ?? OCRService()
+        self.classifier   = classifier   ?? CardFieldClassifier()
+        self.llmService   = llmService   ?? LocalLLMService.shared
+        self.autoTagService = autoTagService ?? AutoTagService.shared
+        self.settings     = settings     ?? SettingsStore.shared
         // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
         self.capturedImageData = image.jpegData(compressionQuality: 0.8)
         // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
@@ -104,18 +106,18 @@ class CardFormViewModel: ObservableObject {
     // MARK: - 初期化（切り抜き済み画像からOCR・矩形検出スキップ）
 
     init(croppedImage: UIImage,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
-         ocrService: OCRServiceProtocol = OCRService(),
-         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
-         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
-         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
-         settings: SettingsProviding = SettingsStore.shared) {
-        self.context = context
-        self.ocrService = ocrService
-        self.classifier = classifier
-        self.llmService = llmService
-        self.autoTagService = autoTagService
-        self.settings = settings
+         context: NSManagedObjectContext? = nil,
+         ocrService: OCRServiceProtocol? = nil,
+         classifier: CardFieldClassifierProtocol? = nil,
+         llmService: LocalLLMServiceProtocol? = nil,
+         autoTagService: AutoTagServiceProtocol? = nil,
+         settings: SettingsProviding? = nil) {
+        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        self.ocrService   = ocrService   ?? OCRService()
+        self.classifier   = classifier   ?? CardFieldClassifier()
+        self.llmService   = llmService   ?? LocalLLMService.shared
+        self.autoTagService = autoTagService ?? AutoTagService.shared
+        self.settings     = settings     ?? SettingsStore.shared
         self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
         self.isProcessingOCR = true
         ocrTask = Task { [weak self] in
@@ -127,19 +129,19 @@ class CardFormViewModel: ObservableObject {
     // MARK: - 初期化（既存カードの編集）
 
     init(card: BusinessCard,
-         context: NSManagedObjectContext = PersistenceController.shared.container.viewContext,
-         ocrService: OCRServiceProtocol = OCRService(),
-         classifier: CardFieldClassifierProtocol = CardFieldClassifier(),
-         llmService: LocalLLMServiceProtocol = LocalLLMService.shared,
-         autoTagService: AutoTagServiceProtocol = AutoTagService.shared,
-         settings: SettingsProviding = SettingsStore.shared) {
+         context: NSManagedObjectContext? = nil,
+         ocrService: OCRServiceProtocol? = nil,
+         classifier: CardFieldClassifierProtocol? = nil,
+         llmService: LocalLLMServiceProtocol? = nil,
+         autoTagService: AutoTagServiceProtocol? = nil,
+         settings: SettingsProviding? = nil) {
         self.card = card
-        self.context = context
-        self.ocrService = ocrService
-        self.classifier = classifier
-        self.llmService = llmService
-        self.autoTagService = autoTagService
-        self.settings = settings
+        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        self.ocrService   = ocrService   ?? OCRService()
+        self.classifier   = classifier   ?? CardFieldClassifier()
+        self.llmService   = llmService   ?? LocalLLMService.shared
+        self.autoTagService = autoTagService ?? AutoTagService.shared
+        self.settings     = settings     ?? SettingsStore.shared
         lastName        = card.lastName        ?? ""
         lastNameReading = card.lastNameReading ?? ""
         firstName       = card.firstName       ?? ""
