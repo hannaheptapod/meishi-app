@@ -17,6 +17,7 @@ import XCTest
 //
 // 命名規則: 01_form_ocr / 02_card_list / 03_ai_chat / 04_insights /
 //          05_duplicate / 06_tags
+@MainActor
 final class ScreenshotRunnerTests: XCTestCase {
 
     private var app: XCUIApplication!

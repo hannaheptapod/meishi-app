@@ -2,6 +2,7 @@ import XCTest
 
 // MARK: - 名刺アプリ UIテスト
 
+@MainActor
 final class EMeishiUITests: XCTestCase {
 
     private var app: XCUIApplication!

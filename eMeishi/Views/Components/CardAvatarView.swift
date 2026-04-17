@@ -95,7 +95,7 @@ struct CardAvatarView: View {
 #Preview("CardAvatarView パターン") { @MainActor in
     let context = PersistenceController.preview.container.viewContext
 
-    func makeCard(last: String?, first: String?, company: String?) -> BusinessCard {
+    let makeCard: @MainActor (String?, String?, String?) -> BusinessCard = { last, first, company in
         let c = BusinessCard(context: context)
         c.id = UUID()
         c.lastName = last
@@ -105,14 +105,14 @@ struct CardAvatarView: View {
     }
 
     let cards: [BusinessCard] = [
-        makeCard(last: "田中", first: "太郎", company: "株式会社サンプル"),
-        makeCard(last: "鈴木", first: nil,    company: nil),
-        makeCard(last: nil,    first: nil,    company: "Apple Inc."),
-        makeCard(last: nil,    first: nil,    company: nil),
-        makeCard(last: "田中", first: "次郎", company: nil),
-        makeCard(last: "田中", first: "三郎", company: nil),
-        makeCard(last: "佐藤", first: "花子", company: nil),
-        makeCard(last: "高橋", first: "一郎", company: nil),
+        makeCard("田中", "太郎", "株式会社サンプル"),
+        makeCard("鈴木", nil,    nil),
+        makeCard(nil,    nil,    "Apple Inc."),
+        makeCard(nil,    nil,    nil),
+        makeCard("田中", "次郎", nil),
+        makeCard("田中", "三郎", nil),
+        makeCard("佐藤", "花子", nil),
+        makeCard("高橋", "一郎", nil),
     ]
 
     return ScrollView {

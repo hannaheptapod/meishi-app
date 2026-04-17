@@ -4,6 +4,7 @@ import CoreGraphics
 
 // MARK: - CardFieldClassifier StructuredFields テスト
 
+@MainActor
 struct StructuredFieldsTests {
 
     let classifier = CardFieldClassifier()

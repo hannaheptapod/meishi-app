@@ -3,6 +3,7 @@ import Testing
 
 // MARK: - DuplicateChecker 類似度テスト
 
+@MainActor
 struct DuplicateCheckerSimilarityTests {
 
     let checker = DuplicateChecker()

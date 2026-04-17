@@ -136,6 +136,7 @@ struct FieldDetectorAddressTests {
 
 // MARK: - NLTagger 個人名判定
 
+@MainActor
 struct FieldDetectorNLTaggerTests {
 
     @Test func returnsFalseForSingleChar() {
