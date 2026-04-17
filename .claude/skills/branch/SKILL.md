@@ -52,6 +52,17 @@ git rev-parse --abbrev-ref HEAD
 git rev-parse --abbrev-ref HEAD
 ```
 
+### Step 1.5. リモートの最新状態を取得（必須）
+
+```bash
+git fetch origin
+git log --oneline -5 origin/develop
+```
+
+- **必ずここで `origin/develop` の直近コミットを確認する**
+- ローカルの develop がリモートより古い場合は `git pull origin develop` を実行してから分岐する
+- 直近のコミット内容（機能追加・Swift バージョン更新等）を把握し、実装に影響する変更がないか確認する
+
 ### Step 2. 未コミット変更を確認
 
 ```bash
