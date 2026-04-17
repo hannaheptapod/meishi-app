@@ -1,4 +1,4 @@
-@preconcurrency import CoreData
+import CoreData
 import CloudKit
 import os
 
@@ -178,7 +178,7 @@ struct PersistenceController {
         if !inMemory {
             container.viewContext.automaticallyMergesChangesFromParent = true
             // iCloud 同期時の競合解決ポリシー（最後の書き込みが勝つ）
-            container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+            container.viewContext.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
         }
 
         // iCloud 同期有効時、CloudKit Container の可用性をバックグラウンドで確認

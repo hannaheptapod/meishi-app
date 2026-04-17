@@ -154,6 +154,7 @@ meishi-app/
 
 - iOS 26.0 以降
 - Xcode 26.0 以降
+- **Swift 6.0 言語モード**（`SWIFT_VERSION = 6.0` / `SWIFT_STRICT_CONCURRENCY = complete`）
 - iPhone（実機推奨。シミュレータではAI機能が制限されます）
 
 ## ビルド

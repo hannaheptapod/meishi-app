@@ -124,23 +124,51 @@ fi
 # ci_scripts/ci_pre_xcodebuild.sh でも [SKIP] と明記済み。
 
 echo ""
-echo "=== Swift 言語モード ==="
-# Swift 6 移行完了後（Phase 6 完了時）に SWIFT_STRICT_CONCURRENCY を complete に昇格し、
-# SWIFT_VERSION = 6.0 に切替。それまでは targeted で警告のみ（Issue #147）
+echo "=== Swift 言語モード（Issue #147 Phase 6 で確定）==="
+# Swift 6 言語モード必須。SWIFT_VERSION = 6.0 / SWIFT_STRICT_CONCURRENCY = complete
+# を両 xcconfig で強制する。ダウングレードは Swift 5 の警告緩和設定と整合せず
+# regression を招くため禁止。
 REL_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$RELEASE_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
 DBG_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
-if [[ -n "$REL_STRICT" ]]; then
-  ok "SWIFT_STRICT_CONCURRENCY (Release) = $REL_STRICT"
+REL_SVER=$(grep -E "^SWIFT_VERSION\s*=" "$RELEASE_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+DBG_SVER=$(grep -E "^SWIFT_VERSION\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+if [[ "$REL_STRICT" == "complete" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Release) = complete"
 else
-  ok "SWIFT_STRICT_CONCURRENCY (Release) 未設定（minimal 相当）"
+  fail "SWIFT_STRICT_CONCURRENCY (Release) = '$REL_STRICT' （complete 必須）"
 fi
-if [[ -n "$DBG_STRICT" ]]; then
-  ok "SWIFT_STRICT_CONCURRENCY (Debug) = $DBG_STRICT"
+if [[ "$DBG_STRICT" == "complete" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Debug) = complete"
 else
-  ok "SWIFT_STRICT_CONCURRENCY (Debug) 未設定（minimal 相当）"
+  fail "SWIFT_STRICT_CONCURRENCY (Debug) = '$DBG_STRICT' （complete 必須）"
 fi
-# Phase 6 完了後はここで SWIFT_VERSION = 6.0 を強制チェックする（現在はスキップ）
-# TODO(swift6-phase6): SWIFT_VERSION = 6.0 チェック（project.pbxproj の全 6 構成）
+if [[ "$REL_SVER" == "6.0" ]]; then
+  ok "SWIFT_VERSION (Release) = 6.0"
+else
+  fail "SWIFT_VERSION (Release) = '$REL_SVER' （6.0 必須）"
+fi
+if [[ "$DBG_SVER" == "6.0" ]]; then
+  ok "SWIFT_VERSION (Debug) = 6.0"
+else
+  fail "SWIFT_VERSION (Debug) = '$DBG_SVER' （6.0 必須）"
+fi
+
+# project.pbxproj に SWIFT_VERSION = 5.x が残っていないか直接検証。
+# xcconfig は pbxproj に負けるため、xcconfig だけ見ると Swift 5 のまま
+# ビルドされる事故が起きる（Phase 7 で実際に発覚）。
+PBXPROJ="eMeishi.xcodeproj/project.pbxproj"
+SWIFT5_COUNT=$(grep -cE "SWIFT_VERSION = 5\." "$PBXPROJ" || true)
+SWIFT6_COUNT=$(grep -cE "SWIFT_VERSION = 6\." "$PBXPROJ" || true)
+if [[ "$SWIFT5_COUNT" == "0" ]]; then
+  ok "project.pbxproj に SWIFT_VERSION = 5.x 残骸なし"
+else
+  fail "project.pbxproj に SWIFT_VERSION = 5.x が $SWIFT5_COUNT 箇所残存（Xcode で Swift 6 に変更すること）"
+fi
+if [[ "$SWIFT6_COUNT" -ge 6 ]]; then
+  ok "project.pbxproj の SWIFT_VERSION = 6.x が $SWIFT6_COUNT 箇所（3 ターゲット × Debug/Release）"
+else
+  fail "project.pbxproj の SWIFT_VERSION = 6.x が $SWIFT6_COUNT 箇所のみ（6 箇所必須）"
+fi
 
 echo ""
 echo "=== Usage Description ==="

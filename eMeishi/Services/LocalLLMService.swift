@@ -1,4 +1,8 @@
 import Foundation
+// MLModel は Sendable 準拠がなく、`prediction(from:)` の async 呼び出し時に
+// 「sending 'self.xxxModel' risks causing data races」警告が 3 件発生する。
+// CoreML 全体を `@preconcurrency` で import して抑制する。
+// iOS 側で MLModel が Sendable になれば外せる見込み。
 @preconcurrency import CoreML
 import Accelerate
 import Combine
@@ -49,10 +53,11 @@ class LocalLLMService: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var isInferencing:    Bool = false
 
-    // MLModel は non-Sendable。@MainActor 内でのみアクセスするが Swift の sending 検査を回避するため unsafe
-    nonisolated(unsafe) private(set) var embedModel:  MLModel? = nil
-    nonisolated(unsafe) private(set) var ffnModel:    MLModel? = nil
-    nonisolated(unsafe) private(set) var lmheadModel: MLModel? = nil
+    // クラス全体が @MainActor のため全アクセスが MainActor 上で直列化される。
+    // （MLModel 自体は non-Sendable だが `@preconcurrency import CoreML` で吸収）
+    private(set) var embedModel:  MLModel? = nil
+    private(set) var ffnModel:    MLModel? = nil
+    private(set) var lmheadModel: MLModel? = nil
     private(set) var tokenizer:   Qwen25Tokenizer? = nil
     private var ffnState: MLState? = nil  // iOS 18+ stateful KV cache
 

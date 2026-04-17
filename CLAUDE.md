@@ -240,6 +240,18 @@ main
 - 検索フィルタ・エクスポート・一括削除などのビジネスロジックは View ではなく ViewModel に置く
 - 日本語コメントで処理内容を記述してよい
 
+### Swift 6 / actor isolation ルール（Issue #147 Phase 6/7 で確定）
+
+- **`SWIFT_VERSION = 6.0` / `SWIFT_STRICT_CONCURRENCY = complete` は `pre-build-check.sh` で強制**（ダウングレード禁止）
+- **サービス・ViewModel は `@MainActor` を型レベルで明示**する（例：`@MainActor final class ExportService: ObservableObject`）。メソッド単位の `@MainActor` は避ける
+- **並行ワーカーは `actor`** を使う（`OCRService` など）。MainActor 外の計算で UI 更新が必要な場合は呼び出し側で `await MainActor.run` を書かず、戻り値を `@MainActor` 側の caller で受け取る形にする
+- **`static let shared` は `@MainActor static let shared`** に統一（クラス全体が `@MainActor` なら省略可）
+- **`await MainActor.run {}` / `DispatchQueue.main.async {}` は原則禁止**。actor isolation で表現する
+- **`nonisolated(unsafe)` は最終手段**。使う場合はコメントで理由を必ず残す（例：`AppLogger` は iOS 26 SDK の `Logger.init @MainActor` 推論回避のため）
+- **`@preconcurrency import` は最小限**。現状は `LocalLLMService` の `CoreML` のみ（`MLModel.prediction(from:)` の sending 警告回避・Apple が Sendable 化したら除去予定）
+- **`NotificationCenter` の observer クロージャは `@Sendable`**（[PersistenceController.swift:194,207](eMeishi/App/PersistenceController.swift:194) 参照）。UI 更新が必要なら内部で `Task { @MainActor in ... }` を使う
+- **Sendable DTO**: View / ViewModel / Service 境界を越えるデータは `struct` で `Sendable` 準拠にする（[BusinessCardSnapshot](eMeishi/Models/BusinessCardSnapshot.swift) などを参照）。`NSManagedObject` を直接渡さない
+
 ---
 
 ## 権限・Info.plist
