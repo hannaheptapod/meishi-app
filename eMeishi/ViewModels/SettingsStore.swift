@@ -96,6 +96,11 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(hasPromptedInitialQwenDownload, forKey: Keys.hasPromptedInitialQwenDownload) }
     }
 
+    /// Grandfather ユーザーへの Pro リリース初回告知を表示済みかどうか
+    @Published var didShowProAnnouncement: Bool {
+        didSet { UserDefaults.standard.set(didShowProAnnouncement, forKey: Keys.didShowProAnnouncement) }
+    }
+
     // MARK: - 初期化
 
     private init() {
@@ -119,7 +124,8 @@ class SettingsStore: ObservableObject {
             Keys.iCloudSyncEnabled:                false,
             Keys.isAppLockEnabled:                 false,
             Keys.lockGracePeriodSeconds:           0,
-            Keys.hasPromptedInitialQwenDownload:   false
+            Keys.hasPromptedInitialQwenDownload:   false,
+            Keys.didShowProAnnouncement:           false
         ])
 
         let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
@@ -134,6 +140,7 @@ class SettingsStore: ObservableObject {
         isAppLockEnabled                   = ud.bool(forKey: Keys.isAppLockEnabled)
         lockGracePeriodSeconds             = ud.integer(forKey: Keys.lockGracePeriodSeconds)
         hasPromptedInitialQwenDownload     = ud.bool(forKey: Keys.hasPromptedInitialQwenDownload)
+        didShowProAnnouncement             = ud.bool(forKey: Keys.didShowProAnnouncement)
     }
 
     // MARK: - UserDefaults キー
@@ -149,5 +156,6 @@ class SettingsStore: ObservableObject {
         static let isAppLockEnabled                 = "isAppLockEnabled"
         static let lockGracePeriodSeconds           = "lockGracePeriodSeconds"
         static let hasPromptedInitialQwenDownload   = "hasPromptedInitialQwenDownload"
+        static let didShowProAnnouncement           = "didShowProAnnouncement"
     }
 }
