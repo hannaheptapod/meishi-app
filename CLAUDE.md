@@ -280,3 +280,14 @@ main
 - **HIG（Human Interface Guidelines）を参照する際は、まず sosumi MCP サーバーを使う。** `searchAppleDocumentation` で検索 → `fetchAppleDocumentation` で詳細取得（パス例：`design/human-interface-guidelines/foundations/color`）。必要に応じて `fetchAppleVideoTranscript` で関連 WWDC セッションも参照
 - **回答前に必ず一次情報を確認する。** スクリーンショット・ファイル・ログが提示されている場合はまず読む。カットオフ（2025年8月）以降の情報が含まれる可能性がある場合は WebSearch で確認してから答える。確認手段があるのに使わずに記憶だけで断言することは絶対禁止。
 - **App Store スクリーンショット撮影前に必ず `./scripts/shots-preflight.sh` を実行する。** シミュレータ shutdown → Dynamic Island 抑制（`SBSuppressDynamicIslandCompletely=true`）→ boot → ステータスバー固定（9:41・満充電・Wi-Fi 最大）を一括で行う。対象デバイスを絞る場合は `./scripts/shots-preflight.sh iphone` / `./scripts/shots-preflight.sh ipad`。UDID は `.asc/shots.settings.json` の `devices` から読む。撮影は `xcrun simctl io $UDID screenshot --mask=ignored` で取得すること
+
+## Billing / StoreKit 2 運用ルール
+
+- **Billing モジュール構成**: `Services/Billing/`（StoreService / EntitlementStore / GrandfatherStore / ProductIdentifier / PaywallContext）・`Views/Billing/`（PaywallView / PaywallFeatureListView / ManageSubscriptionButton）
+- **Product ID**: `com.emeishi.pro.monthly`（¥480/月）・`com.emeishi.pro.yearly`（¥3,200/年・7日間無料トライアル付）。変更時は `ProductIdentifier.swift` と `Configuration.storekit` を同時更新する
+- **EntitlementStore.hasAccess**: `hasPro || isGrandfathered` で Pro ゲートを判定する。View から直接 `hasPro` を参照しない
+- **GrandfatherStore**: Pro リリース前（MARKETING_VERSION < 1.1.0）に初回起動したユーザーに永続無料アクセスを付与。`UserDefaults("firstLaunchMarketingVersion")` + `NSUbiquitousKeyValueStore` で多デバイス同期
+- **ローカルテスト**: `Configuration.storekit` を Xcode Scheme の StoreKit Configuration に設定して Sandbox 不要でテストできる。Simulator で購入フローを通す場合はこのファイルを必ず使う
+- **Transaction 監視**: `StoreService.startTransactionListener()` は `eMeishiApp.init` ではなく `.task {}` 内から起動する（MainActor 制約）
+- **Paywall から遷移する画面は `EntitlementStore` を `.environmentObject()` で渡す**こと。`@EnvironmentObject` でないと実行時クラッシュになる
+- **PR 作成前にローカルテストを実行すること**（`xcodebuild test -scheme eMeishi -destination 'platform=iOS Simulator,name=iPhone 17'`）
