@@ -101,6 +101,14 @@ class SettingsStore: ObservableObject {
     private init() {
         let ud = UserDefaults.standard
 
+        // UITest モード起動時はアプリの永続化ドメインを消去し、シミュレータ残留状態
+        // （例: 前回実行でソートを昇順に切り替えた状態）の持ち込みを防ぐ。
+        // 本アプリのユーザー設定には影響しない（-UITestMode 引数は XCUITest 専用）。
+        if ProcessInfo.processInfo.arguments.contains("-UITestMode"),
+           let bundleID = Bundle.main.bundleIdentifier {
+            ud.removePersistentDomain(forName: bundleID)
+        }
+
         ud.register(defaults: [
             Keys.readingMethod:                    ReadingMethod.automatic.rawValue,
             Keys.duplicateThreshold:               0.75,
