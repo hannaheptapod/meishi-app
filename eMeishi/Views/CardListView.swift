@@ -23,8 +23,11 @@ struct CardListView: View {
     @State private var isShowingBulkDeleteConfirm = false
     @State private var isShowingBulkTagSheet = false
     @State private var isShowingAIChat = false
+    @State private var isShowingPaywall = false
     // スクリーンショット撮影モード用：CardFormView を OCR 完了状態のモックで開く
     @State private var isShowingMockOCRForm = false
+
+    @EnvironmentObject private var entitlementStore: EntitlementStore
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -55,14 +58,14 @@ struct CardListView: View {
             .searchable(text: $viewModel.searchText, prompt: "検索")
             .background {
                 SearchBarSparklesInjector(searchText: viewModel.searchText) {
-                    isShowingAIChat = true
+                    openAISearch()
                 }
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
             }
             .onSubmit(of: .search) {
                 if viewModel.filteredCards.isEmpty && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    isShowingAIChat = true
+                    openAISearch()
                 }
             }
             .toolbar {
@@ -174,6 +177,10 @@ struct CardListView: View {
                 AISearchChatView()
                     .environmentObject(viewModel)
             }
+            .sheet(isPresented: $isShowingPaywall) {
+                PaywallView(context: .aiSearch)
+                    .environmentObject(entitlementStore)
+            }
             // スクリーンショット撮影モード用：OCR 完了状態のモックフォームを表示
             .sheet(isPresented: $isShowingMockOCRForm) {
                 CardFormView(viewModelFactory: {
@@ -183,6 +190,14 @@ struct CardListView: View {
             }
         }
         .environmentObject(viewModel)
+    }
+
+    private func openAISearch() {
+        if entitlementStore.hasAccess {
+            isShowingAIChat = true
+        } else {
+            isShowingPaywall = true
+        }
     }
 
     /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
@@ -614,7 +629,7 @@ struct CardListView: View {
     private var aiSearchPrompt: some View {
         VStack(spacing: 12) {
             Button {
-                isShowingAIChat = true
+                openAISearch()
             } label: {
                 Label("AI検索で探す", systemImage: "sparkles")
                     .font(.subheadline)
