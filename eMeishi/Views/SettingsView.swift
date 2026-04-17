@@ -169,12 +169,10 @@ struct SettingsView: View {
                         ? "アプリロックを有効にするために認証してください"
                         : "アプリロックを無効にするために認証してください"
                     let success = await AuthenticationService.shared.authenticate(reason: reason)
-                    await MainActor.run {
-                        if success {
-                            settings.isAppLockEnabled = newValue
-                        }
-                        isTogglingLock = false
+                    if success {
+                        settings.isAppLockEnabled = newValue
                     }
+                    isTogglingLock = false
                 }
             }
         )

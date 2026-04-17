@@ -71,6 +71,7 @@ struct DuplicateChecker {
 
     /// ルールベースの結果にAI二次判定を加えた重複候補を返す
     /// ボーダーライン候補（閾値未満だがスコア0.5以上）を捕捉し、転職・会社名表記揺れを検出
+    @MainActor
     func findDuplicatesWithAI(in cards: [BusinessCard]) async -> [DuplicatePair] {
         var pairs = findDuplicates(in: cards)
 
@@ -95,7 +96,7 @@ struct DuplicateChecker {
 
         guard !candidates.isEmpty else { return pairs }
 
-        let readingMethod = await MainActor.run { SettingsStore.shared.readingMethod }
+        let readingMethod = SettingsStore.shared.readingMethod
         switch readingMethod {
         case .appleIntelligence:
             #if canImport(FoundationModels)

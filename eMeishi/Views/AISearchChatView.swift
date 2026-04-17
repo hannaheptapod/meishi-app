@@ -214,10 +214,8 @@ struct AISearchChatView: View {
                 cards: listViewModel.cards,
                 conversationHistory: messages
             )
-            await MainActor.run {
-                messages.append(response)
-                isSearching = false
-            }
+            messages.append(response)
+            isSearching = false
         }
     }
 }

@@ -44,12 +44,10 @@ struct LockScreenView: View {
         isAuthenticating = true
         Task {
             let success = await authService.authenticate(reason: "アプリのロックを解除")
-            await MainActor.run {
-                isAuthenticating = false
-                if success {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        isUnlocked = true
-                    }
+            isAuthenticating = false
+            if success {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    isUnlocked = true
                 }
             }
         }
