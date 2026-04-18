@@ -182,7 +182,7 @@ struct PaywallView: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 16) {
-                Link("利用規約", destination: URL(string: "https://hannaheptapod.github.io/meishi-app/terms-of-use.html")!)
+                Link("利用規約（Apple 標準 EULA）", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                 Link("プライバシーポリシー", destination: URL(string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html")!)
             }
             .font(.caption2)

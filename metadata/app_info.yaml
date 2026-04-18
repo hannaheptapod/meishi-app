@@ -6,6 +6,6 @@ primary_locale: ja
 privacy_policy_url: https://hannaheptapod.github.io/meishi-app/privacy-policy.html
 support_url: https://hannaheptapod.github.io/meishi-app/support.html
 marketing_url: https://hannaheptapod.github.io/meishi-app/
-terms_of_use_url: https://hannaheptapod.github.io/meishi-app/terms-of-use.html
+terms_of_use_url: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 age_rating: FOUR_PLUS
 pricing: FREEMIUM  # 1.1.0 から eMeishi Pro（月額/年額）を導入
