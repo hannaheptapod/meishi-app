@@ -6,10 +6,36 @@ struct DuplicateListView: View {
     @Binding var pairs: [DuplicatePair]
     let onMerge: () -> Void
 
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @State private var selectedPair: DuplicatePair? = nil
+    @State private var isShowingPaywall = false
 
     var body: some View {
         List {
+            if !entitlementStore.hasAccess {
+                Section {
+                    Button {
+                        isShowingPaywall = true
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("AI 重複検出を有効にする")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.primary)
+                                Text("表記揺れの重複候補を AI が追加で見つけます。eMeishi Pro でご利用いただけます。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
             if pairs.isEmpty {
                 ContentUnavailableView(
                     "重複なし",
@@ -34,6 +60,10 @@ struct DuplicateListView: View {
                 selectedPair = nil
                 onMerge()
             }
+        }
+        .sheet(isPresented: $isShowingPaywall) {
+            PaywallView(context: .duplicateAI)
+                .environmentObject(entitlementStore)
         }
     }
 }

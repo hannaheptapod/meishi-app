@@ -7,12 +7,17 @@ struct BulkTagAssignView: View {
     let onDismiss: () -> Void
 
     @EnvironmentObject private var viewModel: CardListViewModel
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @Environment(\.dismiss) private var dismiss
     @State private var isShowingTagManager = false
+    @State private var isShowingPaywall = false
+    @State private var isAutoTagging = false
+    @State private var autoTagResult: String? = nil
 
     var body: some View {
         NavigationStack {
             List {
+                aiAutoTagSection
                 if viewModel.allTags.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "tag.slash")
@@ -87,6 +92,74 @@ struct BulkTagAssignView: View {
                 TagManagementView()
                     .environmentObject(viewModel)
             }
+            .sheet(isPresented: $isShowingPaywall) {
+                PaywallView(context: .bulkRetag)
+                    .environmentObject(entitlementStore)
+            }
+        }
+    }
+
+    // MARK: - AI 一括リタグ（Pro 機能）
+
+    @ViewBuilder
+    private var aiAutoTagSection: some View {
+        Section {
+            if isAutoTagging {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("AI がタグを判定中...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Button {
+                    if entitlementStore.hasAccess {
+                        if viewModel.allTags.isEmpty {
+                            autoTagResult = "先にタグを 1 件以上作成してください"
+                        } else {
+                            Task { await runAutoTag() }
+                        }
+                    } else {
+                        isShowingPaywall = true
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI でタグを提案")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                            Text(entitlementStore.hasAccess
+                                 ? "選択した \(selectedCardIDs.count) 件に既存タグを自動で振り分けます"
+                                 : "eMeishi Pro でご利用いただけます")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                }
+            }
+            if let autoTagResult {
+                Text(autoTagResult)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func runAutoTag() async {
+        isAutoTagging = true
+        autoTagResult = nil
+        defer { isAutoTagging = false }
+        let result = await viewModel.bulkAutoTag(ids: selectedCardIDs)
+        if result.processed == 0 {
+            autoTagResult = "対象の名刺がありません"
+        } else {
+            autoTagResult = "\(result.processed) 件のうち \(result.tagged) 件にタグを追加しました"
         }
     }
 }
