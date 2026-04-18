@@ -284,7 +284,7 @@ main
 ## Billing / StoreKit 2 運用ルール
 
 - **Billing モジュール構成**: `Services/Billing/`（StoreService / EntitlementStore / GrandfatherStore / ProductIdentifier / PaywallContext）・`Views/Billing/`（PaywallView / PaywallFeatureListView / ManageSubscriptionButton）
-- **Product ID**: `com.emeishi.pro.monthly`（¥480/月）・`com.emeishi.pro.yearly`（¥3,200/年・7日間無料トライアル付）。変更時は `ProductIdentifier.swift` と `Configuration.storekit` を同時更新する
+- **Product ID**: `com.emeishi.pro.monthly`（¥500/月）・`com.emeishi.pro.yearly`（¥3,200/年・7日間無料トライアル付）。変更時は `ProductIdentifier.swift` と `Configuration.storekit` を同時更新する
 - **EntitlementStore.hasAccess**: `hasPro || isGrandfathered` で Pro ゲートを判定する。View から直接 `hasPro` を参照しない
 - **GrandfatherStore**: Pro リリース前（MARKETING_VERSION < 1.1.0）に初回起動したユーザーに永続無料アクセスを付与。`UserDefaults("firstLaunchMarketingVersion")` + `NSUbiquitousKeyValueStore` で多デバイス同期
 - **ローカルテスト**: `Configuration.storekit` を Xcode Scheme の StoreKit Configuration に設定して Sandbox 不要でテストできる。Simulator で購入フローを通す場合はこのファイルを必ず使う
