@@ -176,10 +176,16 @@ struct PaywallView: View {
             }
             .disabled(isPurchasing || isRestoring)
 
-            Text("購入は Apple ID に紐づきます。ファミリー共有対応。サブスクリプションは App Store で管理・解約できます。")
+            Text("購入は Apple ID に紐づきます。ファミリー共有対応。サブスクリプションは App Store で管理・解約できます。年額プランは 7 日間の無料トライアル後に自動更新されます。期間終了の 24 時間以上前に解約しない限り同一料金で更新されます。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+
+            HStack(spacing: 16) {
+                Link("利用規約（Apple 標準 EULA）", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                Link("プライバシーポリシー", destination: URL(string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html")!)
+            }
+            .font(.caption2)
         }
     }
 

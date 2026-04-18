@@ -5,10 +5,16 @@ import SwiftUI
 struct InsightsView: View {
 
     @State private var insights: InsightsService.Insights?
+    @State private var narrative: String? = nil
+    @State private var isGeneratingNarrative = false
+    @State private var narrativeError: String? = nil
+    @State private var isShowingPaywall = false
+    @EnvironmentObject private var entitlementStore: EntitlementStore
 
     var body: some View {
         List {
             if let insights = insights {
+                aiNarrativeSection(insights: insights)
                 // 概要
                 Section {
                     HStack {
@@ -92,6 +98,81 @@ struct InsightsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             insights = InsightsService.shared.generateInsights()
+        }
+        .sheet(isPresented: $isShowingPaywall) {
+            PaywallView(context: .insightsNarrative)
+                .environmentObject(entitlementStore)
+        }
+    }
+
+    // MARK: - AI ナラティブ（Pro 機能）
+
+    @ViewBuilder
+    private func aiNarrativeSection(insights: InsightsService.Insights) -> some View {
+        Section("AI で読み解く") {
+            if let narrative {
+                Text(narrative)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                Button {
+                    Task { await generateNarrative(insights: insights) }
+                } label: {
+                    Label("もう一度生成", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .disabled(isGeneratingNarrative)
+            } else if isGeneratingNarrative {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("AI が読み解いています...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let narrativeError {
+                Text(narrativeError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    if entitlementStore.hasAccess {
+                        Task { await generateNarrative(insights: insights) }
+                    } else {
+                        isShowingPaywall = true
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI に集計を読み解いてもらう")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                            Text(entitlementStore.hasAccess
+                                 ? "次にアプローチすべき層を AI が提案します"
+                                 : "eMeishi Pro でご利用いただけます")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+    }
+
+    private func generateNarrative(insights: InsightsService.Insights) async {
+        isGeneratingNarrative = true
+        narrativeError = nil
+        defer { isGeneratingNarrative = false }
+        do {
+            narrative = try await InsightsService.shared.generateNarrative(insights: insights)
+        } catch InsightsService.NarrativeError.unavailable {
+            narrativeError = "AI 解釈はこの端末では利用できません。Apple Intelligence 対応端末（iPhone 15 Pro 以降など）でご利用ください。"
+        } catch {
+            narrativeError = "AI 解釈の生成に失敗しました。しばらくしてから再試行してください。"
         }
     }
 

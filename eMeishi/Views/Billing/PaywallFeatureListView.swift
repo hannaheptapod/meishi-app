@@ -13,8 +13,9 @@ struct PaywallFeatureListView: View {
     private var features: [Feature] {
         var list: [Feature] = [
             Feature(icon: "magnifyingglass",        title: "AI 自然言語検索",            comingSoon: false),
-            Feature(icon: "tag",                    title: "AI 一括リタグ",              comingSoon: true),
-            Feature(icon: "chart.bar.doc.horizontal", title: "Insights AI 解釈",        comingSoon: true),
+            Feature(icon: "tag",                    title: "AI 一括リタグ",              comingSoon: false),
+            Feature(icon: "chart.bar.doc.horizontal", title: "Insights AI 解釈",        comingSoon: false),
+            Feature(icon: "person.2.slash",         title: "AI 重複検出",                comingSoon: false),
         ]
         // 現在の context に該当する機能を先頭へ
         if let idx = list.firstIndex(where: { $0.title == context.featureTitle }) {

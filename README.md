@@ -104,9 +104,11 @@ meishi-app/
 │   │   ├── Billing/
 │   │   │   ├── StoreService.swift              # StoreKit 2 商品取得・購入・復元・Transaction 監視
 │   │   │   ├── EntitlementStore.swift          # hasPro / isGrandfathered / hasAccess を @Published 管理
-│   │   │   ├── GrandfatherStore.swift          # Pro リリース前ユーザーへの永続無料アクセス判定
+│   │   │   ├── GrandfatherStore.swift          # Pro リリース前ユーザーへの永続無料アクセス判定（AppTransaction + ローカル痕跡フォールバック）
+│   │   │   ├── AppTransactionProviding.swift   # AppTransaction / iCloud KVS の Protocol 抽象化（テスト用差替え対応）
+│   │   │   ├── ExistingUserDetector.swift      # 既存ユーザー痕跡（CoreData 名刺有無 / SettingsStore 書き込みキー）の判定
 │   │   │   ├── ProductIdentifier.swift         # SKU 定数（proMonthly / proYearly）
-│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative）
+│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative / duplicateAI）
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
 │   │   ├── ContactsService.swift

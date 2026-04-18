@@ -1,9 +1,13 @@
 import Foundation
 import CoreData
+import os
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 // 人脈インサイトサービス
 // 名刺データをCoreData集約クエリで分析し、会社別・エリア別・職種別の統計を返す
-// LLM不使用・純粋なデータ集計
+// 集計部分は LLM 不使用、AI ナラティブ生成は Foundation Models（iOS 26+）を使用
 @MainActor
 class InsightsService {
 
@@ -180,5 +184,73 @@ class InsightsService {
         }
         return counts.map { MonthCount(label: $0.value.display, yearMonth: $0.key, count: $0.value.count) }
             .sorted { $0.yearMonth > $1.yearMonth }
+    }
+
+    // MARK: - AI ナラティブ（Pro 機能）
+
+    enum NarrativeError: Error {
+        case unavailable
+        case generationFailed
+    }
+
+    /// 集計結果を AI が読み解いた短い解説文を返す。
+    /// Foundation Models（iOS 26+ かつ Apple Intelligence 有効）が必要。
+    func generateNarrative(insights: Insights) async throws -> String {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            guard case .available = SystemLanguageModel.default.availability else {
+                throw NarrativeError.unavailable
+            }
+            let summary = buildSummaryForLLM(insights)
+            let instructions = """
+                あなたは名刺管理アプリのアナリストです。
+                ユーザーの名刺集計データを 3〜4 文の日本語で簡潔に読み解いてください。
+                以下の観点を盛り込みます:
+                  1. 人脈の偏り（業界・エリア・職種のうち目立つ傾向）
+                  2. 直近の動向（月別推移から見える変化）
+                  3. 次のアクション提案（どの層に再アプローチすべきか）
+                出力は敬体（です・ます調）。番号付き箇条書き禁止。装飾記号禁止。
+                """
+            let session = LanguageModelSession(instructions: instructions)
+            let options = GenerationOptions(temperature: 0.5)
+            do {
+                let response = try await session.respond(to: summary, options: options)
+                let text = String(describing: response.content)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { throw NarrativeError.generationFailed }
+                return text
+            } catch {
+                throw NarrativeError.generationFailed
+            }
+        }
+        #endif
+        throw NarrativeError.unavailable
+    }
+
+    /// LLM 入力用の集計サマリ（数値だけ・冗長な装飾なし）
+    private func buildSummaryForLLM(_ insights: Insights) -> String {
+        var lines: [String] = []
+        lines.append("総名刺数: \(insights.totalCards)枚")
+        if !insights.companyGroups.isEmpty {
+            let top = insights.companyGroups.prefix(5)
+                .map { "\($0.label)(\($0.count))" }.joined(separator: ", ")
+            lines.append("会社別 上位: \(top)")
+        }
+        if !insights.areaGroups.isEmpty {
+            let top = insights.areaGroups.prefix(5)
+                .map { "\($0.label)(\($0.count))" }.joined(separator: ", ")
+            lines.append("エリア別 上位: \(top)")
+        }
+        if !insights.roleCategoryGroups.isEmpty {
+            let top = insights.roleCategoryGroups.prefix(5)
+                .map { "\($0.label)(\($0.count))" }.joined(separator: ", ")
+            lines.append("職種別 上位: \(top)")
+        }
+        if !insights.monthlyTrend.isEmpty {
+            let recent = insights.monthlyTrend.prefix(6)
+                .map { "\($0.label):\($0.count)" }.joined(separator: ", ")
+            lines.append("月別推移（直近）: \(recent)")
+        }
+        return lines.joined(separator: "\n")
     }
 }

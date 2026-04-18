@@ -283,11 +283,21 @@ main
 
 ## Billing / StoreKit 2 運用ルール
 
-- **Billing モジュール構成**: `Services/Billing/`（StoreService / EntitlementStore / GrandfatherStore / ProductIdentifier / PaywallContext）・`Views/Billing/`（PaywallView / PaywallFeatureListView / ManageSubscriptionButton）
+- **Billing モジュール構成**: `Services/Billing/`（StoreService / EntitlementStore / GrandfatherStore / AppTransactionProviding / ExistingUserDetector / ProductIdentifier / PaywallContext）・`Views/Billing/`（PaywallView / PaywallFeatureListView / ManageSubscriptionButton）
 - **Product ID**: `com.emeishi.pro.monthly`（¥500/月）・`com.emeishi.pro.yearly`（¥3,200/年・7日間無料トライアル付）。変更時は `ProductIdentifier.swift` と `Configuration.storekit` を同時更新する
 - **EntitlementStore.hasAccess**: `hasPro || isGrandfathered` で Pro ゲートを判定する。View から直接 `hasPro` を参照しない
-- **GrandfatherStore**: Pro リリース前（MARKETING_VERSION < 1.1.0）に初回起動したユーザーに永続無料アクセスを付与。`UserDefaults("firstLaunchMarketingVersion")` + `NSUbiquitousKeyValueStore` で多デバイス同期
+- **GrandfatherStore**: Pro リリース前から使っていたユーザーに永続無料アクセスを付与。1.0.x には記録コードが存在しない前提のもと、優先度順に①UserDefaults pin → ②iCloud KVS pin → ③`AppTransaction.originalAppVersion` → ④CoreData/UserDefaults 痕跡（ExistingUserDetector）→ ⑤現バージョン pin（新規扱い）の 5 段で判定する。pin は UserDefaults + iCloud KVS の両方に書き込む
 - **ローカルテスト**: `Configuration.storekit` を Xcode Scheme の StoreKit Configuration に設定して Sandbox 不要でテストできる。Simulator で購入フローを通す場合はこのファイルを必ず使う
 - **Transaction 監視**: `StoreService.startTransactionListener()` は `eMeishiApp.init` ではなく `.task {}` 内から起動する（MainActor 制約）
 - **Paywall から遷移する画面は `EntitlementStore` を `.environmentObject()` で渡す**こと。`@EnvironmentObject` でないと実行時クラッシュになる
+- **Pro ゲート対象**: AI 自然言語検索（`CardListView.openAISearch`）／AI 重複検出（`CardListViewModel.detectDuplicates` の AI 二次判定）／AI 一括リタグ（`BulkTagAssignView` + `CardListViewModel.bulkAutoTag`）／Insights AI 解釈（`InsightsView` + `InsightsService.generateNarrative`）。いずれも `EntitlementStore.shared.hasAccess` で判定し、未加入時は `PaywallView` シートで案内する
 - **PR 作成前にローカルテストを実行すること**（`xcodebuild test -scheme eMeishi -destination 'platform=iOS Simulator,name=iPhone 17'`）
+
+### バージョン境界・ブートストラップ問題の教訓（v1.1.0 Grandfather 欠陥）
+
+- **過去バージョンのユーザーを特別扱いするロジックは、境界の両側のコードを読んで「過去バージョンに何が書かれていたか／書かれていなかったか」を必ず `git show` / 旧タグ checkout で確認する**
+  - Why: 1.1.0 の `GrandfatherStore` で、1.0.x 側に `firstLaunchMarketingVersion` を書き込むコードが存在しないことを見落とし、結果として 1.0.x → 1.1.0 アップデート時に既存ユーザー全員が Grandfather から外れる欠陥を本番直前まで通した
+  - How to apply: `firstLaunch*` / `installVersion` / `migrationVersion` などの「永続化された境界マーカー」を参照する実装は、必ずマーカーが書き込まれる経路（誰がいつ書くか）を旧コードで grep してから書く
+- **サブエージェントの "コード一致確認" 報告は鵜呑みにしない。Critical パス（課金・認証・判定ロジック）は必ずメインエージェントが実ファイルを Read する**
+  - Why: Explore subagent の「`proReleaseVersion = "1.1.0"` で OK ✓」の報告だけを信用し、`evaluate()` 本体に欠陥があったことを見抜けなかった
+  - How to apply: 課金・認証・グランドファザー判定など金銭・アクセス制御に直結するコードは、subagent の要約だけで判断せず、必ず該当ファイルを Read してロジック全体を読む

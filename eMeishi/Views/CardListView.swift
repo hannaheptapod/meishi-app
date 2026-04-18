@@ -168,6 +168,7 @@ struct CardListView: View {
                     }
                 )
                 .environmentObject(viewModel)
+                .environmentObject(entitlementStore)
             }
             .onAppear {
                 viewModel.fetchCards()
