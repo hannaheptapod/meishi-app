@@ -102,7 +102,7 @@ struct EMeishiApp: App {
     }
 
     private func startBillingServices() async {
-        GrandfatherStore.shared.evaluate()
+        await GrandfatherStore.shared.evaluate()
         EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
         StoreService.shared.startTransactionListener()
         await EntitlementStore.shared.refresh()
