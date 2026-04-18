@@ -1,44 +1,102 @@
 import Foundation
+import StoreKit
 
 // 1.1.0 より前のバージョンで初回起動したユーザーは AI 自然言語検索を Pro なしで利用できる。
-// firstLaunchMarketingVersion を UserDefaults + iCloud Key-Value Store に保存し、
-// 機種変更後も復元できるようにする。
+//
+// ⚠️ 1.0.x には firstLaunchMarketingVersion を記録するコードが入っていなかった。
+// そのため 1.1.0 初回起動時点では UserDefaults / iCloud KVS は空になる。
+// この前提の上で「1.1.0 より前から使っていたか」を複数の信号から推定する：
+//
+//   1. UserDefaults に過去の判定結果が pin されていれば採用（冪等性）
+//   2. iCloud KVS に pin があれば UserDefaults へ昇格（機種変復元）
+//   3. AppTransaction.originalAppVersion が取れれば真実の値として採用
+//   4. AppTransaction が未検証／取得失敗なら、ローカル痕跡（名刺・設定書き込み）で判定
+//   5. どれも該当しなければ現バージョンを pin（= 新規扱い）
+//
+// sentinel "0.0.0" は「既存ユーザー（Grandfather 付与対象）」を示す pin 値。
+// pin は UserDefaults + iCloud KVS 両方に書き込み、2 回目以降は必ずステップ 1/2 で確定する。
 @MainActor
 final class GrandfatherStore {
 
-    static let shared = GrandfatherStore()
+    static let shared = GrandfatherStore(
+        transactionProvider: LiveAppTransactionProvider(),
+        detector: LiveExistingUserDetector(persistenceController: .shared),
+        ubiquitousStore: LiveUbiquitousKeyValueStore(),
+        currentVersionProvider: {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        }
+    )
 
     private let proReleaseVersion = "1.1.0"
     private let udKey = "firstLaunchMarketingVersion"
+    private let grandfatherSentinel = "0.0.0"
+
+    private let transactionProvider: AppTransactionProviding
+    private let detector: ExistingUserDetector
+    private let ubiquitousStore: UbiquitousKeyValueStoring
+    private let currentVersionProvider: () -> String
 
     private(set) var isGrandfathered = false
 
-    private init() {}
+    init(
+        transactionProvider: AppTransactionProviding,
+        detector: ExistingUserDetector,
+        ubiquitousStore: UbiquitousKeyValueStoring,
+        currentVersionProvider: @escaping () -> String
+    ) {
+        self.transactionProvider = transactionProvider
+        self.detector = detector
+        self.ubiquitousStore = ubiquitousStore
+        self.currentVersionProvider = currentVersionProvider
+    }
 
-    func evaluate() {
-        let first = resolvedFirstLaunchVersion()
-        isGrandfathered = isBefore(first, proReleaseVersion)
+    func evaluate() async {
+        let resolved = await resolvedFirstLaunchVersion()
+        isGrandfathered = isBefore(resolved, proReleaseVersion)
     }
 
     // MARK: - Private
 
-    private func resolvedFirstLaunchVersion() -> String {
+    private func resolvedFirstLaunchVersion() async -> String {
         let ud = UserDefaults.standard
-        let iCloud = NSUbiquitousKeyValueStore.default
-        let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
 
+        // 1. UserDefaults に pin 済み → そのまま採用
         if let local = ud.string(forKey: udKey) {
             return local
         }
-        if let remote = iCloud.string(forKey: udKey) {
+
+        // 2. iCloud KVS に pin があれば UserDefaults へ昇格（機種変後の復元）
+        if let remote = ubiquitousStore.getString(forKey: udKey) {
             ud.set(remote, forKey: udKey)
             return remote
         }
-        // 初回記録
-        ud.set(current, forKey: udKey)
-        iCloud.set(current, forKey: udKey)
-        iCloud.synchronize()
+
+        // 3. AppTransaction.originalAppVersion で真実を取得
+        if let original = await transactionProvider.originalAppVersion() {
+            if isBefore(original, proReleaseVersion) {
+                pin(grandfatherSentinel, ud: ud)
+                return grandfatherSentinel
+            } else {
+                pin(original, ud: ud)
+                return original
+            }
+        }
+
+        // 4. フォールバック: ローカルに既存ユーザー痕跡があれば Grandfather 扱い
+        if detector.hasExistingUserSignals() {
+            pin(grandfatherSentinel, ud: ud)
+            return grandfatherSentinel
+        }
+
+        // 5. どの信号もなければ新規ユーザー。現バージョンを pin
+        let current = currentVersionProvider()
+        pin(current, ud: ud)
         return current
+    }
+
+    private func pin(_ version: String, ud: UserDefaults) {
+        ud.set(version, forKey: udKey)
+        ubiquitousStore.setString(version, forKey: udKey)
     }
 
     private func isBefore(_ version: String, _ threshold: String) -> Bool {

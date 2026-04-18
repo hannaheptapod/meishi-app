@@ -257,6 +257,18 @@ struct PersistenceController {
     }
 }
 
+// MARK: - Grandfather 判定用ヘルパー
+
+extension PersistenceController {
+    /// BusinessCard の件数を軽量に取得する（Grandfather フォールバック判定で利用）。
+    /// 失敗時は 0 を返し、判定側は「既存ユーザー痕跡なし」として振る舞う。
+    @MainActor
+    func businessCardCount() -> Int {
+        let request = BusinessCard.fetchRequest()
+        return (try? container.viewContext.count(for: request)) ?? 0
+    }
+}
+
 // MARK: - URI 文字列から BusinessCard を解決するヘルパー
 // DuplicatePair の Sendable 化に伴い、View 側で URI 文字列から BusinessCard を
 // 復元する必要が生じたため、PersistentStoreCoordinator 経由の解決を集約する。
