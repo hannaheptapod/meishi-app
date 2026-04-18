@@ -75,7 +75,7 @@ struct EMeishiApp: App {
             .alert("eMeishi Pro が登場しました", isPresented: $showGrandfatheredAnnouncement) {
                 Button("OK") {}
             } message: {
-                Text("既存のお客様には、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。")
+                Text("既存ユーザーには、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。")
             }
             .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
                 Button("ダウンロード（約570MB）") {

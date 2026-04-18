@@ -71,7 +71,7 @@ struct SettingsView: View {
                     .foregroundStyle(.green)
                 ManageSubscriptionButton()
             } else if entitlementStore.isGrandfathered {
-                Label("Founder アクセス（AI 自然言語検索 無料）", systemImage: "person.badge.clock.fill")
+                Label("既存ユーザー特典（AI 自然言語検索 無料）", systemImage: "person.badge.clock.fill")
                     .foregroundStyle(.secondary)
                     .font(.subheadline)
                 Button("Pro の新機能を見る") {
