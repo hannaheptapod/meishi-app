@@ -16,6 +16,7 @@ struct PaywallView: View {
     @State private var isRestoring = false
     @State private var errorMessage: String? = nil
     @State private var selectedProductID: String? = nil
+    @State private var loadFailed = false
 
     private var yearlyProduct: Product? { products.first { $0.id == ProductIdentifier.proYearly.rawValue } }
     private var monthlyProduct: Product? { products.first { $0.id == ProductIdentifier.proMonthly.rawValue } }
@@ -96,17 +97,29 @@ struct PaywallView: View {
 
     private var productSection: some View {
         VStack(spacing: 12) {
-            if products.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding()
-            } else {
+            if !products.isEmpty {
                 if let yearly = yearlyProduct {
                     productButton(yearly, badge: "7日間無料トライアル付き")
                 }
                 if let monthly = monthlyProduct {
                     productButton(monthly, badge: nil)
                 }
+            } else if loadFailed {
+                VStack(spacing: 8) {
+                    Text("商品を読み込めませんでした")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("再試行") {
+                        Task { await loadProducts() }
+                    }
+                    .font(.subheadline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
             }
         }
     }
@@ -173,8 +186,10 @@ struct PaywallView: View {
     // MARK: - Actions
 
     private func loadProducts() async {
+        loadFailed = false
         products = await StoreService.shared.fetchProducts()
             .sorted { $0.price > $1.price }
+        if products.isEmpty { loadFailed = true }
     }
 
     private func purchase(_ product: Product) async {

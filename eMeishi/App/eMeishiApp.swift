@@ -106,6 +106,7 @@ struct EMeishiApp: App {
         EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
         StoreService.shared.startTransactionListener()
         await EntitlementStore.shared.refresh()
+        await StoreService.shared.prefetch()
     }
 
     /// Grandfather ユーザーへの Pro リリース初回告知

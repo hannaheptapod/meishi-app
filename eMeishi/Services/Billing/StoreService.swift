@@ -6,6 +6,7 @@ final class StoreService {
     static let shared = StoreService()
 
     private var transactionListener: Task<Void, Error>?
+    private var cachedProducts: [Product] = []
 
     private init() {}
 
@@ -21,9 +22,20 @@ final class StoreService {
         }
     }
 
+    func prefetch() async {
+        guard cachedProducts.isEmpty else { return }
+        cachedProducts = await loadFromStore()
+    }
+
     // MARK: - 商品取得
 
     func fetchProducts() async -> [Product] {
+        if !cachedProducts.isEmpty { return cachedProducts }
+        cachedProducts = await loadFromStore()
+        return cachedProducts
+    }
+
+    private func loadFromStore() async -> [Product] {
         let ids = Set(ProductIdentifier.allCases.map(\.rawValue))
         return (try? await Product.products(for: ids)) ?? []
     }
