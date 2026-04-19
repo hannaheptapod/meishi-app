@@ -11,6 +11,8 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
+
     @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
@@ -110,6 +112,28 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
+            if PersistenceController.shared.iCloudSyncEnabled && !cloudKitFailed {
+                if syncMonitor.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("同期中...").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        syncMonitor.triggerSync()
+                    } label: {
+                        Label("今すぐ同期", systemImage: "arrow.triangle.2.circlepath.icloud")
+                    }
+                }
+                if let date = syncMonitor.lastSyncDate {
+                    LabeledContent("最終同期", value: lastSyncText(date))
+                        .foregroundStyle(syncMonitor.lastSyncFailed ? .orange : .primary)
+                } else if syncMonitor.lastSyncFailed {
+                    Label("同期に失敗しました", systemImage: "exclamationmark.icloud")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
         } header: {
             Text("iCloud")
         } footer: {
@@ -124,6 +148,24 @@ struct SettingsView: View {
         } message: {
             Text("iCloud同期の設定変更はアプリを再起動すると反映されます。")
         }
+    }
+
+    private func lastSyncText(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.unitsStyle = .full
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "たった今"
+        }
+        if interval < 86400 {
+            return formatter.localizedString(for: date, relativeTo: Date())
+        }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "ja_JP")
+        df.dateStyle = .short
+        df.timeStyle = .short
+        return df.string(from: date)
     }
 
     // MARK: - 高度な設定（リンク）
