@@ -1,3 +1,4 @@
+import Combine
 import CoreData
 
 // iCloud 同期状態を監視し、最終同期日時と進行中フラグを提供するサービス
