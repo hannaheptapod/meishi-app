@@ -27,26 +27,29 @@ final class CloudSyncMonitor: ObservableObject {
             object: PersistenceController.shared.container,
             queue: nil
         ) { @Sendable notification in
+            // Notification は Sendable でないため、Sendable な値だけ抽出してから MainActor へ渡す
+            let event = notification.userInfo?[
+                NSPersistentCloudKitContainer.eventNotificationUserInfoKey
+            ] as? NSPersistentCloudKitContainer.Event
+            let endDate: Date? = event?.endDate
+            let failed: Bool = event?.error != nil
             Task { @MainActor in
-                CloudSyncMonitor.shared.handleSyncEvent(notification)
+                CloudSyncMonitor.shared.handleEvent(endDate: endDate, failed: failed)
             }
         }
     }
 
-    private func handleSyncEvent(_ notification: Notification) {
-        guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
-                as? NSPersistentCloudKitContainer.Event else { return }
-
-        if event.endDate == nil {
+    private func handleEvent(endDate: Date?, failed: Bool) {
+        if endDate == nil {
             isSyncing = true
         } else {
             fallbackTask?.cancel()
             isSyncing = false
-            if event.error == nil, let end = event.endDate {
+            if let end = endDate, !failed {
                 lastSyncDate = end
                 lastSyncFailed = false
                 UserDefaults.standard.set(end.timeIntervalSinceReferenceDate, forKey: Self.lastSyncKey)
-            } else if event.error != nil {
+            } else if failed {
                 lastSyncFailed = true
             }
         }
