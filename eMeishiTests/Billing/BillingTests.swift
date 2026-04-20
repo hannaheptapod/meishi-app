@@ -36,6 +36,15 @@ struct GrandfatherStoreTests {
         func setString(_ value: String, forKey key: String) { storage[key] = value }
     }
 
+    // CloudKit Private DB の GrandfatherMark を in-memory でシミュレート。
+    final class InMemoryCloudSync: GrandfatherCloudSyncing, @unchecked Sendable {
+        private var markExists: Bool
+        private(set) var writeCallCount = 0
+        init(initialMarkExists: Bool = false) { self.markExists = initialMarkExists }
+        func fetchMark() async -> Bool { markExists }
+        func writeMark() async { markExists = true; writeCallCount += 1 }
+    }
+
     // MARK: - Helpers
 
     private func cleanupUD() {
@@ -46,12 +55,14 @@ struct GrandfatherStoreTests {
         transaction: String?,
         hasSignals: Bool = false,
         iCloud: UbiquitousKeyValueStoring = InMemoryUbiquitousKVStore(),
+        cloudSync: GrandfatherCloudSyncing = InMemoryCloudSync(),
         currentVersion: String = "1.1.0"
     ) -> GrandfatherStore {
         GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: transaction),
             detector: MockExistingUserDetector(hasSignals: hasSignals),
             ubiquitousStore: iCloud,
+            cloudSync: cloudSync,
             currentVersionProvider: { currentVersion }
         )
     }
@@ -192,6 +203,7 @@ struct GrandfatherStoreTests {
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
             ubiquitousStore: InMemoryUbiquitousKVStore(),
+            cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
         await store.evaluate()
@@ -216,6 +228,7 @@ struct GrandfatherStoreTests {
             transactionProvider: MockAppTransactionProvider(version: "1.0.2"),
             detector: detector,
             ubiquitousStore: InMemoryUbiquitousKVStore(),
+            cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
         await store.evaluate()
@@ -238,6 +251,7 @@ struct GrandfatherStoreTests {
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
             ubiquitousStore: InMemoryUbiquitousKVStore(),
+            cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
         await store.evaluate()
@@ -257,11 +271,65 @@ struct GrandfatherStoreTests {
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
             ubiquitousStore: InMemoryUbiquitousKVStore(),
+            cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
         await store.evaluate()
 
         let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == false)
+    }
+
+    // MARK: - シナリオ 14: iPad 初回起動で CloudKit GrandfatherMark が既にある → 即昇格
+
+    @Test func syncWithCloudKit_upgradesFromCloudMark() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: true)
+        let store = makeStore(
+            transaction: nil,
+            hasSignals: false,
+            cloudSync: cloud,
+            currentVersion: "1.1.0"
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == false)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "1.1.0")
+
+        let changed = await store.syncWithCloudKit()
+        #expect(changed == true)
+        #expect(store.isGrandfathered == true)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
+    }
+
+    // MARK: - シナリオ 15: iPhone で Grandfather 判定済み → CloudKit にマーク書き込み
+
+    @Test func syncWithCloudKit_writesMarkWhenGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: false)
+        let store = makeStore(
+            transaction: "1.0.2",
+            cloudSync: cloud
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        _ = await store.syncWithCloudKit()
+        #expect(cloud.writeCallCount == 1)
+    }
+
+    // MARK: - シナリオ 16: CloudKit にマークなし・Grandfather 判定もなし → 昇格しない
+
+    @Test func syncWithCloudKit_noMarkNoSignalsStaysNonGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: false)
+        let store = makeStore(
+            transaction: nil,
+            hasSignals: false,
+            cloudSync: cloud
+        )
+        await store.evaluate()
+        let changed = await store.syncWithCloudKit()
         #expect(changed == false)
         #expect(store.isGrandfathered == false)
     }

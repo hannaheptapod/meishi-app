@@ -107,6 +107,8 @@ struct EMeishiApp: App {
 
     private func startBillingServices() async {
         await GrandfatherStore.shared.evaluate()
+        // CloudKit 上の GrandfatherMark で 2 台目デバイスでも確実に Grandfather を引き継ぐ
+        await GrandfatherStore.shared.syncWithCloudKit()
         EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
         observeCloudKitSyncForGrandfatherRecheck()
         StoreService.shared.startTransactionListener()

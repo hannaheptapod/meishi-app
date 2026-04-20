@@ -22,6 +22,7 @@ final class GrandfatherStore {
         transactionProvider: LiveAppTransactionProvider(),
         detector: LiveExistingUserDetector(persistenceController: .shared),
         ubiquitousStore: LiveUbiquitousKeyValueStore(),
+        cloudSync: LiveGrandfatherCloudSync(),
         currentVersionProvider: {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         }
@@ -34,6 +35,7 @@ final class GrandfatherStore {
     private let transactionProvider: AppTransactionProviding
     private let detector: ExistingUserDetector
     private let ubiquitousStore: UbiquitousKeyValueStoring
+    private let cloudSync: GrandfatherCloudSyncing
     private let currentVersionProvider: () -> String
 
     private(set) var isGrandfathered = false
@@ -42,17 +44,48 @@ final class GrandfatherStore {
         transactionProvider: AppTransactionProviding,
         detector: ExistingUserDetector,
         ubiquitousStore: UbiquitousKeyValueStoring,
+        cloudSync: GrandfatherCloudSyncing,
         currentVersionProvider: @escaping () -> String
     ) {
         self.transactionProvider = transactionProvider
         self.detector = detector
         self.ubiquitousStore = ubiquitousStore
+        self.cloudSync = cloudSync
         self.currentVersionProvider = currentVersionProvider
     }
 
     func evaluate() async {
         let resolved = await resolvedFirstLaunchVersion()
         isGrandfathered = isBefore(resolved, proReleaseVersion)
+    }
+
+    /// CloudKit Private DB の GrandfatherMark とローカル状態を同期する。
+    ///
+    /// CoreData の CloudKit 同期（遅延あり・unreliable）や KVS（entitlement 未設定で
+    /// device-local）に頼らず、専用 CKRecord でデバイス間 Grandfather 状態を共有する。
+    ///
+    /// - 既に Grandfather 判定済みなら CloudKit にマークを push（冪等）
+    /// - 新規扱い pin（proReleaseVersion 以上）のまま未判定なら CloudKit を fetch し、
+    ///   マークが存在すれば sentinel に昇格する
+    @discardableResult
+    func syncWithCloudKit() async -> Bool {
+        if isGrandfathered {
+            await cloudSync.writeMark()
+            return false
+        }
+
+        let ud = UserDefaults.standard
+        guard let pinned = ud.string(forKey: udKey),
+              pinned != grandfatherSentinel,
+              !isBefore(pinned, proReleaseVersion) else {
+            return false
+        }
+
+        guard await cloudSync.fetchMark() else { return false }
+
+        pin(grandfatherSentinel, ud: ud)
+        isGrandfathered = true
+        return true
     }
 
     /// CloudKit 初回 import 完了後などに呼ぶ「昇格専用」再評価。
