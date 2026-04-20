@@ -238,6 +238,9 @@ struct CardListView: View {
             }
         }
 
+        // 選択ボタンと 3点メニューを独立したガラス容器に分ける（純正メール準拠）
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+
         // 右上: 3点メニュー
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
