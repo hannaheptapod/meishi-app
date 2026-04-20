@@ -58,6 +58,10 @@ struct EMeishiApp: App {
             }
             .task {
                 guard !isUITest else { return }
+                // 起動時に初期化して、設定画面を開く前から同期イベントを記録する
+                if PersistenceController.shared.iCloudSyncEnabled {
+                    _ = CloudSyncMonitor.shared
+                }
                 await startBillingServices()
                 checkAndPromptQwenDownload()
                 checkAndShowGrandfatheredAnnouncement()
