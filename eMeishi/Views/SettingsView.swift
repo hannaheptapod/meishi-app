@@ -12,15 +12,11 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
-    @ObservedObject private var zoneReset = CloudKitZoneResetService.shared
 
     @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
     @State private var isShowingPaywall = false
-    @State private var showZoneResetConfirm = false
-    @State private var showZoneResetResult = false
-    @State private var zoneResetSucceeded = false
 #if DEBUG
     @State private var showSeedConfirm = false
 #endif
@@ -138,24 +134,6 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            if settings.iCloudSyncEnabled {
-                Button(role: .destructive) {
-                    showZoneResetConfirm = true
-                } label: {
-                    if zoneReset.isResetting {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("リセット中...").foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Label("iCloud同期をリセット", systemImage: "arrow.counterclockwise.icloud")
-                    }
-                }
-                .disabled(zoneReset.isResetting)
-                if let err = zoneReset.lastError {
-                    Text(err).font(.caption).foregroundStyle(.red)
-                }
-            }
         } header: {
             Text("iCloud")
         } footer: {
@@ -169,34 +147,6 @@ struct SettingsView: View {
             Button("OK") {}
         } message: {
             Text("iCloud同期の設定変更はアプリを再起動すると反映されます。")
-        }
-        .confirmationDialog(
-            "iCloud同期をリセットしますか？",
-            isPresented: $showZoneResetConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("リセット", role: .destructive) {
-                Task {
-                    let ok = await zoneReset.resetCoreDataZone()
-                    zoneResetSucceeded = ok
-                    if ok { settings.iCloudSyncEnabled = false }
-                    showZoneResetResult = true
-                }
-            }
-        } message: {
-            Text("iCloud上の名刺データを削除します。この端末のローカルデータは残ります。他のデバイスでiCloud同期を有効にしていると、そちらのクラウド側データも影響を受けます。\n\n同期の不具合が続く場合のリカバリ手段です。")
-        }
-        .alert(
-            zoneResetSucceeded ? "リセットしました" : "リセットに失敗しました",
-            isPresented: $showZoneResetResult
-        ) {
-            Button("OK") {}
-        } message: {
-            if zoneResetSucceeded {
-                Text("iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にすると、ローカルのデータがクラウドに再アップロードされます。")
-            } else {
-                Text(zoneReset.lastError ?? "時間をおいて再度お試しください。")
-            }
         }
     }
 
@@ -379,8 +329,12 @@ private struct AdvancedSettingsView: View {
 
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var llm = LocalLLMService.shared
+    @ObservedObject private var zoneReset = CloudKitZoneResetService.shared
     @Binding var modelError: String?
     @State private var showDeleteModelConfirm = false
+    @State private var showZoneResetConfirm = false
+    @State private var showZoneResetResult = false
+    @State private var zoneResetSucceeded = false
 
     var body: some View {
         List {
@@ -439,6 +393,30 @@ private struct AdvancedSettingsView: View {
             } header: {
                 Text("書き出し")
             }
+
+            // iCloud 同期のトラブルシューティング
+            Section {
+                Button(role: .destructive) {
+                    showZoneResetConfirm = true
+                } label: {
+                    if zoneReset.isResetting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("リセット中...").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Label("iCloud同期をリセット", systemImage: "arrow.counterclockwise.icloud")
+                    }
+                }
+                .disabled(zoneReset.isResetting)
+                if let err = zoneReset.lastError {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text("iCloud")
+            } footer: {
+                Text("同期の不具合が続く場合のみ使用してください。iCloud上の名刺データを削除します。この端末のローカルデータは残ります。他のデバイスでiCloud同期を有効にしていると、そちらのクラウド側データも影響を受けます。")
+            }
         }
         .navigationTitle("高度な設定")
         .navigationBarTitleDisplayMode(.inline)
@@ -452,6 +430,34 @@ private struct AdvancedSettingsView: View {
             }
         } message: {
             Text("削除すると自動モードに切り替わります。再ダウンロードはいつでも可能です。")
+        }
+        .confirmationDialog(
+            "iCloud同期をリセットしますか？",
+            isPresented: $showZoneResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("リセット", role: .destructive) {
+                Task {
+                    let ok = await zoneReset.resetCoreDataZone()
+                    zoneResetSucceeded = ok
+                    if ok { settings.iCloudSyncEnabled = false }
+                    showZoneResetResult = true
+                }
+            }
+        } message: {
+            Text("この操作は取り消せません。実行後はアプリを再起動する必要があります。")
+        }
+        .alert(
+            zoneResetSucceeded ? "リセットしました" : "リセットに失敗しました",
+            isPresented: $showZoneResetResult
+        ) {
+            Button("OK") {}
+        } message: {
+            if zoneResetSucceeded {
+                Text("iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にすると、ローカルのデータがクラウドに再アップロードされます。")
+            } else {
+                Text(zoneReset.lastError ?? "時間をおいて再度お試しください。")
+            }
         }
     }
 
