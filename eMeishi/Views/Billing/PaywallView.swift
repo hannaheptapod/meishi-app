@@ -74,7 +74,7 @@ struct PaywallView: View {
         if !isAIAvailable {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.yellow)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AIモデルのダウンロードが必要です")
                         .font(.subheadline.bold())
@@ -84,7 +84,7 @@ struct PaywallView: View {
                 }
             }
             .padding()
-            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 

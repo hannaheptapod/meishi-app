@@ -110,7 +110,7 @@ struct SettingsView: View {
             if settings.iCloudSyncEnabled && cloudKitFailed {
                 Label("iCloudに接続できません。iCloudにサインインしているか確認してください。", systemImage: "exclamationmark.icloud")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
             }
             if PersistenceController.shared.iCloudSyncEnabled && !cloudKitFailed {
                 if syncMonitor.isSyncing {
@@ -127,11 +127,10 @@ struct SettingsView: View {
                 }
                 if let date = syncMonitor.lastSyncDate {
                     LabeledContent("最終同期", value: lastSyncText(date))
-                        .foregroundStyle(syncMonitor.lastSyncFailed ? .orange : .primary)
                 } else if syncMonitor.lastSyncFailed {
                     Label("同期に失敗しました", systemImage: "exclamationmark.icloud")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.secondary)
                 }
             }
         } header: {
@@ -556,7 +555,7 @@ private struct AdvancedSettingsView: View {
         case .unavailable(.deviceNotEligible):
             return Text("非対応").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("オフ").foregroundStyle(.orange)
+            return Text("オフ").foregroundStyle(.secondary)
         case .unavailable(.modelNotReady):
             return Text("準備中").foregroundStyle(.secondary)
         default:
