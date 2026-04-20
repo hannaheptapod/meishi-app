@@ -311,8 +311,12 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(
             menuItem(identifier: "importFromContacts").waitForExistence(timeout: Self.defaultTimeout)
         )
-        XCTAssertTrue(menuItem(identifier: "tagManager").exists)
-        XCTAssertTrue(menuItem(identifier: "settingsMenu").exists)
+        XCTAssertTrue(
+            menuItem(identifier: "tagManager").waitForExistence(timeout: Self.shortTimeout)
+        )
+        XCTAssertTrue(
+            menuItem(identifier: "settingsMenu").waitForExistence(timeout: Self.shortTimeout)
+        )
     }
 
     // MARK: - フィルタ時のカウント表示
