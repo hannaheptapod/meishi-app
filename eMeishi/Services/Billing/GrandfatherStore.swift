@@ -55,6 +55,32 @@ final class GrandfatherStore {
         isGrandfathered = isBefore(resolved, proReleaseVersion)
     }
 
+    /// CloudKit 初回 import 完了後などに呼ぶ「昇格専用」再評価。
+    ///
+    /// iPad 機種変や 2 台目 TestFlight 初回起動では、evaluate() 実行時点で
+    /// CoreData の CloudKit 同期が未完了・AppTransaction も nil のため、
+    /// ステップ 5 で現バージョンが pin されて「新規扱い」に固定されてしまう。
+    /// このメソッドは pin が proReleaseVersion 以上のときだけ、ローカル痕跡の再出現を
+    /// 契機に pin を sentinel に昇格する。既に Grandfather なら no-op（降格はしない）。
+    /// 戻り値: 昇格した場合 true。
+    @discardableResult
+    func reevaluateAfterSync() -> Bool {
+        if isGrandfathered { return false }
+
+        let ud = UserDefaults.standard
+        guard let pinned = ud.string(forKey: udKey),
+              pinned != grandfatherSentinel,
+              !isBefore(pinned, proReleaseVersion) else {
+            return false
+        }
+
+        guard detector.hasExistingUserSignals() else { return false }
+
+        pin(grandfatherSentinel, ud: ud)
+        isGrandfathered = true
+        return true
+    }
+
     // MARK: - Private
 
     private func resolvedFirstLaunchVersion() async -> String {

@@ -108,9 +108,36 @@ struct EMeishiApp: App {
     private func startBillingServices() async {
         await GrandfatherStore.shared.evaluate()
         EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
+        observeCloudKitSyncForGrandfatherRecheck()
         StoreService.shared.startTransactionListener()
         await EntitlementStore.shared.refresh()
         await StoreService.shared.prefetch()
+    }
+
+    /// 2 台目デバイス初回起動で CoreData の iCloud 同期が evaluate() より遅れた場合の救済。
+    /// 既に Grandfather 判定済みなら登録不要。
+    private func observeCloudKitSyncForGrandfatherRecheck() {
+        guard !GrandfatherStore.shared.isGrandfathered,
+              PersistenceController.shared.iCloudSyncEnabled else { return }
+
+        NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: PersistenceController.shared.container,
+            queue: nil
+        ) { @Sendable notification in
+            let event = notification.userInfo?[
+                NSPersistentCloudKitContainer.eventNotificationUserInfoKey
+            ] as? NSPersistentCloudKitContainer.Event
+            // 完了イベントかつエラーなしのみ対象
+            guard let event,
+                  event.endDate != nil,
+                  event.error == nil else { return }
+            Task { @MainActor in
+                if GrandfatherStore.shared.reevaluateAfterSync() {
+                    EntitlementStore.shared.setup(isGrandfathered: true)
+                }
+            }
+        }
     }
 
     /// Grandfather ユーザーへの Pro リリース初回告知

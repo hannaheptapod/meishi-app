@@ -180,6 +180,98 @@ struct GrandfatherStoreTests {
         }
         cleanupUD()
     }
+
+    // MARK: - シナリオ 10: iPad 初回起動（全判定失敗）→ "1.1.0" pin → CloudKit 同期で痕跡出現 → 昇格
+
+    @Test func reevaluateAfterSync_upgradesNewPinToSentinelWhenSignalsAppear() async {
+        cleanupUD(); defer { cleanupUD() }
+
+        // 初回評価: 全信号なし → "1.1.0" pin・新規扱い
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            ubiquitousStore: InMemoryUbiquitousKVStore(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == false)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "1.1.0")
+
+        // CloudKit 同期で CoreData にカードが入ってくる
+        detector.hasSignals = true
+        let changed = store.reevaluateAfterSync()
+
+        #expect(changed == true)
+        #expect(store.isGrandfathered == true)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
+    }
+
+    // MARK: - シナリオ 11: 既に Grandfather 判定済みなら reevaluateAfterSync は no-op（降格しない）
+
+    @Test func reevaluateAfterSync_isNoOpWhenAlreadyGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let detector = MutableDetector(initial: true)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: "1.0.2"),
+            detector: detector,
+            ubiquitousStore: InMemoryUbiquitousKVStore(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        // 痕跡が消えたように見せても降格しない
+        detector.hasSignals = false
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == true)
+    }
+
+    // MARK: - シナリオ 12: sentinel pin 済みで痕跡なしでも再評価は no-op
+
+    @Test func reevaluateAfterSync_isNoOpWhenPinnedAsSentinel() async {
+        cleanupUD(); defer { cleanupUD() }
+        UserDefaults.standard.set("0.0.0", forKey: udKey)
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            ubiquitousStore: InMemoryUbiquitousKVStore(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+    }
+
+    // MARK: - シナリオ 13: pin が "1.1.0" でも痕跡がなければ昇格しない
+
+    @Test func reevaluateAfterSync_doesNotUpgradeWithoutSignals() async {
+        cleanupUD(); defer { cleanupUD() }
+        UserDefaults.standard.set("1.1.0", forKey: udKey)
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            ubiquitousStore: InMemoryUbiquitousKVStore(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == false)
+    }
+
+    /// テスト中に hasSignals を切り替えたいので可変な detector ダブル
+    final class MutableDetector: ExistingUserDetector, @unchecked Sendable {
+        var hasSignals: Bool
+        init(initial: Bool) { self.hasSignals = initial }
+        func hasExistingUserSignals() -> Bool { hasSignals }
+    }
 }
 
 // MARK: - EntitlementStore テスト
