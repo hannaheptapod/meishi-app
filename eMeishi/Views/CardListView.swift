@@ -208,6 +208,7 @@ struct CardListView: View {
         case "Tags":     isShowingTagManager = true
         case "AIChat":   isShowingAIChat = true
         case "FormOCR":  isShowingMockOCRForm = true
+        case "Paywall":  isShowingPaywall = true
         default: break
         }
     }

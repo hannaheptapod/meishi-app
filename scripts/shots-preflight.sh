@@ -74,6 +74,9 @@ apply() {
     --batteryLevel 100
   echo "  ✓ ステータスバー固定（9:41 / 満充電 / Wi-Fi 3）"
 
+  xcrun simctl ui "$udid" appearance light
+  echo "  ✓ 外観モード: light"
+
   echo ""
 }
 

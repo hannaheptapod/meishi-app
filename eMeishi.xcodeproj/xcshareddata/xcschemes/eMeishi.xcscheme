@@ -37,6 +37,9 @@
          <TestPlanReference
             reference = "container:eMeishi-Unit.xctestplan">
          </TestPlanReference>
+         <TestPlanReference
+            reference = "container:eMeishi-Screenshots.xctestplan">
+         </TestPlanReference>
       </TestPlans>
    </TestAction>
    <LaunchAction
@@ -50,6 +53,9 @@
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES"
       queueDebuggingEnableBacktraceRecording = "Yes">
+      <StoreKitConfigurationFileReference
+         identifier = "../../../Configuration.storekit">
+      </StoreKitConfigurationFileReference>
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
