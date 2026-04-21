@@ -98,12 +98,27 @@ struct PaywallView: View {
     private var productSection: some View {
         VStack(spacing: 12) {
             if !products.isEmpty {
-                if let yearly = yearlyProduct {
-                    productButton(yearly, badge: "7日間無料トライアル付き")
-                }
                 if let monthly = monthlyProduct {
                     productButton(monthly, badge: nil)
                 }
+                if let yearly = yearlyProduct {
+                    productButton(yearly, badge: "7日間無料トライアル付き")
+                }
+            } else if ScreenshotMode.isActive {
+                // UI テストでは StoreKit Configuration が app.launch 先に届かないため、
+                // App Store 提出用スクリーンショットでは表示用のモック商品ボタンを描画する
+                mockProductButton(
+                    title: "eMeishi Pro 月額",
+                    description: "AI 自然言語検索など Pro 機能が使えます。",
+                    price: "¥500",
+                    badge: nil
+                )
+                mockProductButton(
+                    title: "eMeishi Pro 年額",
+                    description: "AI 自然言語検索など Pro 機能が使えます。7日間の無料トライアル付き。",
+                    price: "¥3,200",
+                    badge: "7日間無料トライアル付き"
+                )
             } else if loadFailed {
                 VStack(spacing: 8) {
                     Text("商品を読み込めませんでした")
@@ -124,11 +139,34 @@ struct PaywallView: View {
         }
     }
 
+    private func mockProductButton(title: String, description: String, price: String, badge: String?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let badge {
+                Text(badge)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .background(.accent, in: Capsule())
+            }
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(description).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(price).font(.title3.bold())
+            }
+        }
+        .padding()
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private func productButton(_ product: Product, badge: String?) -> some View {
         Button {
             Task { await purchase(product) }
         } label: {
-            VStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let badge {
                     Text(badge)
                         .font(.caption.bold())
@@ -149,13 +187,13 @@ struct PaywallView: View {
                     Text(product.displayPrice)
                         .font(.title3.bold())
                 }
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(selectedProductID == product.id ? .accent : .clear, lineWidth: 2)
-                )
             }
+            .padding()
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(selectedProductID == product.id ? .accent : .clear, lineWidth: 2)
+            )
         }
         .buttonStyle(.plain)
         .disabled(isPurchasing || isRestoring)
