@@ -112,4 +112,17 @@ final class ScreenshotRunnerTests: XCTestCase {
         await waitForUI(1.0)
         saveScreenshot(named: "06_tags")
     }
+
+    // ASC Subscription の App Store Review Screenshot 用。
+    // 通常の 6 枚とは別用途なので `07_paywall` として保存し、
+    // capture-shots.sh 経由で抽出後に `asc subscriptions review screenshots create` でアップロードする。
+    @MainActor
+    func test07_Paywall() async throws {
+        launchApp(startScreen: "Paywall")
+        let paywallNav = app.navigationBars["eMeishi Pro"]
+        XCTAssertTrue(paywallNav.waitForExistence(timeout: 8))
+        // StoreKit Configuration の商品ロード完了を待つ
+        await waitForUI(3.0)
+        saveScreenshot(named: "07_paywall")
+    }
 }

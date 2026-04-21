@@ -1,0 +1,32 @@
+{
+  "configurations" : [
+    {
+      "id" : "C3D4E5F6-A7B8-9C0D-1E2F-3A4B5C6D7E8F",
+      "name" : "Configuration 1",
+      "options" : {
+        "maximumTestExecutionTimeAllowance" : 180
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "storeKitConfigurationPath" : "Configuration.storekit",
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:eMeishi.xcodeproj",
+      "identifier" : "3979F89E2F7275F200BC90DC",
+      "name" : "eMeishi"
+    }
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "ScreenshotRunnerTests"
+      ],
+      "target" : {
+        "containerPath" : "container:eMeishi.xcodeproj",
+        "identifier" : "3979F8B72F7275F300BC90DC",
+        "name" : "eMeishiUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

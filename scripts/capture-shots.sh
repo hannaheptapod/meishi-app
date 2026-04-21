@@ -133,8 +133,8 @@ run_target() {
   xcodebuild test \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
+    -testPlan eMeishi-Screenshots \
     -destination "platform=iOS Simulator,id=$udid" \
-    -only-testing:eMeishiUITests/ScreenshotRunnerTests \
     -resultBundlePath "$xcresult" \
     -quiet
   local rc=$?
