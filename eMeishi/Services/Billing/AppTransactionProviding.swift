@@ -25,22 +25,3 @@ struct LiveAppTransactionProvider: AppTransactionProviding {
         }
     }
 }
-
-// MARK: - iCloud Key-Value Store 抽象化
-// シミュレータ上のテストでは NSUbiquitousKeyValueStore に書き込めないため、
-// Grandfather 判定の iCloud 経路を検証できるよう Protocol を切る。
-
-protocol UbiquitousKeyValueStoring {
-    func getString(forKey key: String) -> String?
-    func setString(_ value: String, forKey key: String)
-}
-
-struct LiveUbiquitousKeyValueStore: UbiquitousKeyValueStoring {
-    func getString(forKey key: String) -> String? {
-        NSUbiquitousKeyValueStore.default.string(forKey: key)
-    }
-    func setString(_ value: String, forKey key: String) {
-        NSUbiquitousKeyValueStore.default.set(value, forKey: key)
-        NSUbiquitousKeyValueStore.default.synchronize()
-    }
-}
