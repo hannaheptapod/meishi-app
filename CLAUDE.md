@@ -16,6 +16,7 @@
 
 - ビルド番号（`CURRENT_PROJECT_VERSION`）は Xcode Cloud の `CI_BUILD_NUMBER`（連番整数）をそのまま使う。手動変更不要
 - バージョン番号（`MARKETING_VERSION`）のみ手動更新が必要（例：`1.0.3` → `1.0.4`）
+- **CloudKit Production schema deploy** を対話確認する（v1.1.0 で Prod 未 deploy による `_pcs_data` BAD_REQUEST 事故あり）。CoreData の `.xcdatamodeld` を変更した release では必ず CloudKit Dashboard の "Deploy Schema Changes..." を実行してから y で進める
 
 ### Step 2: ユーザー承認（必須）
 
@@ -301,3 +302,6 @@ main
 - **サブエージェントの "コード一致確認" 報告は鵜呑みにしない。Critical パス（課金・認証・判定ロジック）は必ずメインエージェントが実ファイルを Read する**
   - Why: Explore subagent の「`proReleaseVersion = "1.1.0"` で OK ✓」の報告だけを信用し、`evaluate()` 本体に欠陥があったことを見抜けなかった
   - How to apply: 課金・認証・グランドファザー判定など金銭・アクセス制御に直結するコードは、subagent の要約だけで判断せず、必ず該当ファイルを Read してロジック全体を読む
+- **CloudKit schema は Dev → Production の deploy が手動。リリース前に Dashboard で deploy する**
+  - Why: 1.1.0 で Production に mirroring 用 Record Type（CDMR / CD_BusinessCard / CD_Tag / GrandfatherMark）が未 deploy のまま TestFlight 配信し、全ユーザーで `_pcs_data BAD_REQUEST` → iCloud 同期完全停止となった。ローカル CoreData 変更や `.xcdatamodeld` の新版追加だけでは Production には反映されず、アプリ再インストールでも解消しない
+  - How to apply: `./scripts/pre-build-check.sh` の "CloudKit Production schema deploy" ステップで対話確認する。CoreData スキーマを変更した release では必ず CloudKit Dashboard → Development → "Deploy Schema Changes..." を実行し、Production 側 Record Types タブに反映されたことを確認してから y で進める
