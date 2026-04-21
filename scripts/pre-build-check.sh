@@ -181,6 +181,34 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
 done
 
 echo ""
+echo "=== CloudKit Production schema deploy ==="
+# CloudKit は Dev → Prod への schema deploy が手動（Dashboard の "Deploy Schema
+# Changes" ボタンでのみ反映）。未 deploy のまま TestFlight/本番に出ると、
+# NSPersistentCloudKitContainer が mirroring 用 Record Type（CDMR / CD_*）を
+# Prod で find できず _pcs_data / _defaultZone に BAD_REQUEST を返し、
+# 双方向同期が完全停止する（v1.1.0 本番直前に発覚した事件の再発防止）。
+# CloudKit Management API には server-to-server token が必要でこのリポジトリ
+# には設定していないため、自動検査は行わず「self-confirm + env override」で
+# ヒューマンチェックを強制する。
+if [[ -n "${CLOUDKIT_SCHEMA_DEPLOYED:-}" ]]; then
+  ok "CloudKit schema deploy 確認（env CLOUDKIT_SCHEMA_DEPLOYED=$CLOUDKIT_SCHEMA_DEPLOYED）"
+elif [[ -t 0 ]]; then
+  echo "  確認手順: CloudKit Dashboard → iCloud.com.jinks.emeishi → Development"
+  echo "           → Deploy Schema Changes... → 差分確認 → Deploy"
+  echo "  確認 URL: https://icloud.developer.apple.com/dashboard/database/teams/9SD55B8AYW/containers/iCloud.com.jinks.emeishi/environments/PRODUCTION/types"
+  echo "  （Production 側に CDMR / CD_BusinessCard / CD_Tag / GrandfatherMark が"
+  echo "   見えていれば deploy 済み）"
+  read -r -p "  Dev → Production への schema deploy は済んでいますか？ [y/N]: " ANS
+  if [[ "$ANS" == "y" || "$ANS" == "Y" ]]; then
+    ok "CloudKit schema deploy 確認済み"
+  else
+    fail "CloudKit schema が Production に未 deploy。Dashboard で deploy してから再実行"
+  fi
+else
+  fail "CloudKit schema deploy 確認不能（TTY なし）。CLOUDKIT_SCHEMA_DEPLOYED=1 を指定して再実行"
+fi
+
+echo ""
 echo "================================"
 echo "  PASS: $PASS  FAIL: $FAIL"
 echo "================================"

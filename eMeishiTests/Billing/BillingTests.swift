@@ -5,7 +5,7 @@ import Foundation
 // MARK: - GrandfatherStore テスト（1.0.x ブートストラップ問題対応後）
 //
 // 1.0.x には firstLaunchMarketingVersion を記録するコードが入っていなかったため、
-// 1.1.0 初回起動時は UserDefaults / iCloud KVS が空になる前提で
+// 1.1.0 初回起動時は UserDefaults が空になる前提で
 // AppTransaction + ローカル痕跡フォールバックを組み合わせた判定ロジックを検証する。
 
 // UserDefaults は全プロセス共有のため、並列実行すると相互干渉する。
@@ -27,15 +27,6 @@ struct GrandfatherStoreTests {
         func hasExistingUserSignals() -> Bool { hasSignals }
     }
 
-    // シミュレータの NSUbiquitousKeyValueStore は iCloud アカウント未リンクだと
-    // 書き込みが効かないため、テストではインメモリのダブルで置き換える。
-    final class InMemoryUbiquitousKVStore: UbiquitousKeyValueStoring, @unchecked Sendable {
-        private var storage: [String: String] = [:]
-        init(initial: [String: String] = [:]) { self.storage = initial }
-        func getString(forKey key: String) -> String? { storage[key] }
-        func setString(_ value: String, forKey key: String) { storage[key] = value }
-    }
-
     // CloudKit Private DB の GrandfatherMark を in-memory でシミュレート。
     final class InMemoryCloudSync: GrandfatherCloudSyncing, @unchecked Sendable {
         private var markExists: Bool
@@ -54,14 +45,12 @@ struct GrandfatherStoreTests {
     private func makeStore(
         transaction: String?,
         hasSignals: Bool = false,
-        iCloud: UbiquitousKeyValueStoring = InMemoryUbiquitousKVStore(),
         cloudSync: GrandfatherCloudSyncing = InMemoryCloudSync(),
         currentVersion: String = "1.1.0"
     ) -> GrandfatherStore {
         GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: transaction),
             detector: MockExistingUserDetector(hasSignals: hasSignals),
-            ubiquitousStore: iCloud,
             cloudSync: cloudSync,
             currentVersionProvider: { currentVersion }
         )
@@ -71,12 +60,10 @@ struct GrandfatherStoreTests {
 
     @Test func grandfatheredFromVerifiedOldVersion_102() async {
         cleanupUD(); defer { cleanupUD() }
-        let iCloud = InMemoryUbiquitousKVStore()
-        let store = makeStore(transaction: "1.0.2", iCloud: iCloud)
+        let store = makeStore(transaction: "1.0.2")
         await store.evaluate()
         #expect(store.isGrandfathered == true)
         #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
-        #expect(iCloud.getString(forKey: udKey) == "0.0.0")
     }
 
     // MARK: - シナリオ 2: AppTransaction verified "1.0.4" → Grandfather
@@ -142,19 +129,7 @@ struct GrandfatherStoreTests {
         #expect(store.isGrandfathered == true)
     }
 
-    // MARK: - シナリオ 8: 機種変後の復元（UserDefaults 空・iCloud KVS に sentinel）→ Grandfather
-
-    @Test func grandfatheredRestoredFromICloudKVS() async {
-        cleanupUD(); defer { cleanupUD() }
-        let iCloud = InMemoryUbiquitousKVStore(initial: [udKey: "0.0.0"])
-        let store = makeStore(transaction: nil, iCloud: iCloud)
-        await store.evaluate()
-        #expect(store.isGrandfathered == true)
-        // iCloud の値が UserDefaults に昇格
-        #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
-    }
-
-    // MARK: - シナリオ 9: isBefore 境界（UserDefaults 経路で検証）
+    // MARK: - シナリオ 8: isBefore 境界（UserDefaults 経路で検証）
 
     @Test func boundary_1_0_99_isBeforeProRelease() async {
         cleanupUD(); defer { cleanupUD() }
@@ -192,7 +167,7 @@ struct GrandfatherStoreTests {
         cleanupUD()
     }
 
-    // MARK: - シナリオ 10: iPad 初回起動（全判定失敗）→ "1.1.0" pin → CloudKit 同期で痕跡出現 → 昇格
+    // MARK: - シナリオ 9: iPad 初回起動（全判定失敗）→ "1.1.0" pin → CloudKit 同期で痕跡出現 → 昇格
 
     @Test func reevaluateAfterSync_upgradesNewPinToSentinelWhenSignalsAppear() async {
         cleanupUD(); defer { cleanupUD() }
@@ -202,7 +177,6 @@ struct GrandfatherStoreTests {
         let store = GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
-            ubiquitousStore: InMemoryUbiquitousKVStore(),
             cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
@@ -219,7 +193,7 @@ struct GrandfatherStoreTests {
         #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
     }
 
-    // MARK: - シナリオ 11: 既に Grandfather 判定済みなら reevaluateAfterSync は no-op（降格しない）
+    // MARK: - シナリオ 10: 既に Grandfather 判定済みなら reevaluateAfterSync は no-op（降格しない）
 
     @Test func reevaluateAfterSync_isNoOpWhenAlreadyGrandfathered() async {
         cleanupUD(); defer { cleanupUD() }
@@ -227,7 +201,6 @@ struct GrandfatherStoreTests {
         let store = GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: "1.0.2"),
             detector: detector,
-            ubiquitousStore: InMemoryUbiquitousKVStore(),
             cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
@@ -241,7 +214,7 @@ struct GrandfatherStoreTests {
         #expect(store.isGrandfathered == true)
     }
 
-    // MARK: - シナリオ 12: sentinel pin 済みで痕跡なしでも再評価は no-op
+    // MARK: - シナリオ 11: sentinel pin 済みで痕跡なしでも再評価は no-op
 
     @Test func reevaluateAfterSync_isNoOpWhenPinnedAsSentinel() async {
         cleanupUD(); defer { cleanupUD() }
@@ -250,7 +223,6 @@ struct GrandfatherStoreTests {
         let store = GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
-            ubiquitousStore: InMemoryUbiquitousKVStore(),
             cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
@@ -261,7 +233,7 @@ struct GrandfatherStoreTests {
         #expect(changed == false)
     }
 
-    // MARK: - シナリオ 13: pin が "1.1.0" でも痕跡がなければ昇格しない
+    // MARK: - シナリオ 12: pin が "1.1.0" でも痕跡がなければ昇格しない
 
     @Test func reevaluateAfterSync_doesNotUpgradeWithoutSignals() async {
         cleanupUD(); defer { cleanupUD() }
@@ -270,7 +242,6 @@ struct GrandfatherStoreTests {
         let store = GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: nil),
             detector: detector,
-            ubiquitousStore: InMemoryUbiquitousKVStore(),
             cloudSync: InMemoryCloudSync(),
             currentVersionProvider: { "1.1.0" }
         )
@@ -281,7 +252,7 @@ struct GrandfatherStoreTests {
         #expect(store.isGrandfathered == false)
     }
 
-    // MARK: - シナリオ 14: iPad 初回起動で CloudKit GrandfatherMark が既にある → 即昇格
+    // MARK: - シナリオ 13: iPad 初回起動で CloudKit GrandfatherMark が既にある → 即昇格
 
     @Test func syncWithCloudKit_upgradesFromCloudMark() async {
         cleanupUD(); defer { cleanupUD() }
@@ -302,7 +273,7 @@ struct GrandfatherStoreTests {
         #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
     }
 
-    // MARK: - シナリオ 15: iPhone で Grandfather 判定済み → CloudKit にマーク書き込み
+    // MARK: - シナリオ 14: iPhone で Grandfather 判定済み → CloudKit にマーク書き込み
 
     @Test func syncWithCloudKit_writesMarkWhenGrandfathered() async {
         cleanupUD(); defer { cleanupUD() }
@@ -318,7 +289,7 @@ struct GrandfatherStoreTests {
         #expect(cloud.writeCallCount == 1)
     }
 
-    // MARK: - シナリオ 16: CloudKit にマークなし・Grandfather 判定もなし → 昇格しない
+    // MARK: - シナリオ 15: CloudKit にマークなし・Grandfather 判定もなし → 昇格しない
 
     @Test func syncWithCloudKit_noMarkNoSignalsStaysNonGrandfathered() async {
         cleanupUD(); defer { cleanupUD() }
