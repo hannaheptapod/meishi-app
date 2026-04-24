@@ -178,7 +178,7 @@ struct ScreenshotHostView: View {
         case "Insights":
             InsightsView()
         case "Duplicate":
-            DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: { })
+            DuplicateListView(pairs: .constant(viewModel.duplicatePairs), onMerge: { })
         default:
             EmptyView()
         }

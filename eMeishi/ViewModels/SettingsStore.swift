@@ -30,9 +30,10 @@ enum ReadingMethod: String, CaseIterable, Identifiable {
 }
 
 // アプリ設定の永続化管理（UserDefaults）
+@MainActor
 class SettingsStore: ObservableObject {
 
-    static let shared = SettingsStore()
+    @MainActor static let shared = SettingsStore()
 
     // MARK: - 読み取り方法
 
@@ -95,10 +96,23 @@ class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(hasPromptedInitialQwenDownload, forKey: Keys.hasPromptedInitialQwenDownload) }
     }
 
+    /// Grandfather ユーザーへの Pro リリース初回告知を表示済みかどうか
+    @Published var didShowProAnnouncement: Bool {
+        didSet { UserDefaults.standard.set(didShowProAnnouncement, forKey: Keys.didShowProAnnouncement) }
+    }
+
     // MARK: - 初期化
 
     private init() {
         let ud = UserDefaults.standard
+
+        // UITest モード起動時はアプリの永続化ドメインを消去し、シミュレータ残留状態
+        // （例: 前回実行でソートを昇順に切り替えた状態）の持ち込みを防ぐ。
+        // 本アプリのユーザー設定には影響しない（-UITestMode 引数は XCUITest 専用）。
+        if ProcessInfo.processInfo.arguments.contains("-UITestMode"),
+           let bundleID = Bundle.main.bundleIdentifier {
+            ud.removePersistentDomain(forName: bundleID)
+        }
 
         ud.register(defaults: [
             Keys.readingMethod:                    ReadingMethod.automatic.rawValue,
@@ -110,7 +124,8 @@ class SettingsStore: ObservableObject {
             Keys.iCloudSyncEnabled:                false,
             Keys.isAppLockEnabled:                 false,
             Keys.lockGracePeriodSeconds:           0,
-            Keys.hasPromptedInitialQwenDownload:   false
+            Keys.hasPromptedInitialQwenDownload:   false,
+            Keys.didShowProAnnouncement:           false
         ])
 
         let methodRaw = ud.string(forKey: Keys.readingMethod) ?? ReadingMethod.automatic.rawValue
@@ -125,6 +140,7 @@ class SettingsStore: ObservableObject {
         isAppLockEnabled                   = ud.bool(forKey: Keys.isAppLockEnabled)
         lockGracePeriodSeconds             = ud.integer(forKey: Keys.lockGracePeriodSeconds)
         hasPromptedInitialQwenDownload     = ud.bool(forKey: Keys.hasPromptedInitialQwenDownload)
+        didShowProAnnouncement             = ud.bool(forKey: Keys.didShowProAnnouncement)
     }
 
     // MARK: - UserDefaults キー
@@ -140,5 +156,6 @@ class SettingsStore: ObservableObject {
         static let isAppLockEnabled                 = "isAppLockEnabled"
         static let lockGracePeriodSeconds           = "lockGracePeriodSeconds"
         static let hasPromptedInitialQwenDownload   = "hasPromptedInitialQwenDownload"
+        static let didShowProAnnouncement           = "didShowProAnnouncement"
     }
 }

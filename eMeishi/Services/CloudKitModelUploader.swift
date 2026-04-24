@@ -15,6 +15,7 @@ import CryptoKit
 ///   - embedWeightSHA256 / ffnWeightSHA256 / lmheadWeightSHA256
 ///     ダウンロード側 (CloudKitModelService) が weight.bin の整合性を検証するために使う
 ///   - weightChunkCount は従来通り Int64 で格納
+@MainActor
 enum CloudKitModelUploader {
 
     private static let database   = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
@@ -43,23 +44,23 @@ enum CloudKitModelUploader {
                      firstChunkIndex: 4),
     ]
 
-    static func uploadCorrectModels(status: @escaping (String) -> Void) async {
+    static func uploadCorrectModels(status: @escaping @Sendable @MainActor (String) -> Void) async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let base = docs.appendingPathComponent("LocalLLM")
 
         guard FileManager.default.fileExists(atPath: base.path) else {
-            await MainActor.run { status("エラー: Documents/LocalLLM が見つかりません") }
+            status("エラー: Documents/LocalLLM が見つかりません")
             return
         }
 
         do {
             // Preflight: 全 weight.bin の SHA256・サイズをアップロード前に計算してログ出力
-            await MainActor.run { status("weight.bin をハッシュ計算中...") }
+            status("weight.bin をハッシュ計算中...")
             var preflight: [String: (sha256: String, size: Int64)] = [:]
             for src in weightSources {
                 let url = base.appendingPathComponent(src.relativePath)
                 guard FileManager.default.fileExists(atPath: url.path) else {
-                    await MainActor.run { status("エラー: \(src.relativePath) が見つかりません") }
+                    status("エラー: \(src.relativePath) が見つかりません")
                     return
                 }
                 let (sha, size) = try sha256AndSize(of: url)
@@ -68,7 +69,7 @@ enum CloudKitModelUploader {
                 print("CloudKitUpload: \(src.label) size=\(mb)MB sha256=\(sha)")
             }
 
-            await MainActor.run { status("レコード取得中...") }
+            status("レコード取得中...")
             let record = try await database.record(for: recordID)
 
             // 小ファイル
@@ -87,12 +88,12 @@ enum CloudKitModelUploader {
             for (field, path) in smallFiles {
                 let url = base.appendingPathComponent(path)
                 guard FileManager.default.fileExists(atPath: url.path) else {
-                    await MainActor.run { status("エラー: \(path) が見つかりません") }
+                    status("エラー: \(path) が見つかりません")
                     return
                 }
                 record[field] = CKAsset(fileURL: url)
             }
-            await MainActor.run { status("小ファイルセット完了。weight 分割中...") }
+            status("小ファイルセット完了。weight 分割中...")
 
             // weight.bin をチャンク分割してセット
             let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("ckchunks")
@@ -102,7 +103,7 @@ enum CloudKitModelUploader {
             var chunkIndex = 0
             for src in weightSources {
                 let url = base.appendingPathComponent(src.relativePath)
-                await MainActor.run { status("分割中: \(src.label) weight.bin") }
+                status("分割中: \(src.label) weight.bin")
 
                 if chunkIndex != src.firstChunkIndex {
                     print("CloudKitUpload: WARNING chunk index 不整合 expected=\(src.firstChunkIndex) actual=\(chunkIndex)")
@@ -129,12 +130,12 @@ enum CloudKitModelUploader {
                 preflight[src.label].map { "\(src.label)=\(String(format: "%.0f", Double($0.size) / 1024 / 1024))MB" }
             }.joined(separator: " ")
             print("CloudKitUpload: \(summary)")
-            await MainActor.run { status("\(summary) を CloudKit に保存中（数分かかります）...") }
+            status("\(summary) を CloudKit に保存中（数分かかります）...")
 
             try await database.save(record)
 
             // Post-upload: 保存したレコードを読み戻して SHA256 とチャンク数が書き込まれているか検証
-            await MainActor.run { status("保存完了。CloudKit 側を検証中...") }
+            status("保存完了。CloudKit 側を検証中...")
             let keys = weightSources.map { $0.sha256Field } + ["weightChunkCount"]
             let verifyOp = CKFetchRecordsOperation(recordIDs: [recordID])
             verifyOp.desiredKeys = keys
@@ -154,15 +155,15 @@ enum CloudKitModelUploader {
 
             if mismatches.isEmpty {
                 print("CloudKitUpload: ✅ 検証 OK")
-                await MainActor.run { status("✅ CloudKit 更新・検証完了（\(chunkIndex) チャンク）") }
+                status("✅ CloudKit 更新・検証完了（\(chunkIndex) チャンク）")
             } else {
                 print("CloudKitUpload: ❌ 検証失敗\n  " + mismatches.joined(separator: "\n  "))
-                await MainActor.run { status("❌ 保存は成功したが検証失敗: \(mismatches.count) 件") }
+                status("❌ 保存は成功したが検証失敗: \(mismatches.count) 件")
             }
 
         } catch {
             print("CloudKitUpload: ❌ \(error.localizedDescription)")
-            await MainActor.run { status("❌ エラー: \(error.localizedDescription)") }
+            status("❌ エラー: \(error.localizedDescription)")
         }
     }
 

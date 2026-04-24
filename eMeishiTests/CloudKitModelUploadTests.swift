@@ -4,7 +4,12 @@ import CloudKit
 /// CloudKit Public Database に正しいモデルファイルをアップロードするテスト。
 /// Mac 上の /Users/jink/dev/pers/anemll-Qwen-Qwen3-0.6B-ctx512_0.3.4/ から読み込む。
 ///
-/// 実行方法:
+/// ⚠️ 手動実行専用テスト。Xcode Cloud など CI 環境では自動スキップされる:
+///   - ホストマシン固定パス（/Users/jink/dev/pers/...）にモデル実体が必要
+///   - iCloud 認証済みシミュレータ・デバイスが必要
+///   - 700MB+ のアップロードで実行時間が長い
+///
+/// 手動実行方法（ローカル Mac のみ）:
 ///   xcodebuild test \
 ///     -scheme eMeishi \
 ///     -destination 'platform=iOS Simulator,name=iPhone 16' \
@@ -19,6 +24,10 @@ class CloudKitModelUploadTests: XCTestCase {
     private let modelBase = URL(fileURLWithPath: "/Users/jink/dev/pers/anemll-Qwen-Qwen3-0.6B-ctx512_0.3.4")
 
     func testUploadCorrectModels() async throws {
+        // CI 環境（Xcode Cloud では CI=TRUE が注入される）では自動スキップ
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
+                      "CloudKit モデルアップロードは手動実行専用（ローカル環境・実モデルファイル前提）")
+
         // タイムアウトを長めに設定（700MB+ のアップロードがある）
         // continueAfterFailure は false のまま（エラーで即停止）
 

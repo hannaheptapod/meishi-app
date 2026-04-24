@@ -4,7 +4,14 @@
 
 set -euo pipefail
 
-echo "=== ci_pre_xcodebuild ($CI_XCODEBUILD_ACTION) ==="
+echo "=== ci_pre_xcodebuild (${CI_XCODEBUILD_ACTION:-unknown}) ==="
+
+# test-without-building フェーズでは CI_PRIMARY_REPOSITORY_PATH が未設定のため
+# Info.plist 検証をスキップして正常終了する（ビルド済み成果物を使うだけで検証不要）
+if [[ "${CI_XCODEBUILD_ACTION:-}" == "test-without-building" ]]; then
+  echo "スキップ: test-without-building フェーズは検証不要"
+  exit 0
+fi
 
 cd "$CI_PRIMARY_REPOSITORY_PATH"
 

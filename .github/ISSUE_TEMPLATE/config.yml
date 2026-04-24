@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/hannaheptapod/meishi-app/security/advisories/new
+    about: セキュリティ上の問題は公開 Issue ではなく Private Vulnerability Reporting からご報告ください
+  - name: サポート・使い方の質問
+    url: https://hannaheptapod.github.io/meishi-app/support.html
+    about: アプリの使い方・サポート情報はサポートページをご覧ください

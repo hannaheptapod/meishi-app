@@ -124,6 +124,53 @@ fi
 # ci_scripts/ci_pre_xcodebuild.sh でも [SKIP] と明記済み。
 
 echo ""
+echo "=== Swift 言語モード（Issue #147 Phase 6 で確定）==="
+# Swift 6 言語モード必須。SWIFT_VERSION = 6.0 / SWIFT_STRICT_CONCURRENCY = complete
+# を両 xcconfig で強制する。ダウングレードは Swift 5 の警告緩和設定と整合せず
+# regression を招くため禁止。
+REL_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$RELEASE_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+DBG_STRICT=$(grep -E "^SWIFT_STRICT_CONCURRENCY\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+REL_SVER=$(grep -E "^SWIFT_VERSION\s*=" "$RELEASE_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+DBG_SVER=$(grep -E "^SWIFT_VERSION\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | tr -d '[:space:]')
+if [[ "$REL_STRICT" == "complete" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Release) = complete"
+else
+  fail "SWIFT_STRICT_CONCURRENCY (Release) = '$REL_STRICT' （complete 必須）"
+fi
+if [[ "$DBG_STRICT" == "complete" ]]; then
+  ok "SWIFT_STRICT_CONCURRENCY (Debug) = complete"
+else
+  fail "SWIFT_STRICT_CONCURRENCY (Debug) = '$DBG_STRICT' （complete 必須）"
+fi
+if [[ "$REL_SVER" == "6.0" ]]; then
+  ok "SWIFT_VERSION (Release) = 6.0"
+else
+  fail "SWIFT_VERSION (Release) = '$REL_SVER' （6.0 必須）"
+fi
+if [[ "$DBG_SVER" == "6.0" ]]; then
+  ok "SWIFT_VERSION (Debug) = 6.0"
+else
+  fail "SWIFT_VERSION (Debug) = '$DBG_SVER' （6.0 必須）"
+fi
+
+# project.pbxproj に SWIFT_VERSION = 5.x が残っていないか直接検証。
+# xcconfig は pbxproj に負けるため、xcconfig だけ見ると Swift 5 のまま
+# ビルドされる事故が起きる（Phase 7 で実際に発覚）。
+PBXPROJ="eMeishi.xcodeproj/project.pbxproj"
+SWIFT5_COUNT=$(grep -cE "SWIFT_VERSION = 5\." "$PBXPROJ" || true)
+SWIFT6_COUNT=$(grep -cE "SWIFT_VERSION = 6\." "$PBXPROJ" || true)
+if [[ "$SWIFT5_COUNT" == "0" ]]; then
+  ok "project.pbxproj に SWIFT_VERSION = 5.x 残骸なし"
+else
+  fail "project.pbxproj に SWIFT_VERSION = 5.x が $SWIFT5_COUNT 箇所残存（Xcode で Swift 6 に変更すること）"
+fi
+if [[ "$SWIFT6_COUNT" -ge 6 ]]; then
+  ok "project.pbxproj の SWIFT_VERSION = 6.x が $SWIFT6_COUNT 箇所（3 ターゲット × Debug/Release）"
+else
+  fail "project.pbxproj の SWIFT_VERSION = 6.x が $SWIFT6_COUNT 箇所のみ（6 箇所必須）"
+fi
+
+echo ""
 echo "=== Usage Description ==="
 for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDescription NSPhotoLibraryUsageDescription; do
   if grep -q "$key" "$PLIST"; then
@@ -132,6 +179,34 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
     fail "$key が missing"
   fi
 done
+
+echo ""
+echo "=== CloudKit Production schema deploy ==="
+# CloudKit は Dev → Prod への schema deploy が手動（Dashboard の "Deploy Schema
+# Changes" ボタンでのみ反映）。未 deploy のまま TestFlight/本番に出ると、
+# NSPersistentCloudKitContainer が mirroring 用 Record Type（CDMR / CD_*）を
+# Prod で find できず _pcs_data / _defaultZone に BAD_REQUEST を返し、
+# 双方向同期が完全停止する（v1.1.0 本番直前に発覚した事件の再発防止）。
+# CloudKit Management API には server-to-server token が必要でこのリポジトリ
+# には設定していないため、自動検査は行わず「self-confirm + env override」で
+# ヒューマンチェックを強制する。
+if [[ -n "${CLOUDKIT_SCHEMA_DEPLOYED:-}" ]]; then
+  ok "CloudKit schema deploy 確認（env CLOUDKIT_SCHEMA_DEPLOYED=$CLOUDKIT_SCHEMA_DEPLOYED）"
+elif [[ -t 0 ]]; then
+  echo "  確認手順: CloudKit Dashboard → iCloud.com.jinks.emeishi → Development"
+  echo "           → Deploy Schema Changes... → 差分確認 → Deploy"
+  echo "  確認 URL: https://icloud.developer.apple.com/dashboard/database/teams/9SD55B8AYW/containers/iCloud.com.jinks.emeishi/environments/PRODUCTION/types"
+  echo "  （Production 側に CDMR / CD_BusinessCard / CD_Tag / GrandfatherMark が"
+  echo "   見えていれば deploy 済み）"
+  read -r -p "  Dev → Production への schema deploy は済んでいますか？ [y/N]: " ANS
+  if [[ "$ANS" == "y" || "$ANS" == "Y" ]]; then
+    ok "CloudKit schema deploy 確認済み"
+  else
+    fail "CloudKit schema が Production に未 deploy。Dashboard で deploy してから再実行"
+  fi
+else
+  fail "CloudKit schema deploy 確認不能（TTY なし）。CLOUDKIT_SCHEMA_DEPLOYED=1 を指定して再実行"
+fi
 
 echo ""
 echo "================================"

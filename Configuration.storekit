@@ -1,0 +1,128 @@
+{
+  "identifier" : "eMeishiPro",
+  "nonConsumableProducts" : [
+
+  ],
+  "nonRenewingSubscriptionProducts" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_interruptedPurchasesEnabled" : false,
+    "_locale" : "ja_JP",
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Verification"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Store Sync"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Subscription Status"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Transaction"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Manage Subscriptions Sheet"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "eMeishiPro",
+      "localizations" : [
+        {
+          "description" : "AI 自然言語検索など Pro 機能が使えるサブスクリプション",
+          "displayName" : "eMeishi Pro",
+          "locale" : "ja_JP"
+        }
+      ],
+      "name" : "eMeishi Pro",
+      "products" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "500",
+          "familyShareable" : true,
+          "groupNumber" : 1,
+          "internalID" : "pro_monthly",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "AI 自然言語検索など Pro 機能が利用できます",
+              "displayName" : "eMeishi Pro 月額",
+              "locale" : "ja_JP"
+            }
+          ],
+          "productID" : "com.emeishi.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Pro Monthly",
+          "subscriptionGroupID" : "eMeishiPro",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "3200",
+          "familyShareable" : true,
+          "groupNumber" : 2,
+          "internalID" : "pro_yearly",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "offerMode" : "FREE_TRIAL",
+            "offerPeriod" : "P7D",
+            "offerPeriodCount" : null
+          },
+          "localizations" : [
+            {
+              "description" : "AI 自然言語検索など Pro 機能が利用できます（7日間無料トライアル付き）",
+              "displayName" : "eMeishi Pro 年額",
+              "locale" : "ja_JP"
+            }
+          ],
+          "productID" : "com.emeishi.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Pro Yearly",
+          "subscriptionGroupID" : "eMeishiPro",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

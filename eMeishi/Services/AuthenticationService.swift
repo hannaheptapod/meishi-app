@@ -1,6 +1,7 @@
 import LocalAuthentication
 
 // 生体認証（Face ID / Touch ID）の管理
+@MainActor
 class AuthenticationService {
 
     static let shared = AuthenticationService()

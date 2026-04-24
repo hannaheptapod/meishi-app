@@ -3,6 +3,10 @@ import Contacts
 import os
 
 // iPhoneの連絡先との連携サービス
+// NOTE: export(card:) は CardExportDTO（Sendable）を受け取るため、本来 actor 化可能。
+// importContacts() が CNContactStore を介して MainActor 文脈で呼ばれているため、
+// 段階的移行として現状は @MainActor class を維持する。
+@MainActor
 class ContactsService {
 
     static let shared = ContactsService()
@@ -29,8 +33,8 @@ class ContactsService {
 
     // MARK: - 連絡先へエクスポート
 
-    /// BusinessCard を iPhone の連絡先に保存する
-    func export(card: BusinessCard) async throws {
+    /// 名刺 DTO を iPhone の連絡先に保存する
+    func export(card: CardExportDTO) async throws {
         try await requestAccess()
 
         let contact = CNMutableContact()

@@ -1,5 +1,9 @@
 import Foundation
-import CoreML
+// MLModel は Sendable 準拠がなく、`prediction(from:)` の async 呼び出し時に
+// 「sending 'self.xxxModel' risks causing data races」警告が 3 件発生する。
+// CoreML 全体を `@preconcurrency` で import して抑制する。
+// iOS 側で MLModel が Sendable になれば外せる見込み。
+@preconcurrency import CoreML
 import Accelerate
 import Combine
 import os
@@ -20,6 +24,7 @@ import os
 //     qwen_FFN_PF_lut6.mlmodelc/      (Transformer FFN・stateful KV cache・LUT6量子化)
 //     qwen_lm_head_lut6.mlmodelc/     (LM Head・logits を 16 チャンクに分割出力)
 //     tokenizer.json                  (BPE トークナイザー)
+@MainActor
 class LocalLLMService: ObservableObject {
 
     static let shared = LocalLLMService()
@@ -48,6 +53,8 @@ class LocalLLMService: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var isInferencing:    Bool = false
 
+    // クラス全体が @MainActor のため全アクセスが MainActor 上で直列化される。
+    // （MLModel 自体は non-Sendable だが `@preconcurrency import CoreML` で吸収）
     private(set) var embedModel:  MLModel? = nil
     private(set) var ffnModel:    MLModel? = nil
     private(set) var lmheadModel: MLModel? = nil
@@ -167,7 +174,7 @@ class LocalLLMService: ObservableObject {
     ///   Embed → FFN Prefill（stateful・バッチ64）→ LM Head（16 チャンク分割）
     func classifyUnclassifiedLines(_ lines: [String]) async -> CardFieldClassifier.ParsedCard? {
         if embedModel == nil || ffnModel == nil || lmheadModel == nil || tokenizer == nil {
-            await MainActor.run { isInferencing = true }
+            isInferencing = true
             isModelAvailable = checkModelFiles()
             do {
                 try loadModelIfNeeded()
@@ -176,13 +183,13 @@ class LocalLLMService: ObservableObject {
             }
         }
         guard let tok = tokenizer, embedModel != nil, ffnModel != nil, lmheadModel != nil else {
-            await MainActor.run { isInferencing = false }
+            isInferencing = false
             AppLogger.llm.warning("モデル未ロード（embed=\(self.embedModel != nil, privacy: .public), ffn=\(self.ffnModel != nil, privacy: .public), lmhead=\(self.lmheadModel != nil, privacy: .public), tok=\(self.tokenizer != nil, privacy: .public)）")
             return nil
         }
 
-        await MainActor.run { isInferencing = true }
-        defer { Task { @MainActor in self.isInferencing = false } }
+        isInferencing = true
+        defer { isInferencing = false }
 
         let timeoutSeconds: TimeInterval = 10
         let deadline = Date().addingTimeInterval(timeoutSeconds)
@@ -579,11 +586,9 @@ class LocalLLMService: ObservableObject {
     // MARK: - モデルダウンロード
 
     func downloadModel() async throws {
-        await MainActor.run {
-            isDownloading    = true
-            downloadProgress = 0.0
-        }
-        defer { Task { @MainActor in self.isDownloading = false } }
+        isDownloading    = true
+        downloadProgress = 0.0
+        defer { isDownloading = false }
 
         let dir = modelDirURL
         // 中途半端な前回ダウンロードを削除してからやり直す
@@ -594,12 +599,12 @@ class LocalLLMService: ObservableObject {
             modelDir: dir,
             tokenizerDestination: dir.appendingPathComponent("tokenizer.json")
         ) { [weak self] p in
-            Task { @MainActor in self?.downloadProgress = p }
+            self?.downloadProgress = p
         }
 
         isModelAvailable = checkModelFiles()
         try loadModelIfNeeded()
-        await MainActor.run { self.isModelAvailable = true }
+        isModelAvailable = true
     }
 
     // MARK: - モデル削除

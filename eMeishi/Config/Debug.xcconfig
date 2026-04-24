@@ -9,3 +9,7 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
 
 // テスト可能性（Unit/UIテスト実行に必要）
 ENABLE_TESTABILITY = YES
+
+// Swift 6 移行 Phase 6: Strict Concurrency を complete に昇格し Swift 6 言語モードを有効化
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_VERSION = 6.0

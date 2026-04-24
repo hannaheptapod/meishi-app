@@ -29,13 +29,13 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>名刺を撮影するために使用します</string>
+	<string>名刺をカメラで撮影し、端末内で OCR を実行して文字情報を保存するために使用します。撮影画像と抽出データはサーバーへ送信されません。</string>
 	<key>NSContactsUsageDescription</key>
-	<string>連絡先への読み書きに使用します</string>
+	<string>名刺データを iPhone の連絡先に保存する、または連絡先から名刺データをインポートするために使用します。連絡先情報が外部へ送信されることはありません。</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>アプリのロック解除に使用します</string>
+	<string>アプリのロック解除に使用します。生体認証データは OS 内で処理され、本アプリには認証結果（成功・失敗）のみが渡されます。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>名刺画像を保存するために使用します</string>
+	<string>名刺画像を写真ライブラリに保存・共有するために使用します。画像が外部サーバーへ送信されることはありません。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

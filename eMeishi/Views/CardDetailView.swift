@@ -233,8 +233,9 @@ struct CardDetailView: View {
     // MARK: - アクション
 
     private func exportToContacts() async {
+        let dto = card.toExportDTO()
         do {
-            try await contactsService.export(card: card)
+            try await contactsService.export(card: dto)
             alertMessage = "\(card.fullName) を連絡先に保存しました。"
             isShowingAlert = true
         } catch {
@@ -245,7 +246,7 @@ struct CardDetailView: View {
 
     private func shareVCard() {
         do {
-            let url = try exportService.exportVCard(from: [card])
+            let url = try exportService.exportVCard(from: [card.toExportDTO()])
             exportItem = ExportItem(url: url)
         } catch {
             alertMessage = "vCard の生成に失敗しました: \(error.localizedDescription)"

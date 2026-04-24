@@ -4,7 +4,8 @@
       "id" : "9A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
       "name" : "Configuration 1",
       "options" : {
-
+        "maximumTestExecutionTimeAllowance" : 60,
+        "testExecutionOrdering" : "random"
       }
     }
   ],
@@ -17,6 +18,12 @@
   },
   "testTargets" : [
     {
+      "parallelizable" : true,
+      "skippedTests" : [
+        "AutoTagServiceTests",
+        "CloudKitModelUploadTests",
+        "DuplicateCheckerAITests"
+      ],
       "target" : {
         "containerPath" : "container:eMeishi.xcodeproj",
         "identifier" : "3979F8AD2F7275F300BC90DC",

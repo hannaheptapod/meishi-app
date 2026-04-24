@@ -12,3 +12,7 @@ ENABLE_TESTABILITY = NO
 
 // Run Script Build Phase からビルド成果物を書き換えるため sandbox を無効化
 ENABLE_USER_SCRIPT_SANDBOXING = NO
+
+// Swift 6 移行 Phase 6: Strict Concurrency を complete に昇格し Swift 6 言語モードを有効化
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_VERSION = 6.0

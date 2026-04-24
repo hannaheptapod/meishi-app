@@ -16,6 +16,7 @@ struct EMeishiApp: App {
     @State private var showPrivacyOverlay = false
     @State private var showQwenDownloadPrompt = false
     @State private var showCoreDataError = false
+    @State private var showGrandfatheredAnnouncement = false
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
     private let settings = SettingsStore.shared
@@ -36,6 +37,7 @@ struct EMeishiApp: App {
             ZStack {
                 rootView
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                    .environmentObject(EntitlementStore.shared)
 
                 // App Switcher プライバシーオーバーレイ
                 if showPrivacyOverlay {
@@ -56,7 +58,13 @@ struct EMeishiApp: App {
             }
             .task {
                 guard !isUITest else { return }
+                // 起動時に初期化して、設定画面を開く前から同期イベントを記録する
+                if PersistenceController.shared.iCloudSyncEnabled {
+                    _ = CloudSyncMonitor.shared
+                }
+                await startBillingServices()
                 checkAndPromptQwenDownload()
+                checkAndShowGrandfatheredAnnouncement()
             }
             .alert("データベースエラー", isPresented: $showCoreDataError) {
                 Button("OK") {}
@@ -67,6 +75,11 @@ struct EMeishiApp: App {
                 if persistenceController.loadError != nil {
                     showCoreDataError = true
                 }
+            }
+            .alert("eMeishi Pro が登場しました", isPresented: $showGrandfatheredAnnouncement) {
+                Button("OK") {}
+            } message: {
+                Text("既存ユーザーには、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。")
             }
             .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
                 Button("ダウンロード（約570MB）") {
@@ -90,6 +103,51 @@ struct EMeishiApp: App {
         } else {
             ContentView()
         }
+    }
+
+    private func startBillingServices() async {
+        await GrandfatherStore.shared.evaluate()
+        // CloudKit 上の GrandfatherMark で 2 台目デバイスでも確実に Grandfather を引き継ぐ
+        await GrandfatherStore.shared.syncWithCloudKit()
+        EntitlementStore.shared.setup(isGrandfathered: GrandfatherStore.shared.isGrandfathered)
+        observeCloudKitSyncForGrandfatherRecheck()
+        StoreService.shared.startTransactionListener()
+        await EntitlementStore.shared.refresh()
+        await StoreService.shared.prefetch()
+    }
+
+    /// 2 台目デバイス初回起動で CoreData の iCloud 同期が evaluate() より遅れた場合の救済。
+    /// 既に Grandfather 判定済みなら登録不要。
+    private func observeCloudKitSyncForGrandfatherRecheck() {
+        guard !GrandfatherStore.shared.isGrandfathered,
+              PersistenceController.shared.iCloudSyncEnabled else { return }
+
+        NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: PersistenceController.shared.container,
+            queue: nil
+        ) { @Sendable notification in
+            let event = notification.userInfo?[
+                NSPersistentCloudKitContainer.eventNotificationUserInfoKey
+            ] as? NSPersistentCloudKitContainer.Event
+            // 完了イベントかつエラーなしのみ対象
+            guard let event,
+                  event.endDate != nil,
+                  event.error == nil else { return }
+            Task { @MainActor in
+                if GrandfatherStore.shared.reevaluateAfterSync() {
+                    EntitlementStore.shared.setup(isGrandfathered: true)
+                }
+            }
+        }
+    }
+
+    /// Grandfather ユーザーへの Pro リリース初回告知
+    private func checkAndShowGrandfatheredAnnouncement() {
+        guard GrandfatherStore.shared.isGrandfathered,
+              !settings.didShowProAnnouncement else { return }
+        settings.didShowProAnnouncement = true
+        showGrandfatheredAnnouncement = true
     }
 
     /// Foundation Models 非対応端末で初回起動時に Qwen ダウンロードを促す

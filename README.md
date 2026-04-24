@@ -81,6 +81,10 @@ meishi-app/
 │   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
 │   │   ├── BatchReviewView.swift               # 連続撮影後の一括確認（CardFormViewを順番に表示）
 │   │   ├── AISearchChatView.swift              # AI自然言語検索のチャットUI
+│   │   ├── Billing/
+│   │   │   ├── PaywallView.swift               # Pro 購入・復元・機能紹介シート（コンテキスト別）
+│   │   │   ├── PaywallFeatureListView.swift    # Pro 機能一覧（現在コンテキストを先頭表示）
+│   │   │   └── ManageSubscriptionButton.swift  # App Store サブスクリプション管理画面を開くボタン
 │   │   ├── DuplicateListView.swift              # 重複候補一覧
 │   │   ├── DuplicateMergeView.swift             # マージUI
 │   │   ├── BulkTagAssignView.swift             # 一括タグ付けシート（選択モード用）
@@ -97,6 +101,14 @@ meishi-app/
 │   │   ├── CardFormViewModel.swift
 │   │   └── SettingsStore.swift                 # UserDefaults ラッパー・ReadingMethod enum
 │   ├── Services/
+│   │   ├── Billing/
+│   │   │   ├── StoreService.swift              # StoreKit 2 商品取得・購入・復元・Transaction 監視
+│   │   │   ├── EntitlementStore.swift          # hasPro / isGrandfathered / hasAccess を @Published 管理
+│   │   │   ├── GrandfatherStore.swift          # Pro リリース前ユーザーへの永続無料アクセス判定（AppTransaction + ローカル痕跡フォールバック）
+│   │   │   ├── AppTransactionProviding.swift   # AppTransaction / iCloud KVS の Protocol 抽象化（テスト用差替え対応）
+│   │   │   ├── ExistingUserDetector.swift      # 既存ユーザー痕跡（CoreData 名刺有無 / SettingsStore 書き込みキー）の判定
+│   │   │   ├── ProductIdentifier.swift         # SKU 定数（proMonthly / proYearly）
+│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative / duplicateAI）
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
 │   │   ├── ContactsService.swift
@@ -125,10 +137,23 @@ meishi-app/
 │   ├── AppIcon.icon/                           # アプリアイコン
 │   └── Assets.xcassets                         # アクセントカラー
 ├── eMeishiTests/
-│   └── eMeishiTests.swift                      # 機能テスト網羅的に実装済み
+│   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
+│   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化
+│   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
+│   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
+│   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
+│   ├── InsightsServiceTests.swift              # InsightsService の会社別・エリア別・職種別・月別集計
+│   ├── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
+│   └── Billing/
+│       └── BillingTests.swift                  # GrandfatherStore・EntitlementStore・ProductIdentifier・PaywallContext
 ├── eMeishiUITests/
-│   ├── eMeishiUITests.swift                  # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
-│   └── eMeishiUITestsLaunchTests.swift       # 起動テスト
+│   ├── eMeishiUITests.swift                    # UIテスト（コンテキストメニュー・選択モード・検索・ナビゲーション）
+│   ├── eMeishiUITestsLaunchTests.swift         # 起動テスト
+│   └── ScreenshotRunner.swift                  # App Store スクリーンショット撮影（CI では除外）
+├── eMeishi-CI.xctestplan                           # CI 用テストプラン（ScreenshotRunner 除外）
+├── eMeishi-Unit.xctestplan                         # PR Validation 用 Unit テストプラン（Unit テストのみ）
+├── Configuration.storekit                          # StoreKit Configuration（Xcode テスト用・proMonthly/proYearly・Family Sharing 有効）
 ├── scripts/
 │   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
 ├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
@@ -144,6 +169,7 @@ meishi-app/
 
 - iOS 26.0 以降
 - Xcode 26.0 以降
+- **Swift 6.0 言語モード**（`SWIFT_VERSION = 6.0` / `SWIFT_STRICT_CONCURRENCY = complete`）
 - iPhone（実機推奨。シミュレータではAI機能が制限されます）
 
 ## ビルド
@@ -160,33 +186,14 @@ Xcode でビルドターゲットを選択し、実機またはシミュレー�
 
 ## CI/CD（Xcode Cloud）
 
-### 現状（As Is）
-
-| ワークフロー | トリガー | アクション | テスト実行 |
+| ワークフロー | トリガー | アクション | テストプラン |
 |---|---|---|---|
-| PR Validation | PR → `develop` | Build | **なし** |
-| Develop Integration | push → `develop` | Build | **なし** |
-| Release Build | push → `release/*` | Archive | **なし** |
+| PR Validation | PR → `develop` | Build + **Test** | `eMeishi-Unit`（Unit テストのみ） |
+| Develop Integration | push → `develop` | Build + **Test** | `eMeishi-CI`（Unit + UI テスト、ScreenshotRunner 除外） |
+| Release Build | push → `release/*` | **Archive → TestFlight** | なし |
 
 - Xcode Cloud の初期セットアップ済み（GitHub 連携・署名・App 確認）
 - `ci_scripts/` にビルド番号自動生成・バリデーション・ログのスクリプト配置済み
-- `eMeishi-CI.xctestplan` 作成済み（ScreenshotRunnerTests を除外）
-- テストアクションは ASC API の `testDestinations` 形式問題で未設定
-- Release Build の TestFlight 自動デプロイ（Post-Action）は未設定
-
-### 目標（To Be）
-
-| ワークフロー | トリガー | アクション | テスト実行 |
-|---|---|---|---|
-| PR Validation | PR → `develop` | Build + **Test** | **Unit Tests のみ** |
-| Develop Integration | push → `develop` | Build + **Test** | **Unit + UI Tests**（eMeishi-CI.xctestplan） |
-| Release Build | push → `release/*` | Archive → **TestFlight** | なし（Archive のみ） |
-
-### 残作業
-
-1. PR Validation・Develop Integration に TEST アクション追加（`testDestinations` の正しい形式で再設定）
-2. Release Build に TestFlight デプロイの Post-Action 追加
-3. develop マージ後の初回ビルド成功を確認
 
 ### CI スクリプト構成
 
@@ -201,6 +208,8 @@ ci_scripts/
 - TestFlight 配信は Xcode Cloud の Release Build ワークフローの Distribution Preparation（App Store Connect）+ Post-Action（Internal Testing）で行う
 - `ci_pre_xcodebuild.sh` は `scripts/pre-build-check.sh` の CI 版。asc CLI 依存の 3 項目（ビルド番号比較・証明書・プロファイル）はスキップ
 - テストプラン `eMeishi-CI.xctestplan` は ScreenshotRunnerTests を除外（App Store スクリーンショット専用のため CI では不要）
+- **`release/*` への push は必ず Archive + TestFlight 配信を起動する。** ASC 提出後は `asc review submissions-update --canceled=true` で取り下げない限り push 禁止
+- **メタデータ（What's New・スクリーンショット等）の変更は `release/*` に載せず、`chore/release-*-metadata` ブランチで develop に流す**（build に無関係なため）
 
 ## ライセンス
 

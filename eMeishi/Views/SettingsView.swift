@@ -6,13 +6,17 @@ import FoundationModels
 struct SettingsView: View {
 
     @EnvironmentObject private var listViewModel: CardListViewModel
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @ObservedObject private var settings = SettingsStore.shared
 
     @Environment(\.dismiss) private var dismiss
 
+    @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
+
     @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
+    @State private var isShowingPaywall = false
 #if DEBUG
     @State private var showSeedConfirm = false
 #endif
@@ -20,6 +24,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                proSection
                 iCloudSection
                 securitySection
                 advancedLinkSection
@@ -43,6 +48,10 @@ struct SettingsView: View {
                 Text("既存のデータは削除されません。")
             }
 #endif
+            .sheet(isPresented: $isShowingPaywall) {
+                PaywallView(context: .aiSearch)
+                    .environmentObject(entitlementStore)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -51,6 +60,34 @@ struct SettingsView: View {
                         Image(systemName: "xmark")
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Pro
+
+    private var proSection: some View {
+        Section("eMeishi Pro") {
+            if entitlementStore.hasPro {
+                Label("Pro 有効", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                ManageSubscriptionButton()
+            } else if entitlementStore.isGrandfathered {
+                Label("既存ユーザー特典（AI 自然言語検索 無料）", systemImage: "person.badge.clock.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                Button("Pro の新機能を見る") {
+                    isShowingPaywall = true
+                }
+            } else {
+                Button("eMeishi Pro にアップグレード") {
+                    isShowingPaywall = true
+                }
+                .fontWeight(.semibold)
+                Button("購入を復元") {
+                    Task { await StoreService.shared.restorePurchases() }
+                }
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -73,7 +110,28 @@ struct SettingsView: View {
             if settings.iCloudSyncEnabled && cloudKitFailed {
                 Label("iCloudに接続できません。iCloudにサインインしているか確認してください。", systemImage: "exclamationmark.icloud")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
+            }
+            if PersistenceController.shared.iCloudSyncEnabled && !cloudKitFailed {
+                if syncMonitor.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("同期中...").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        syncMonitor.triggerSync()
+                    } label: {
+                        Label("今すぐ同期", systemImage: "arrow.triangle.2.circlepath.icloud")
+                    }
+                }
+                if let date = syncMonitor.lastSyncDate {
+                    LabeledContent("最終同期", value: lastSyncText(date))
+                } else if syncMonitor.lastSyncFailed {
+                    Label("同期に失敗しました", systemImage: "exclamationmark.icloud")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("iCloud")
@@ -89,6 +147,24 @@ struct SettingsView: View {
         } message: {
             Text("iCloud同期の設定変更はアプリを再起動すると反映されます。")
         }
+    }
+
+    private func lastSyncText(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.unitsStyle = .full
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "たった今"
+        }
+        if interval < 86400 {
+            return formatter.localizedString(for: date, relativeTo: Date())
+        }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "ja_JP")
+        df.dateStyle = .short
+        df.timeStyle = .short
+        return df.string(from: date)
     }
 
     // MARK: - 高度な設定（リンク）
@@ -169,12 +245,10 @@ struct SettingsView: View {
                         ? "アプリロックを有効にするために認証してください"
                         : "アプリロックを無効にするために認証してください"
                     let success = await AuthenticationService.shared.authenticate(reason: reason)
-                    await MainActor.run {
-                        if success {
-                            settings.isAppLockEnabled = newValue
-                        }
-                        isTogglingLock = false
+                    if success {
+                        settings.isAppLockEnabled = newValue
                     }
+                    isTogglingLock = false
                 }
             }
         )
@@ -254,8 +328,12 @@ private struct AdvancedSettingsView: View {
 
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var llm = LocalLLMService.shared
+    @ObservedObject private var zoneReset = CloudKitZoneResetService.shared
     @Binding var modelError: String?
     @State private var showDeleteModelConfirm = false
+    @State private var showZoneResetConfirm = false
+    @State private var showZoneResetResult = false
+    @State private var zoneResetSucceeded = false
 
     var body: some View {
         List {
@@ -314,6 +392,30 @@ private struct AdvancedSettingsView: View {
             } header: {
                 Text("書き出し")
             }
+
+            // iCloud 同期のトラブルシューティング
+            Section {
+                Button(role: .destructive) {
+                    showZoneResetConfirm = true
+                } label: {
+                    if zoneReset.isResetting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("リセット中...").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Label("iCloud同期をリセット", systemImage: "arrow.counterclockwise.icloud")
+                    }
+                }
+                .disabled(zoneReset.isResetting)
+                if let err = zoneReset.lastError {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                }
+            } header: {
+                Text("iCloud")
+            } footer: {
+                Text("同期の不具合が続く場合のみ使用してください。iCloud上の名刺データを削除します。この端末のローカルデータは残ります。他のデバイスでiCloud同期を有効にしていると、そちらのクラウド側データも影響を受けます。")
+            }
         }
         .navigationTitle("高度な設定")
         .navigationBarTitleDisplayMode(.inline)
@@ -327,6 +429,34 @@ private struct AdvancedSettingsView: View {
             }
         } message: {
             Text("削除すると自動モードに切り替わります。再ダウンロードはいつでも可能です。")
+        }
+        .confirmationDialog(
+            "iCloud同期をリセットしますか？",
+            isPresented: $showZoneResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("リセット", role: .destructive) {
+                Task {
+                    let ok = await zoneReset.resetCoreDataZone()
+                    zoneResetSucceeded = ok
+                    if ok { settings.iCloudSyncEnabled = false }
+                    showZoneResetResult = true
+                }
+            }
+        } message: {
+            Text("この操作は取り消せません。実行後はアプリを再起動する必要があります。")
+        }
+        .alert(
+            zoneResetSucceeded ? "リセットしました" : "リセットに失敗しました",
+            isPresented: $showZoneResetResult
+        ) {
+            Button("OK") {}
+        } message: {
+            if zoneResetSucceeded {
+                Text("iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にすると、ローカルのデータがクラウドに再アップロードされます。")
+            } else {
+                Text(zoneReset.lastError ?? "時間をおいて再度お試しください。")
+            }
         }
     }
 
@@ -425,7 +555,7 @@ private struct AdvancedSettingsView: View {
         case .unavailable(.deviceNotEligible):
             return Text("非対応").foregroundStyle(.secondary)
         case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("オフ").foregroundStyle(.orange)
+            return Text("オフ").foregroundStyle(.secondary)
         case .unavailable(.modelNotReady):
             return Text("準備中").foregroundStyle(.secondary)
         default:

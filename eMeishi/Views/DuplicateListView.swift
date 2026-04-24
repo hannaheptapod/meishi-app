@@ -3,13 +3,39 @@ import SwiftUI
 // 重複候補の一覧画面
 struct DuplicateListView: View {
 
-    let pairs: [DuplicatePair]
+    @Binding var pairs: [DuplicatePair]
     let onMerge: () -> Void
 
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @State private var selectedPair: DuplicatePair? = nil
+    @State private var isShowingPaywall = false
 
     var body: some View {
         List {
+            if !entitlementStore.hasAccess {
+                Section {
+                    Button {
+                        isShowingPaywall = true
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("AI 重複検出を有効にする")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.primary)
+                                Text("表記揺れの重複候補を AI が追加で見つけます。eMeishi Pro でご利用いただけます。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
             if pairs.isEmpty {
                 ContentUnavailableView(
                     "重複なし",
@@ -35,6 +61,10 @@ struct DuplicateListView: View {
                 onMerge()
             }
         }
+        .sheet(isPresented: $isShowingPaywall) {
+            PaywallView(context: .duplicateAI)
+                .environmentObject(entitlementStore)
+        }
     }
 }
 
@@ -44,7 +74,13 @@ private struct DuplicatePairRow: View {
 
     let pair: DuplicatePair
 
+    @Environment(\.managedObjectContext) private var context
+
     var body: some View {
+        // ID から BusinessCard を解決（削除済みなら nil）
+        let cardA = context.businessCard(forURIString: pair.cardAIDURI)
+        let cardB = context.businessCard(forURIString: pair.cardBIDURI)
+
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("類似度 \(pair.scoreText)")
@@ -71,26 +107,33 @@ private struct DuplicatePairRow: View {
                     .font(.caption)
             }
             HStack(spacing: 12) {
-                cardSummary(pair.cardA)
+                cardSummary(cardA)
                 Image(systemName: "arrow.left.arrow.right")
                     .foregroundStyle(.secondary)
-                cardSummary(pair.cardB)
+                cardSummary(cardB)
             }
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
-    private func cardSummary(_ card: BusinessCard) -> some View {
+    private func cardSummary(_ card: BusinessCard?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                .font(.subheadline).bold()
-                .lineLimit(1)
-            if let company = card.company, !company.isEmpty {
-                Text(company)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if let card {
+                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                    .font(.subheadline).bold()
                     .lineLimit(1)
+                if let company = card.company, !company.isEmpty {
+                    Text(company)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("（削除済み）")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                    .italic()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

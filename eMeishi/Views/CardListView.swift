@@ -23,8 +23,11 @@ struct CardListView: View {
     @State private var isShowingBulkDeleteConfirm = false
     @State private var isShowingBulkTagSheet = false
     @State private var isShowingAIChat = false
+    @State private var isShowingPaywall = false
     // スクリーンショット撮影モード用：CardFormView を OCR 完了状態のモックで開く
     @State private var isShowingMockOCRForm = false
+
+    @EnvironmentObject private var entitlementStore: EntitlementStore
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -55,14 +58,14 @@ struct CardListView: View {
             .searchable(text: $viewModel.searchText, prompt: "検索")
             .background {
                 SearchBarSparklesInjector(searchText: viewModel.searchText) {
-                    isShowingAIChat = true
+                    openAISearch()
                 }
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
             }
             .onSubmit(of: .search) {
                 if viewModel.filteredCards.isEmpty && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    isShowingAIChat = true
+                    openAISearch()
                 }
             }
             .toolbar {
@@ -165,6 +168,7 @@ struct CardListView: View {
                     }
                 )
                 .environmentObject(viewModel)
+                .environmentObject(entitlementStore)
             }
             .onAppear {
                 viewModel.fetchCards()
@@ -173,6 +177,10 @@ struct CardListView: View {
             .sheet(isPresented: $isShowingAIChat) {
                 AISearchChatView()
                     .environmentObject(viewModel)
+            }
+            .sheet(isPresented: $isShowingPaywall) {
+                PaywallView(context: .aiSearch)
+                    .environmentObject(entitlementStore)
             }
             // スクリーンショット撮影モード用：OCR 完了状態のモックフォームを表示
             .sheet(isPresented: $isShowingMockOCRForm) {
@@ -185,6 +193,14 @@ struct CardListView: View {
         .environmentObject(viewModel)
     }
 
+    private func openAISearch() {
+        if entitlementStore.hasAccess {
+            isShowingAIChat = true
+        } else {
+            isShowingPaywall = true
+        }
+    }
+
     /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
     private func handleScreenshotMode() {
         guard ScreenshotMode.isActive, let screen = ScreenshotMode.startScreen else { return }
@@ -192,6 +208,7 @@ struct CardListView: View {
         case "Tags":     isShowingTagManager = true
         case "AIChat":   isShowingAIChat = true
         case "FormOCR":  isShowingMockOCRForm = true
+        case "Paywall":  isShowingPaywall = true
         default: break
         }
     }
@@ -222,12 +239,18 @@ struct CardListView: View {
             }
         }
 
+        // 選択ボタンと 3点メニューを独立したガラス容器に分ける（純正メール準拠）
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+
         // 右上: 3点メニュー
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
-                        DuplicateListView(pairs: viewModel.duplicatePairs, onMerge: viewModel.fetchCards)
+                        DuplicateListView(pairs: $viewModel.duplicatePairs, onMerge: {
+                            viewModel.fetchCards()
+                            viewModel.detectDuplicates()
+                        })
                     } label: {
                         Label(
                             viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
@@ -242,6 +265,7 @@ struct CardListView: View {
                     Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
                 }
                 .disabled(viewModel.isImporting)
+                .accessibilityIdentifier("importFromContacts")
                 if !viewModel.cards.isEmpty {
                     Divider()
                     Button { viewModel.exportCSV() } label: {
@@ -255,6 +279,7 @@ struct CardListView: View {
                 Button { isShowingTagManager = true } label: {
                     Label("タグ管理", systemImage: "tag")
                 }
+                .accessibilityIdentifier("tagManager")
                 if !viewModel.cards.isEmpty {
                     NavigationLink {
                         InsightsView()
@@ -266,6 +291,7 @@ struct CardListView: View {
                 Button { isShowingSettings = true } label: {
                     Label("設定", systemImage: "gearshape")
                 }
+                .accessibilityIdentifier("settingsMenu")
             } label: {
                 Label("メニュー", systemImage: "ellipsis")
             }
@@ -285,7 +311,8 @@ struct CardListView: View {
                     batchImages = images
                     if !images.isEmpty {
                         // batchImages の更新を SwiftUI に反映させてから sheet を表示する
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        Task {
+                            try? await Task.sleep(for: .seconds(0.1))
                             isReviewingBatch = true
                         }
                     }
@@ -607,7 +634,7 @@ struct CardListView: View {
     private var aiSearchPrompt: some View {
         VStack(spacing: 12) {
             Button {
-                isShowingAIChat = true
+                openAISearch()
             } label: {
                 Label("AI検索で探す", systemImage: "sparkles")
                     .font(.subheadline)
@@ -672,7 +699,8 @@ private struct SearchBarSparklesInjector: UIViewRepresentable {
 
     private func retryInject(from view: UIView, coordinator: Coordinator, attempts: Int) {
         guard attempts > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        Task {
+            try? await Task.sleep(for: .seconds(0.15))
             if self.inject(from: view, coordinator: coordinator) { return }
             self.retryInject(from: view, coordinator: coordinator, attempts: attempts - 1)
         }

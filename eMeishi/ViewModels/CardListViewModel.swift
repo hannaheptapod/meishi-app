@@ -31,6 +31,7 @@ struct CardSection: Identifiable {
 }
 
 // 名刺一覧画面のViewModel
+@MainActor
 class CardListViewModel: ObservableObject {
 
     @Published var cards: [BusinessCard] = []
@@ -96,6 +97,7 @@ class CardListViewModel: ObservableObject {
         // 閾値が変わったら重複検出を再実行
         SettingsStore.shared.$duplicateThreshold
             .dropFirst()
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.detectDuplicates() }
             .store(in: &cancellables)
     }
@@ -355,6 +357,45 @@ class CardListViewModel: ObservableObject {
         save()
     }
 
+    /// 選択カード全件に AI でタグを提案・付与する。Pro 限定。
+    /// - Returns: (処理対象件数, 1 件以上タグが付与されたカード件数)
+    func bulkAutoTag(ids: Set<BusinessCard.ID>) async -> (processed: Int, tagged: Int) {
+        let selected = selectedCards(from: ids)
+        guard !selected.isEmpty, !allTags.isEmpty else { return (0, 0) }
+        let tagInfos: [AutoTagService.TagInfo] = allTags.compactMap { tag in
+            guard let id = tag.id else { return nil }
+            return AutoTagService.TagInfo(id: id, name: tag.tagName)
+        }
+        var taggedCount = 0
+        for card in selected {
+            let info = AutoTagService.CardInfo(
+                company: card.company ?? "",
+                department: card.department ?? "",
+                title: card.title ?? "",
+                address: card.address ?? "",
+                email: card.email ?? "",
+                website: card.website ?? ""
+            )
+            let suggested = await AutoTagService.shared.suggestTags(cardInfo: info, tags: tagInfos)
+            guard !suggested.isEmpty else { continue }
+            var addedAny = false
+            for tag in allTags {
+                guard let id = tag.id, suggested.contains(id) else { continue }
+                let cardTags = card.tags as? Set<Tag> ?? []
+                if !cardTags.contains(tag) {
+                    card.addToTags(tag)
+                    addedAny = true
+                }
+            }
+            if addedAny {
+                card.updatedAt = Date()
+                taggedCount += 1
+            }
+        }
+        save()
+        return (selected.count, taggedCount)
+    }
+
     /// カード単体のタグトグル（コンテキストメニュー用）
     func toggleTag(_ tag: Tag, on card: BusinessCard) {
         let cardTags = card.tags as? Set<Tag> ?? []
@@ -369,9 +410,20 @@ class CardListViewModel: ObservableObject {
 
     // MARK: - 重複検出
 
+    /// 重複検出。ルールベースは常に実行、AI 二次判定は Pro 限定。
     func detectDuplicates() {
         let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
+        // 即時: ルールベースで表示
         duplicatePairs = checker.findDuplicates(in: cards)
+        // 非同期: AI 二次判定でボーダーライン候補を追加（Pro/Grandfather のみ）
+        guard EntitlementStore.shared.hasAccess else { return }
+        let snapshot = cards
+        Task {
+            let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
+            // カードが差し替えられていたら反映しない
+            guard snapshot.count == self.cards.count else { return }
+            self.duplicatePairs = enhanced
+        }
     }
 
     // MARK: - エクスポート
@@ -387,10 +439,11 @@ class CardListViewModel: ObservableObject {
     }
 
     private func performExport(_ cards: [BusinessCard], label: String,
-                               export: ([BusinessCard]) throws -> URL) {
+                               export: ([CardExportDTO]) throws -> URL) {
         guard !cards.isEmpty else { return }
+        let dtos = cards.map { $0.toExportDTO() }
         do {
-            exportItem = ExportItem(url: try export(cards))
+            exportItem = ExportItem(url: try export(dtos))
         } catch {
             errorMessage = "\(label)に失敗しました: \(error.localizedDescription)"
         }
@@ -404,9 +457,10 @@ class CardListViewModel: ObservableObject {
     }
 
     func saveToContacts(card: BusinessCard) {
-        Task { @MainActor in
+        let dto = card.toExportDTO()
+        Task {
             do {
-                try await ContactsService.shared.export(card: card)
+                try await ContactsService.shared.export(card: dto)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -418,7 +472,7 @@ class CardListViewModel: ObservableObject {
     func importFromContacts() {
         guard !isImporting else { return }
         isImporting = true
-        Task { @MainActor in
+        Task {
             defer { isImporting = false }
             do {
                 let contacts = try await ContactsService.shared.importContacts()
