@@ -27,6 +27,15 @@ struct GrandfatherStoreTests {
         func hasExistingUserSignals() -> Bool { hasSignals }
     }
 
+    // CloudKit Private DB の GrandfatherMark を in-memory でシミュレート。
+    final class InMemoryCloudSync: GrandfatherCloudSyncing, @unchecked Sendable {
+        private var markExists: Bool
+        private(set) var writeCallCount = 0
+        init(initialMarkExists: Bool = false) { self.markExists = initialMarkExists }
+        func fetchMark() async -> Bool { markExists }
+        func writeMark() async { markExists = true; writeCallCount += 1 }
+    }
+
     // MARK: - Helpers
 
     private func cleanupUD() {
@@ -36,11 +45,13 @@ struct GrandfatherStoreTests {
     private func makeStore(
         transaction: String?,
         hasSignals: Bool = false,
+        cloudSync: GrandfatherCloudSyncing = InMemoryCloudSync(),
         currentVersion: String = "1.1.0"
     ) -> GrandfatherStore {
         GrandfatherStore(
             transactionProvider: MockAppTransactionProvider(version: transaction),
             detector: MockExistingUserDetector(hasSignals: hasSignals),
+            cloudSync: cloudSync,
             currentVersionProvider: { currentVersion }
         )
     }
@@ -154,6 +165,151 @@ struct GrandfatherStoreTests {
             #expect(store.isGrandfathered == true, "\(v) should be Grandfather")
         }
         cleanupUD()
+    }
+
+    // MARK: - シナリオ 9: iPad 初回起動（全判定失敗）→ "1.1.0" pin → CloudKit 同期で痕跡出現 → 昇格
+
+    @Test func reevaluateAfterSync_upgradesNewPinToSentinelWhenSignalsAppear() async {
+        cleanupUD(); defer { cleanupUD() }
+
+        // 初回評価: 全信号なし → "1.1.0" pin・新規扱い
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            cloudSync: InMemoryCloudSync(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == false)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "1.1.0")
+
+        // CloudKit 同期で CoreData にカードが入ってくる
+        detector.hasSignals = true
+        let changed = store.reevaluateAfterSync()
+
+        #expect(changed == true)
+        #expect(store.isGrandfathered == true)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
+    }
+
+    // MARK: - シナリオ 10: 既に Grandfather 判定済みなら reevaluateAfterSync は no-op（降格しない）
+
+    @Test func reevaluateAfterSync_isNoOpWhenAlreadyGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let detector = MutableDetector(initial: true)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: "1.0.2"),
+            detector: detector,
+            cloudSync: InMemoryCloudSync(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        // 痕跡が消えたように見せても降格しない
+        detector.hasSignals = false
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == true)
+    }
+
+    // MARK: - シナリオ 11: sentinel pin 済みで痕跡なしでも再評価は no-op
+
+    @Test func reevaluateAfterSync_isNoOpWhenPinnedAsSentinel() async {
+        cleanupUD(); defer { cleanupUD() }
+        UserDefaults.standard.set("0.0.0", forKey: udKey)
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            cloudSync: InMemoryCloudSync(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+    }
+
+    // MARK: - シナリオ 12: pin が "1.1.0" でも痕跡がなければ昇格しない
+
+    @Test func reevaluateAfterSync_doesNotUpgradeWithoutSignals() async {
+        cleanupUD(); defer { cleanupUD() }
+        UserDefaults.standard.set("1.1.0", forKey: udKey)
+        let detector = MutableDetector(initial: false)
+        let store = GrandfatherStore(
+            transactionProvider: MockAppTransactionProvider(version: nil),
+            detector: detector,
+            cloudSync: InMemoryCloudSync(),
+            currentVersionProvider: { "1.1.0" }
+        )
+        await store.evaluate()
+
+        let changed = store.reevaluateAfterSync()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == false)
+    }
+
+    // MARK: - シナリオ 13: iPad 初回起動で CloudKit GrandfatherMark が既にある → 即昇格
+
+    @Test func syncWithCloudKit_upgradesFromCloudMark() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: true)
+        let store = makeStore(
+            transaction: nil,
+            hasSignals: false,
+            cloudSync: cloud,
+            currentVersion: "1.1.0"
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == false)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "1.1.0")
+
+        let changed = await store.syncWithCloudKit()
+        #expect(changed == true)
+        #expect(store.isGrandfathered == true)
+        #expect(UserDefaults.standard.string(forKey: udKey) == "0.0.0")
+    }
+
+    // MARK: - シナリオ 14: iPhone で Grandfather 判定済み → CloudKit にマーク書き込み
+
+    @Test func syncWithCloudKit_writesMarkWhenGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: false)
+        let store = makeStore(
+            transaction: "1.0.2",
+            cloudSync: cloud
+        )
+        await store.evaluate()
+        #expect(store.isGrandfathered == true)
+
+        _ = await store.syncWithCloudKit()
+        #expect(cloud.writeCallCount == 1)
+    }
+
+    // MARK: - シナリオ 15: CloudKit にマークなし・Grandfather 判定もなし → 昇格しない
+
+    @Test func syncWithCloudKit_noMarkNoSignalsStaysNonGrandfathered() async {
+        cleanupUD(); defer { cleanupUD() }
+        let cloud = InMemoryCloudSync(initialMarkExists: false)
+        let store = makeStore(
+            transaction: nil,
+            hasSignals: false,
+            cloudSync: cloud
+        )
+        await store.evaluate()
+        let changed = await store.syncWithCloudKit()
+        #expect(changed == false)
+        #expect(store.isGrandfathered == false)
+    }
+
+    /// テスト中に hasSignals を切り替えたいので可変な detector ダブル
+    final class MutableDetector: ExistingUserDetector, @unchecked Sendable {
+        var hasSignals: Bool
+        init(initial: Bool) { self.hasSignals = initial }
+        func hasExistingUserSignals() -> Bool { hasSignals }
     }
 }
 
