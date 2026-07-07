@@ -132,7 +132,7 @@ enum CloudKitModelUploader {
             print("CloudKitUpload: \(summary)")
             status("\(summary) を CloudKit に保存中（数分かかります）...")
 
-            try await database.save(record)
+            _ = try await database.save(record)
 
             // Post-upload: 保存したレコードを読み戻して SHA256 とチャンク数が書き込まれているか検証
             status("保存完了。CloudKit 側を検証中...")

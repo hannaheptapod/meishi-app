@@ -9,8 +9,11 @@ import UIKit
 private final class MockOCRService: OCRServiceProtocol {
     var linesToReturn: [RecognizedLine] = []
     var errorToThrow: Error? = nil
+    var croppedImageToReturn: UIImage? = nil
 
-    func detectAndCropCard(from image: UIImage) async -> UIImage { image }
+    func detectAndCropCard(from image: UIImage) async -> UIImage {
+        croppedImageToReturn ?? image
+    }
 
     func recognizeText(from image: UIImage) async throws -> [RecognizedLine] {
         if let error = errorToThrow { throw error }
@@ -71,6 +74,24 @@ private func makeLine(_ text: String) -> RecognizedLine {
         boundingBox: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.05),
         confidence: 0.99
     )
+}
+
+@MainActor
+private func makeTestImage(size: CGSize, color: UIColor) -> UIImage {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { context in
+        color.setFill()
+        context.fill(CGRect(origin: .zero, size: size))
+    }
+}
+
+@MainActor
+private func waitForOCRCompletion(_ vm: CardFormViewModel) async {
+    for _ in 0..<50 {
+        if !vm.isProcessingOCR { return }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
 }
 
 // MARK: - 初期化（新規作成・カード編集）
@@ -283,6 +304,36 @@ struct CardFormViewModelTagSuggestionTests {
 
 @MainActor
 struct CardFormViewModelOCRTests {
+
+    @Test func imageInitStoresCroppedImageData() async throws {
+        let ctx = makeContext()
+        let originalImage = makeTestImage(size: CGSize(width: 120, height: 60), color: .red)
+        let croppedImage = makeTestImage(size: CGSize(width: 40, height: 80), color: .blue)
+        let mockOCR = MockOCRService()
+        mockOCR.croppedImageToReturn = croppedImage
+        mockOCR.linesToReturn = [makeLine("山田太郎")]
+
+        var parsed = CardFieldClassifier.ParsedCard()
+        parsed.lastName = "山田"
+        parsed.firstName = "太郎"
+
+        let vm = CardFormViewModel(
+            image: originalImage,
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: parsed),
+            llmService: MockLLMService(),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await waitForOCRCompletion(vm)
+
+        #expect(vm.isProcessingOCR == false)
+        let data = try #require(vm.capturedImageData)
+        let savedImage = try #require(UIImage(data: data))
+        #expect(Int(savedImage.size.width.rounded()) == 40)
+        #expect(Int(savedImage.size.height.rounded()) == 80)
+    }
 
     @Test func populateFromOCRSetsErrorOnThrow() async {
         let ctx = makeContext()

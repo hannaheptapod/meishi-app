@@ -5,12 +5,33 @@ import CoreImage
 import os
 
 // OCR で認識した1行分のデータ（テキスト・位置・信頼度）
-struct RecognizedLine {
+nonisolated enum RecognizedTextDirection: Sendable, Equatable {
+    case leftToRight
+    case rightToLeft
+    case topToBottom
+    case unknown
+}
+
+nonisolated struct RecognizedLine: Sendable {
     let text: String
     /// Vision 座標系（正規化済み。原点は画像左下、x/y は 0.0〜1.0）
     let boundingBox: CGRect
     /// Vision の認識信頼度（0.0〜1.0）
     let confidence: Float
+    /// OCR が返した文字方向。縦書き名刺の後処理で使用する
+    let textDirection: RecognizedTextDirection
+
+    init(
+        text: String,
+        boundingBox: CGRect,
+        confidence: Float,
+        textDirection: RecognizedTextDirection = .unknown
+    ) {
+        self.text = text
+        self.boundingBox = boundingBox
+        self.confidence = confidence
+        self.textDirection = textDirection
+    }
 }
 
 // Vision Framework を使って名刺画像からテキストを抽出するサービス
@@ -122,7 +143,7 @@ actor OCRService {
                     )
                 }
                 // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
-                let lines = Self.mergeAdjacentFragments(rawLines)
+                let lines = Self.mergeAdjacentFragments(rawLines, isVerticalCard: image.size.height > image.size.width * 1.1)
                 let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                 AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
                 continuation.resume(returning: lines)
@@ -151,7 +172,25 @@ actor OCRService {
     /// 1つの名前を複数の observation に分割することがある。
     /// 同一行（Y座標近接）かつ X 方向に近い短い断片を結合し、
     /// 下流の分類ロジックに安定した行を渡す。
-    static func mergeAdjacentFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+    static func mergeAdjacentFragments(
+        _ lines: [RecognizedLine],
+        isVerticalCard: Bool = false
+    ) -> [RecognizedLine] {
+        guard lines.count > 1 else { return lines }
+
+        guard isVerticalCard else {
+            return mergeHorizontalFragments(lines)
+        }
+
+        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+
+        let mergedVertical = mergeVerticalFragments(verticalCandidates)
+        let mergedHorizontal = mergeHorizontalFragments(horizontalCandidates)
+        return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
+    }
+
+    private static func mergeHorizontalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
         guard lines.count > 1 else { return lines }
 
         // インデックス管理用
@@ -227,12 +266,150 @@ actor OCRService {
                 let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
 
                 AppLogger.ocr.debug("行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + "), privacy: .private) → \(mergedText, privacy: .private)")
-                result.append(RecognizedLine(text: mergedText, boundingBox: mergedBox, confidence: avgConfidence))
+                result.append(RecognizedLine(
+                    text: mergedText,
+                    boundingBox: mergedBox,
+                    confidence: avgConfidence,
+                    textDirection: dominantDirection(sorted.map { $0.line })
+                ))
             }
         }
 
         // 元の Y 座標順（上から下 = Vision Y 降順）で返す
         return result.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+    }
+
+    private static func mergeVerticalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        guard lines.count > 1 else { return lines }
+
+        var used = Set<Int>()
+        var result: [RecognizedLine] = []
+        // 日本語縦書きの読み順: 右列から左列。同一列内は上から下。
+        let indexed = lines.enumerated().sorted {
+            if abs($0.element.boundingBox.midX - $1.element.boundingBox.midX) > 0.01 {
+                return $0.element.boundingBox.midX > $1.element.boundingBox.midX
+            }
+            return $0.element.boundingBox.midY > $1.element.boundingBox.midY
+        }
+
+        for (i, anchor) in indexed {
+            if used.contains(i) { continue }
+            used.insert(i)
+
+            var group: [(index: Int, line: RecognizedLine)] = [(i, anchor)]
+            let anchorW = anchor.boundingBox.width
+
+            for (j, candidate) in indexed {
+                if used.contains(j) { continue }
+                let candW = candidate.boundingBox.width
+                let maxW = max(anchorW, candW)
+
+                let groupMinX = group.map { $0.line.boundingBox.minX }.min()!
+                let groupMaxX = group.map { $0.line.boundingBox.maxX }.max()!
+                let groupMinY = group.map { $0.line.boundingBox.minY }.min()!
+                let groupMaxY = group.map { $0.line.boundingBox.maxY }.max()!
+
+                let xOverlap = min(groupMaxX, candidate.boundingBox.maxX) - max(groupMinX, candidate.boundingBox.minX)
+                let sameColumn = abs(candidate.boundingBox.midX - anchor.boundingBox.midX) < maxW * 0.8
+                    || xOverlap > min(maxW, candidate.boundingBox.width) * 0.35
+                guard sameColumn else { continue }
+
+                let gap: CGFloat
+                if candidate.boundingBox.minY > groupMaxY {
+                    gap = candidate.boundingBox.minY - groupMaxY
+                } else if candidate.boundingBox.maxY < groupMinY {
+                    gap = groupMinY - candidate.boundingBox.maxY
+                } else {
+                    gap = 0
+                }
+
+                if gap < maxW * 2.4 {
+                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
+                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
+                    if anchorChars <= 6 || candChars <= 6 {
+                        used.insert(j)
+                        group.append((j, candidate))
+                    }
+                }
+            }
+
+            if group.count == 1 {
+                result.append(anchor)
+            } else {
+                let sorted = group.sorted { $0.line.boundingBox.midY > $1.line.boundingBox.midY }
+                let mergedText = sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) }.joined()
+                let mergedBox = unionBoundingBox(sorted.map { $0.line })
+                let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
+
+                AppLogger.ocr.debug("縦書き行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + "), privacy: .private) → \(mergedText, privacy: .private)")
+                result.append(RecognizedLine(
+                    text: mergedText,
+                    boundingBox: mergedBox,
+                    confidence: avgConfidence,
+                    textDirection: .topToBottom
+                ))
+            }
+        }
+
+        return sortForReadingOrder(result, preferVertical: true)
+    }
+
+    private static func isVerticalMergeCandidate(_ line: RecognizedLine, isVerticalCard: Bool) -> Bool {
+        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        guard !isContactLike(text), !isMostlyASCII(text) else { return false }
+        let hasJapanese = text.unicodeScalars.contains {
+            (0x3040...0x30FF).contains($0.value) || (0x4E00...0x9FFF).contains($0.value)
+        }
+        guard hasJapanese else { return false }
+        return isVerticalCard
+            || line.boundingBox.height > line.boundingBox.width * 1.4
+    }
+
+    private static func isContactLike(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if lower.contains("@") || lower.contains("http") || lower.contains("www.") { return true }
+        let digits = text.unicodeScalars.filter { (0x30...0x39).contains($0.value) }.count
+        if digits >= 7 { return true }
+        if text.range(of: #"^\+?[0-9][0-9\-()\s]{5,}$"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
+    }
+
+    private static func isMostlyASCII(_ text: String) -> Bool {
+        let scalars = text.unicodeScalars.filter { !$0.properties.isWhitespace }
+        guard !scalars.isEmpty else { return false }
+        let asciiCount = scalars.filter { $0.isASCII }.count
+        return Double(asciiCount) / Double(scalars.count) >= 0.7
+    }
+
+    private static func unionBoundingBox(_ lines: [RecognizedLine]) -> CGRect {
+        let minX = lines.map { $0.boundingBox.minX }.min() ?? 0
+        let minY = lines.map { $0.boundingBox.minY }.min() ?? 0
+        let maxX = lines.map { $0.boundingBox.maxX }.max() ?? 0
+        let maxY = lines.map { $0.boundingBox.maxY }.max() ?? 0
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private static func dominantDirection(_ lines: [RecognizedLine]) -> RecognizedTextDirection {
+        if lines.contains(where: { $0.textDirection == .topToBottom }) { return .topToBottom }
+        if lines.contains(where: { $0.textDirection == .rightToLeft }) { return .rightToLeft }
+        if lines.contains(where: { $0.textDirection == .leftToRight }) { return .leftToRight }
+        return .unknown
+    }
+
+    private static func sortForReadingOrder(_ lines: [RecognizedLine], preferVertical: Bool) -> [RecognizedLine] {
+        guard preferVertical else {
+            return lines.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+        }
+        return lines.sorted {
+            let maxW = max($0.boundingBox.width, $1.boundingBox.width)
+            if abs($0.boundingBox.midX - $1.boundingBox.midX) > maxW * 0.6 {
+                return $0.boundingBox.midX > $1.boundingBox.midX
+            }
+            return $0.boundingBox.midY > $1.boundingBox.midY
+        }
     }
 
     enum OCRError: LocalizedError {

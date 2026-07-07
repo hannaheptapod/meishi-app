@@ -79,6 +79,19 @@ struct DuplicateCheckerLegalEntityTests {
         #expect(NameProcessor.normalizeRomaji("itoh") == "itou")
     }
 
+    @Test func romajiToHiraganaHandlesSyllabicNBeforeY() {
+        #expect(NameReadingGenerator.normalizeRomaji("shinya") == "shin'ya")
+        #expect(NameReadingGenerator.romajiToHiragana("shinya") == "しんや")
+        #expect(NameReadingGenerator.romajiToHiragana("junya") == "じゅんや")
+        #expect(NameReadingGenerator.romajiToHiragana("kenya") == "けんや")
+        #expect(NameReadingGenerator.romajiToHiragana("tanaka") == "たなか")
+
+        #expect(NameProcessor.romajiToHiragana("shinya") == "しんや")
+        #expect(NameProcessor.romajiToHiragana("junya") == "じゅんや")
+        #expect(NameProcessor.romajiToHiragana("kenya") == "けんや")
+        #expect(NameProcessor.romajiToHiragana("tanaka") == "たなか")
+    }
+
     @Test func preferReadingUsesReferenceForLongVowels() {
         // 長音の違いだけなら参照読みを優先
         #expect(NameReadingGenerator.preferReading(romaji: "こへい", reference: "こうへい") == "こうへい")
@@ -105,6 +118,19 @@ struct DuplicateCheckerLegalEntityTests {
         if let r = result {
             // 参照読み（こうへい）が優先されること
             #expect(r.firstNameReading == "こうへい")
+        }
+    }
+
+    @Test func inferReadingFromEmailHandlesShinya() {
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "sato.shinya@example.com",
+            lastName: "佐藤",
+            firstName: "真也"
+        )
+        #expect(result != nil)
+        if let r = result {
+            #expect(r.lastNameReading == "さとう")
+            #expect(r.firstNameReading == "しんや")
         }
     }
 

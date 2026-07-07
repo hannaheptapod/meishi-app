@@ -103,10 +103,14 @@ enum NameProcessor {
         // --- 肯定的シグナル ---
 
         let myMidY = line.boundingBox.midY
+        let isVertical = isVerticalLine(line)
         let hasReadingLine = candidates.contains { other in
             guard other.boundingBox != line.boundingBox else { return false }
+            let sameRow = abs(other.boundingBox.midY - myMidY) < 0.15
+            let sameColumn = (isVertical || isVerticalLine(other))
+                && abs(other.boundingBox.midX - line.boundingBox.midX) < max(line.boundingBox.width, other.boundingBox.width) * 1.4
             return (isFuriganaLine(other) || isRomajiNameLine(other))
-                && abs(other.boundingBox.midY - myMidY) < 0.15
+                && (sameRow || sameColumn)
         }
         if hasReadingLine { score += 0.5 }
 
@@ -125,6 +129,10 @@ enum NameProcessor {
 
         if line.boundingBox.minY > 0.4 && (0.2...0.8).contains(line.boundingBox.midX) {
             score += 0.1
+        }
+
+        if isVertical && line.boundingBox.height > 0.12 && (0.2...0.9).contains(line.boundingBox.midX) {
+            score += 0.15
         }
 
         if line.boundingBox.height > 0.06 { score += 0.15 }
@@ -159,6 +167,7 @@ enum NameProcessor {
             let nameBox = selectedLine.boundingBox
             let nameMinX = nameBox.minX
             let nameMaxX = nameBox.maxX
+            let isVerticalName = isVerticalLine(selectedLine)
             let fragmentIndices = remaining.indices.filter { i -> Bool in
                 guard i != nameIndex else { return false }
                 let line = remaining[i]
@@ -171,14 +180,19 @@ enum NameProcessor {
                 let sameRow = abs(box.midY - nameMidY) < max(nameBox.height, box.height) * 0.6
                 let xGap = nameBox.width * 0.5
                 let xNearby = box.minX < nameMaxX + xGap && box.maxX > nameMinX - xGap
+                let sameColumn = abs(box.midX - nameBox.midX) < max(nameBox.width, box.width) * 0.9
+                let sameLogicalLine = isVerticalName ? sameColumn : (sameRow && xNearby)
                 return hasKanji
                     && stripped.count <= 3
-                    && sameRow
-                    && xNearby
+                    && sameLogicalLine
             }
 
             var allParts = [selectedLine] + fragmentIndices.map { remaining[$0] }
-            allParts.sort { $0.boundingBox.midX < $1.boundingBox.midX }
+            allParts.sort {
+                isVerticalName
+                    ? $0.boundingBox.midY > $1.boundingBox.midY
+                    : $0.boundingBox.midX < $1.boundingBox.midX
+            }
             rawName = allParts
                 .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .joined()
@@ -249,6 +263,11 @@ enum NameProcessor {
         return parts.allSatisfy { $0.first?.isLetter == true }
     }
 
+    private static func isVerticalLine(_ line: RecognizedLine) -> Bool {
+        line.textDirection == .topToBottom
+            || line.boundingBox.height > line.boundingBox.width * 1.4
+    }
+
     // MARK: - ローマ字→ひらがな変換
 
     /// ローマ字行から読み仮名を推定し、漢字名との照合で語順を判定する
@@ -302,40 +321,12 @@ enum NameProcessor {
 
     /// ローマ字をひらがなに変換する（Kunrei式→Hepburn式正規化付き）
     static func romajiToHiragana(_ romaji: String) -> String {
-        let normalized = normalizeRomaji(romaji)
-        let mutable = NSMutableString(string: normalized)
-        CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
-        return mutable as String
+        RomajiReadingNormalizer.hiragana(from: romaji)
     }
 
     /// Kunrei式 → Hepburn式の前処理 + 長音正規化
     static func normalizeRomaji(_ romaji: String) -> String {
-        var s = romaji.lowercased()
-        let replacements: [(String, String)] = [
-            ("sha", "sha"), ("shi", "shi"), ("shu", "shu"), ("sho", "sho"),
-            ("chi", "chi"), ("tchi", "cchi"), ("tsu", "tsu"),
-            ("sya", "sha"), ("syi", "shi"), ("syu", "shu"), ("syo", "sho"),
-            ("tya", "cha"), ("tyi", "chi"), ("tyu", "chu"), ("tyo", "cho"),
-            ("zya", "ja"),  ("zyi", "ji"),  ("zyu", "ju"),  ("zyo", "jo"),
-            ("si", "shi"), ("ti", "chi"), ("tu", "tsu"), ("hu", "fu"),
-            ("zi", "ji"),  ("di", "ji"),  ("du", "zu"),
-        ]
-        for (from, to) in replacements {
-            s = s.replacingOccurrences(of: from, with: to)
-        }
-        // Hepburn長音: oh + 子音 → ouh（例: ohta → ouhta → おうた）
-        s = s.replacingOccurrences(
-            of: #"oh(?=[bcdfghjklmnpqrstvwxyz])"#,
-            with: "ouh",
-            options: .regularExpression
-        )
-        // 語末の oh → ou（例: itoh → itou → いとう）
-        s = s.replacingOccurrences(
-            of: #"oh$"#,
-            with: "ou",
-            options: .regularExpression
-        )
-        return s
+        RomajiReadingNormalizer.normalize(romaji)
     }
 
     /// CFStringTokenizer のラテン転写属性からひらがな読みを生成する
