@@ -114,4 +114,27 @@ struct OCRServiceTests {
         #expect(crop.minY >= 0)
         #expect(crop.maxY <= 1)
     }
+
+    @Test func bestCardRectPrefersCardCandidateOverLargeBackground() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.02, y: 0.08, width: 0.92, height: 0.74), 0.95),
+            (CGRect(x: 0.22, y: 0.34, width: 0.56, height: 0.32), 0.74),
+        ]
+        let textBounds = CGRect(x: 0.32, y: 0.42, width: 0.32, height: 0.14)
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates, textBounds: textBounds))
+
+        #expect(index == 1)
+    }
+
+    @Test func bestCardRectRejectsBackgroundWhenTextIsTinyInsideIt() {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.00, y: 0.00, width: 0.98, height: 0.82), 0.95),
+        ]
+        let textBounds = CGRect(x: 0.42, y: 0.48, width: 0.10, height: 0.05)
+
+        let index = OCRService.bestCardRectIndex(candidates: candidates, textBounds: textBounds)
+
+        #expect(index == nil)
+    }
 }

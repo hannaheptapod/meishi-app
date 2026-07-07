@@ -49,6 +49,8 @@ actor OCRService {
         // EXIF向き情報を適用した正規化済み画像を使う
         let normalized = Self.normalizeOrientation(image)
         guard let cgImage = normalized.cgImage else { return image }
+        let textBoxes = await Self.recognizeTextBoundingBoxes(cgImage: cgImage)
+        let textBounds = Self.unionRect(textBoxes)
 
         do {
             var request = DetectRectanglesRequest()
@@ -61,59 +63,25 @@ actor OCRService {
             request.maximumObservations = 8
 
             let observations = try await request.perform(on: cgImage)
-            if let rect = Self.bestCardRectangle(from: observations),
-               let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect) {
+            if let rect = Self.bestCardRectangle(from: observations, textBounds: textBounds),
+               let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect),
+               Self.isMeaningfulCrop(cropped, original: normalized) {
                 return cropped
             }
         } catch {
             AppLogger.ocr.debug("名刺矩形検出に失敗。OCRテキスト矩形フォールバックへ移行: \(error)")
         }
 
-        if let textCropped = await Self.fallbackCropFromText(cgImage: cgImage) {
+        if let cropRect = Self.fallbackCropRect(fromTextBoundingBoxes: textBoxes),
+           let textCropped = Self.axisAlignedCrop(cgImage: cgImage, normalizedRect: cropRect),
+           Self.isMeaningfulCrop(textCropped, original: normalized) {
             return textCropped
         }
 
         return normalized
     }
 
-    private static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
-        observations
-            .filter { observation in
-                let rect = observation.boundingBox.cgRect
-                let area = rect.width * rect.height
-                guard (0.015...0.85).contains(area) else { return false }
-                let aspect = rect.width / max(rect.height, 0.001)
-                return (0.35...3.0).contains(aspect)
-            }
-            .max { lhs, rhs in
-                let lhsBox = lhs.boundingBox.cgRect
-                let rhsBox = rhs.boundingBox.cgRect
-                let lhsScore = rectangleCardScore(boundingBox: lhsBox, confidence: lhs.confidence)
-                let rhsScore = rectangleCardScore(boundingBox: rhsBox, confidence: rhs.confidence)
-                return lhsScore < rhsScore
-            }
-    }
-
-    private static func rectangleCardScore(boundingBox rect: CGRect, confidence: Float) -> CGFloat {
-        let aspect = rect.width / max(rect.height, 0.001)
-        let horizontalDistance = abs(log(aspect / horizontalCardAspectRatio))
-        let verticalDistance = abs(log(aspect / verticalCardAspectRatio))
-        let aspectScore = max(0, 1 - min(horizontalDistance, verticalDistance))
-
-        let area = rect.width * rect.height
-        let areaPenalty: CGFloat
-        if area > 0.45 {
-            areaPenalty = (area - 0.45) * 2
-        } else if area < 0.02 {
-            areaPenalty = (0.02 - area) * 3
-        } else {
-            areaPenalty = 0
-        }
-
-        return CGFloat(confidence) + aspectScore * 1.5 + min(area, 0.25) - areaPenalty
-    }
-
-    private static func fallbackCropFromText(cgImage: CGImage) async -> UIImage? {
+    private static func recognizeTextBoundingBoxes(cgImage: CGImage) async -> [CGRect] {
         do {
             var request = RecognizeTextRequest()
             request.recognitionLevel = .accurate
@@ -122,13 +90,143 @@ actor OCRService {
                 Locale.Language(identifier: "ja-JP"),
                 Locale.Language(identifier: "en-US"),
             ]
-            let boxes = try await request.perform(on: cgImage).map { $0.boundingBox.cgRect }
-            guard let cropRect = fallbackCropRect(fromTextBoundingBoxes: boxes) else { return nil }
-            return axisAlignedCrop(cgImage: cgImage, normalizedRect: cropRect)
+            return try await request.perform(on: cgImage).map { $0.boundingBox.cgRect }
         } catch {
-            AppLogger.ocr.debug("OCRテキスト矩形フォールバックに失敗: \(error)")
-            return nil
+            AppLogger.ocr.debug("名刺クロップ用OCRテキスト矩形取得に失敗: \(error)")
+            return []
         }
+    }
+
+    private static func bestCardRectangle(
+        from observations: [RectangleObservation],
+        textBounds: CGRect?
+    ) -> RectangleObservation? {
+        let candidates = observations
+            .filter { isPlausibleCardRect($0.boundingBox.cgRect) }
+        guard !candidates.isEmpty else { return nil }
+
+        let scored = candidates.map { observation in
+            (
+                observation: observation,
+                score: rectangleCardScore(
+                    boundingBox: observation.boundingBox.cgRect,
+                    confidence: observation.confidence,
+                    textBounds: textBounds
+                )
+            )
+        }
+        guard let best = scored.max(by: { $0.score < $1.score }) else { return nil }
+        guard best.score > 1.25 else { return nil }
+        return best.observation
+    }
+
+    static func bestCardRectIndex(
+        candidates: [(rect: CGRect, confidence: Float)],
+        textBounds: CGRect?
+    ) -> Int? {
+        let scored = candidates.enumerated().compactMap { index, candidate -> (index: Int, score: CGFloat)? in
+            guard isPlausibleCardRect(candidate.rect) else { return nil }
+            return (
+                index: index,
+                score: rectangleCardScore(
+                    boundingBox: candidate.rect,
+                    confidence: candidate.confidence,
+                    textBounds: textBounds
+                )
+            )
+        }
+        guard let best = scored.max(by: { $0.score < $1.score }) else { return nil }
+        guard best.score > 1.25 else { return nil }
+        return best.index
+    }
+
+    private static func isPlausibleCardRect(_ rect: CGRect) -> Bool {
+        let area = rect.width * rect.height
+        guard (0.015...0.85).contains(area) else { return false }
+        let aspect = rect.width / max(rect.height, 0.001)
+        return (0.35...3.0).contains(aspect)
+    }
+
+    private static func rectangleCardScore(
+        boundingBox rect: CGRect,
+        confidence: Float,
+        textBounds: CGRect?
+    ) -> CGFloat {
+        let aspect = rect.width / max(rect.height, 0.001)
+        let horizontalDistance = abs(log(aspect / horizontalCardAspectRatio))
+        let verticalDistance = abs(log(aspect / verticalCardAspectRatio))
+        let aspectScore = max(0, 1 - min(horizontalDistance, verticalDistance))
+
+        let area = rect.width * rect.height
+        let areaPenalty: CGFloat
+        if area > 0.45 {
+            areaPenalty = (area - 0.45) * 2.8
+        } else if area < 0.02 {
+            areaPenalty = (0.02 - area) * 3
+        } else {
+            areaPenalty = 0
+        }
+
+        let textScore: CGFloat
+        if let textBounds,
+           textBounds.width > 0,
+           textBounds.height > 0 {
+            let textArea = textBounds.width * textBounds.height
+            let intersection = rect.intersection(textBounds)
+            let textCoverage = intersection.isNull ? 0 : (intersection.width * intersection.height) / max(textArea, 0.0001)
+            let expected = fallbackCropRect(fromTextBoundingBoxes: [textBounds])
+            let expectedOverlap = expected.map { iou(rect, $0) } ?? 0
+            let textToRectRatio = textArea / max(area, 0.0001)
+
+            // OCR文字群を広げた推定カード領域と噛み合わない大矩形は、机・画面・背景枠の誤検出として捨てる。
+            if area > 0.45, expectedOverlap < 0.25 {
+                return -1
+            }
+            if textToRectRatio < 0.012, expectedOverlap < 0.35 {
+                return -1
+            }
+
+            let backgroundPenalty = textToRectRatio < 0.05 ? (0.05 - textToRectRatio) * 10 : 0
+            textScore = textCoverage * 0.8 + expectedOverlap * 4.0 - backgroundPenalty
+        } else {
+            textScore = 0
+        }
+
+        return CGFloat(confidence) + aspectScore * 1.4 + min(area, 0.25) + textScore - areaPenalty
+    }
+
+    private static func isMeaningfulCrop(_ cropped: UIImage, original: UIImage) -> Bool {
+        let originalArea: CGFloat
+        if let cgImage = original.cgImage {
+            originalArea = CGFloat(cgImage.width * cgImage.height)
+        } else {
+            originalArea = original.size.width * original.size.height
+        }
+
+        let croppedArea: CGFloat
+        if let cgImage = cropped.cgImage {
+            croppedArea = CGFloat(cgImage.width * cgImage.height)
+        } else {
+            croppedArea = cropped.size.width * cropped.size.height
+        }
+
+        guard originalArea > 0, croppedArea > 0 else { return false }
+        return croppedArea / originalArea < 0.92
+    }
+
+    private static func unionRect(_ rects: [CGRect]) -> CGRect? {
+        let usable = rects.filter { !$0.isNull && !$0.isEmpty }
+        guard let first = usable.first else { return nil }
+        return usable.dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    private static func iou(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else { return 0 }
+        let intersectionArea = intersection.width * intersection.height
+        let unionArea = lhs.width * lhs.height + rhs.width * rhs.height - intersectionArea
+        guard unionArea > 0 else { return 0 }
+        return intersectionArea / unionArea
     }
 
     static func fallbackCropRect(fromTextBoundingBoxes boxes: [CGRect]) -> CGRect? {
