@@ -38,6 +38,8 @@ nonisolated struct RecognizedLine: Sendable {
 actor OCRService {
 
     private static let ciContext = CIContext()
+    private static let horizontalCardAspectRatio: CGFloat = 1.72
+    private static let verticalCardAspectRatio: CGFloat = 0.58
 
     // MARK: - 矩形検出 + パースペクティブ補正
 
@@ -53,17 +55,141 @@ actor OCRService {
             // 名刺に近いアスペクト比（横長・縦長どちらも許容）
             request.minimumAspectRatio = 0.4
             request.maximumAspectRatio = 2.5
-            request.minimumConfidence = 0.7
-            request.maximumObservations = 1
+            request.minimumConfidence = 0.35
+            request.minimumSize = 0.05
+            request.quadratureToleranceDegrees = 35
+            request.maximumObservations = 8
 
-            guard let rect = try await request.perform(on: cgImage).first else {
-                // 矩形未検出 → 元画像を返す
-                return normalized
+            let observations = try await request.perform(on: cgImage)
+            if let rect = Self.bestCardRectangle(from: observations),
+               let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect) {
+                return cropped
             }
-            return Self.perspectiveCorrected(cgImage: cgImage, observation: rect) ?? normalized
         } catch {
-            return normalized
+            AppLogger.ocr.debug("名刺矩形検出に失敗。OCRテキスト矩形フォールバックへ移行: \(error)")
         }
+
+        if let textCropped = await Self.fallbackCropFromText(cgImage: cgImage) {
+            return textCropped
+        }
+
+        return normalized
+    }
+
+    private static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
+        observations
+            .filter { observation in
+                let rect = observation.boundingBox.cgRect
+                let area = rect.width * rect.height
+                guard (0.015...0.85).contains(area) else { return false }
+                let aspect = rect.width / max(rect.height, 0.001)
+                return (0.35...3.0).contains(aspect)
+            }
+            .max { lhs, rhs in
+                let lhsBox = lhs.boundingBox.cgRect
+                let rhsBox = rhs.boundingBox.cgRect
+                let lhsScore = rectangleCardScore(boundingBox: lhsBox, confidence: lhs.confidence)
+                let rhsScore = rectangleCardScore(boundingBox: rhsBox, confidence: rhs.confidence)
+                return lhsScore < rhsScore
+            }
+    }
+
+    private static func rectangleCardScore(boundingBox rect: CGRect, confidence: Float) -> CGFloat {
+        let aspect = rect.width / max(rect.height, 0.001)
+        let horizontalDistance = abs(log(aspect / horizontalCardAspectRatio))
+        let verticalDistance = abs(log(aspect / verticalCardAspectRatio))
+        let aspectScore = max(0, 1 - min(horizontalDistance, verticalDistance))
+
+        let area = rect.width * rect.height
+        let areaPenalty: CGFloat
+        if area > 0.45 {
+            areaPenalty = (area - 0.45) * 2
+        } else if area < 0.02 {
+            areaPenalty = (0.02 - area) * 3
+        } else {
+            areaPenalty = 0
+        }
+
+        return CGFloat(confidence) + aspectScore * 1.5 + min(area, 0.25) - areaPenalty
+    }
+
+    private static func fallbackCropFromText(cgImage: CGImage) async -> UIImage? {
+        do {
+            var request = RecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            request.recognitionLanguages = [
+                Locale.Language(identifier: "ja-JP"),
+                Locale.Language(identifier: "en-US"),
+            ]
+            let boxes = try await request.perform(on: cgImage).map { $0.boundingBox.cgRect }
+            guard let cropRect = fallbackCropRect(fromTextBoundingBoxes: boxes) else { return nil }
+            return axisAlignedCrop(cgImage: cgImage, normalizedRect: cropRect)
+        } catch {
+            AppLogger.ocr.debug("OCRテキスト矩形フォールバックに失敗: \(error)")
+            return nil
+        }
+    }
+
+    static func fallbackCropRect(fromTextBoundingBoxes boxes: [CGRect]) -> CGRect? {
+        let usableBoxes = boxes.filter { box in
+            let area = box.width * box.height
+            return area > 0.00005
+                && box.width > 0.003
+                && box.height > 0.003
+        }
+        guard !usableBoxes.isEmpty else { return nil }
+
+        let union = usableBoxes.reduce(usableBoxes[0]) { partial, box in
+            partial.union(box)
+        }
+        guard union.width > 0.04, union.height > 0.04 else { return nil }
+
+        let isVertical = union.height > union.width * 1.08
+        let targetAspect = isVertical ? verticalCardAspectRatio : horizontalCardAspectRatio
+        let minWidth: CGFloat = isVertical ? 0.22 : 0.34
+        let minHeight: CGFloat = isVertical ? 0.34 : 0.20
+
+        var width = max(union.width * 1.65, minWidth)
+        var height = max(union.height * 1.75, minHeight)
+        let currentAspect = width / max(height, 0.001)
+        if currentAspect < targetAspect {
+            width = height * targetAspect
+        } else {
+            height = width / targetAspect
+        }
+
+        width = min(width, 1.0)
+        height = min(height, 1.0)
+
+        let centerX = union.midX
+        let centerY = union.midY
+        var rect = CGRect(
+            x: centerX - width / 2,
+            y: centerY - height / 2,
+            width: width,
+            height: height
+        )
+        rect.origin.x = min(max(rect.origin.x, 0), 1 - rect.width)
+        rect.origin.y = min(max(rect.origin.y, 0), 1 - rect.height)
+        return rect
+    }
+
+    private static func axisAlignedCrop(cgImage: CGImage, normalizedRect rect: CGRect) -> UIImage? {
+        let imageWidth = CGFloat(cgImage.width)
+        let imageHeight = CGFloat(cgImage.height)
+        let pixelRect = CGRect(
+            x: rect.minX * imageWidth,
+            y: (1 - rect.maxY) * imageHeight,
+            width: rect.width * imageWidth,
+            height: rect.height * imageHeight
+        ).integral
+
+        guard pixelRect.width > 1, pixelRect.height > 1,
+              let cropped = cgImage.cropping(to: pixelRect) else {
+            return nil
+        }
+        return UIImage(cgImage: cropped)
     }
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）

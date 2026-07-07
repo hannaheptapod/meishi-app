@@ -78,4 +78,40 @@ struct OCRServiceTests {
         #expect(texts.contains("03-0000-0000"))
         #expect(!texts.contains("hanakotanaka@example.com03-0000-0000"))
     }
+
+    @Test func fallbackCropRectExpandsHorizontalTextBoundsToCardAspect() throws {
+        let boxes = [
+            CGRect(x: 0.28, y: 0.48, width: 0.12, height: 0.04),
+            CGRect(x: 0.52, y: 0.49, width: 0.18, height: 0.04),
+            CGRect(x: 0.29, y: 0.38, width: 0.40, height: 0.05),
+        ]
+
+        let crop = try #require(OCRService.fallbackCropRect(fromTextBoundingBoxes: boxes))
+
+        #expect(crop.width > 0.40)
+        #expect(crop.height > 0.20)
+        #expect(abs((crop.width / crop.height) - 1.72) < 0.02)
+        #expect(crop.minX >= 0)
+        #expect(crop.maxX <= 1)
+        #expect(crop.minY >= 0)
+        #expect(crop.maxY <= 1)
+    }
+
+    @Test func fallbackCropRectExpandsVerticalTextBoundsToCardAspect() throws {
+        let boxes = [
+            CGRect(x: 0.50, y: 0.42, width: 0.05, height: 0.28),
+            CGRect(x: 0.62, y: 0.46, width: 0.05, height: 0.26),
+            CGRect(x: 0.32, y: 0.30, width: 0.04, height: 0.30),
+        ]
+
+        let crop = try #require(OCRService.fallbackCropRect(fromTextBoundingBoxes: boxes))
+
+        #expect(crop.width > 0.22)
+        #expect(crop.height > 0.34)
+        #expect(abs((crop.width / crop.height) - 0.58) < 0.02)
+        #expect(crop.minX >= 0)
+        #expect(crop.maxX <= 1)
+        #expect(crop.minY >= 0)
+        #expect(crop.maxY <= 1)
+    }
 }
