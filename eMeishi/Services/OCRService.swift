@@ -65,19 +65,25 @@ actor OCRService {
     static func cardRectangleRequest() -> DetectRectanglesRequest {
         var request = DetectRectanglesRequest()
         // DetectRectanglesRequest の aspect ratio は 0...1 の短辺/長辺比。旧 API の 0.4...2.5 とは範囲が違う。
-        request.minimumAspectRatio = 0.4
+        request.minimumAspectRatio = 0.32
         request.maximumAspectRatio = 1.0
-        request.minimumConfidence = 0.7
-        request.maximumObservations = 12
+        request.minimumConfidence = 0.45
+        request.minimumSize = 0.04
+        request.maximumObservations = 20
         return request
     }
 
     static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
         observations
-            .map { observation in
+            .enumerated()
+            .map { index, observation in
                 (
                     observation: observation,
-                    score: cardRectangleScore(observation.boundingBox.cgRect, confidence: observation.confidence)
+                    score: cardRectangleScore(
+                        metrics: cardRectangleMetrics(for: observation),
+                        confidence: observation.confidence,
+                        visionOrder: index
+                    )
                 )
             }
             .filter { $0.score > 0 }
@@ -91,7 +97,11 @@ actor OCRService {
             .map { index, candidate in
                 (
                     index: index,
-                    score: cardRectangleScore(candidate.rect, confidence: candidate.confidence)
+                    score: cardRectangleScore(
+                        metrics: cardRectangleMetrics(for: candidate.rect),
+                        confidence: candidate.confidence,
+                        visionOrder: index
+                    )
                 )
             }
             .filter { $0.score > 0 }
@@ -99,21 +109,78 @@ actor OCRService {
             .index
     }
 
-    private static func cardRectangleScore(_ rect: CGRect, confidence: Float) -> CGFloat {
-        let area = rect.width * rect.height
-        guard (0.015...0.80).contains(area) else { return -1 }
+    private struct CardRectangleMetrics {
+        let area: CGFloat
+        let shortLongAspect: CGFloat
+        let oppositeSideBalance: CGFloat
+    }
 
-        let width = max(rect.width, 0.001)
-        let height = max(rect.height, 0.001)
-        let shortLongAspect = min(width, height) / max(width, height)
-        guard (0.35...0.85).contains(shortLongAspect) else { return -1 }
+    private static func cardRectangleMetrics(for observation: RectangleObservation) -> CardRectangleMetrics {
+        let topLeft = observation.topLeft.cgPoint
+        let topRight = observation.topRight.cgPoint
+        let bottomLeft = observation.bottomLeft.cgPoint
+        let bottomRight = observation.bottomRight.cgPoint
+
+        let top = distance(topLeft, topRight)
+        let bottom = distance(bottomLeft, bottomRight)
+        let left = distance(topLeft, bottomLeft)
+        let right = distance(topRight, bottomRight)
+        let horizontal = (top + bottom) / 2
+        let vertical = (left + right) / 2
+        let shortLongAspect = min(horizontal, vertical) / max(horizontal, vertical, 0.001)
+        let horizontalBalance = min(top, bottom) / max(top, bottom, 0.001)
+        let verticalBalance = min(left, right) / max(left, right, 0.001)
+        let area = polygonArea([topLeft, topRight, bottomRight, bottomLeft])
+
+        return CardRectangleMetrics(
+            area: area,
+            shortLongAspect: shortLongAspect,
+            oppositeSideBalance: min(horizontalBalance, verticalBalance)
+        )
+    }
+
+    private static func cardRectangleMetrics(for rect: CGRect) -> CardRectangleMetrics {
+        let shortLongAspect = min(rect.width, rect.height) / max(rect.width, rect.height, 0.001)
+        return CardRectangleMetrics(
+            area: rect.width * rect.height,
+            shortLongAspect: shortLongAspect,
+            oppositeSideBalance: 1
+        )
+    }
+
+    private static func cardRectangleScore(
+        metrics: CardRectangleMetrics,
+        confidence: Float,
+        visionOrder: Int
+    ) -> CGFloat {
+        let area = metrics.area
+        guard (0.02...0.80).contains(area) else { return -1 }
+
+        let shortLongAspect = metrics.shortLongAspect
+        guard (0.32...0.90).contains(shortLongAspect) else { return -1 }
+        guard metrics.oppositeSideBalance > 0.55 else { return -1 }
 
         let businessCardAspect: CGFloat = 0.58
         let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
         let areaScore = min(area / 0.12, 1.0)
+        let shapeScore = metrics.oppositeSideBalance
         let hugeRectPenalty = area > 0.45 ? (area - 0.45) * 2.0 : 0
+        let orderPenalty = CGFloat(visionOrder) * 0.12
 
-        return CGFloat(confidence) * 2.0 + aspectScore * 3.0 + areaScore - hugeRectPenalty
+        return CGFloat(confidence) * 2.0 + aspectScore * 2.0 + areaScore + shapeScore - hugeRectPenalty - orderPenalty
+    }
+
+    private static func distance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
+    }
+
+    private static func polygonArea(_ points: [CGPoint]) -> CGFloat {
+        guard points.count >= 3 else { return 0 }
+        let sum = points.enumerated().reduce(CGFloat.zero) { partial, item in
+            let next = points[(item.offset + 1) % points.count]
+            return partial + item.element.x * next.y - next.x * item.element.y
+        }
+        return abs(sum) / 2
     }
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）

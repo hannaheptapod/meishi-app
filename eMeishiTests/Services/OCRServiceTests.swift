@@ -11,10 +11,11 @@ struct OCRServiceTests {
     @Test func cardRectangleRequestKeepsLegacyCropSettings() {
         let request = OCRService.cardRectangleRequest()
 
-        #expect(abs(request.minimumAspectRatio - 0.4) < 0.001)
+        #expect(abs(request.minimumAspectRatio - 0.32) < 0.001)
         #expect(abs(request.maximumAspectRatio - 1.0) < 0.001)
-        #expect(abs(request.minimumConfidence - 0.7) < 0.001)
-        #expect(request.maximumObservations == 12)
+        #expect(abs(request.minimumConfidence - 0.45) < 0.001)
+        #expect(abs(request.minimumSize - 0.04) < 0.001)
+        #expect(request.maximumObservations == 20)
     }
 
     @Test func cardRectangleRequestPerformsWithNewVisionAspectRange() async throws {
@@ -34,6 +35,17 @@ struct OCRServiceTests {
         let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
 
         #expect(index == 1)
+    }
+
+    @Test func bestCardRectKeepsVisionOrderForPlausibleFirstCandidate() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.12, y: 0.24, width: 0.62, height: 0.36), 1.0),
+            (CGRect(x: 0.14, y: 0.26, width: 0.58, height: 0.34), 1.0),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 0)
     }
 
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
