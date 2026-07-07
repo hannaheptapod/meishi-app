@@ -93,7 +93,8 @@ func makeLine(
     midX: CGFloat = 0.5,
     midY: CGFloat = 0.6,
     width: CGFloat = 0.3,
-    height: CGFloat = 0.05
+    height: CGFloat = 0.05,
+    textDirection: RecognizedTextDirection = .unknown
 ) -> RecognizedLine {
     RecognizedLine(
         text: text,
@@ -103,6 +104,7 @@ func makeLine(
             width: width,
             height: height
         ),
-        confidence: 1.0
+        confidence: 1.0,
+        textDirection: textDirection
     )
 }

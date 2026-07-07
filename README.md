@@ -25,7 +25,7 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 |------|------|
 | UI | SwiftUI |
 | データ永続化 | CoreData + NSPersistentCloudKitContainer |
-| OCR | Vision Framework（VNRecognizeTextRequest） |
+| OCR | Vision Framework（VNRecognizeTextRequest / VNDetectRectanglesRequest） |
 | AI分析（Apple Intelligence対応端末） | Foundation Models（iOS 26+） |
 | AI分析（非対応端末） | Qwen3-0.6B Anemll CoreML（Embed+FFN+LMHead 3モデル・ANE対応） |
 | カメラ | AVFoundation |
@@ -139,7 +139,8 @@ meishi-app/
 ├── eMeishiTests/
 │   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
 │   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
-│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存
+│   ├── OCRServiceTests.swift                   # OCR 行結合（横書き・縦書き）の後処理テスト
 │   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
 │   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
 │   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
