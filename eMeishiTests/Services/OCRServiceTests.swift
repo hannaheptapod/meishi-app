@@ -1,6 +1,7 @@
 import Testing
 import CoreGraphics
 import Vision
+import UIKit
 @testable import eMeishi
 
 // MARK: - OCR 後処理テスト
@@ -11,9 +12,28 @@ struct OCRServiceTests {
         let request = OCRService.cardRectangleRequest()
 
         #expect(abs(request.minimumAspectRatio - 0.4) < 0.001)
-        #expect(abs(request.maximumAspectRatio - 2.5) < 0.001)
+        #expect(abs(request.maximumAspectRatio - 1.0) < 0.001)
         #expect(abs(request.minimumConfidence - 0.7) < 0.001)
-        #expect(request.maximumObservations == 1)
+        #expect(request.maximumObservations == 12)
+    }
+
+    @Test func cardRectangleRequestPerformsWithNewVisionAspectRange() async throws {
+        let image = makeSyntheticCardImage(size: CGSize(width: 640, height: 960))
+        let cgImage = try #require(image.cgImage)
+        let request = OCRService.cardRectangleRequest()
+
+        _ = try await request.perform(on: cgImage)
+    }
+
+    @Test func bestCardRectPrefersBusinessCardCandidateOverWideContainer() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.04, y: 0.52, width: 0.92, height: 0.29), 1.0),
+            (CGRect(x: 0.07, y: 0.53, width: 0.43, height: 0.26), 1.0),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 1)
     }
 
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
@@ -87,5 +107,21 @@ struct OCRServiceTests {
         #expect(texts.contains("tanaka@example.com"))
         #expect(texts.contains("03-0000-0000"))
         #expect(!texts.contains("hanakotanaka@example.com03-0000-0000"))
+    }
+}
+
+private func makeSyntheticCardImage(size: CGSize) -> UIImage {
+    let renderer = UIGraphicsImageRenderer(size: size)
+    return renderer.image { context in
+        UIColor.black.setFill()
+        context.fill(CGRect(origin: .zero, size: size))
+
+        UIColor.white.setFill()
+        let cardRect = CGRect(x: size.width * 0.22, y: size.height * 0.18, width: size.width * 0.56, height: size.height * 0.64)
+        context.fill(cardRect)
+
+        UIColor.lightGray.setStroke()
+        context.cgContext.setLineWidth(2)
+        context.cgContext.stroke(cardRect)
     }
 }

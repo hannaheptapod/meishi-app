@@ -51,7 +51,7 @@ actor OCRService {
         do {
             let request = Self.cardRectangleRequest()
             let observations = try await request.perform(on: cgImage)
-            guard let rect = observations.first,
+            guard let rect = Self.bestCardRectangle(from: observations),
                   let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect) else {
                 return normalized
             }
@@ -64,12 +64,56 @@ actor OCRService {
 
     static func cardRectangleRequest() -> DetectRectanglesRequest {
         var request = DetectRectanglesRequest()
-        // 旧 VNDetectRectanglesRequest と同じ条件に固定する。ここを変えると既存の撮影画像クロップが変わる。
+        // DetectRectanglesRequest の aspect ratio は 0...1 の短辺/長辺比。旧 API の 0.4...2.5 とは範囲が違う。
         request.minimumAspectRatio = 0.4
-        request.maximumAspectRatio = 2.5
+        request.maximumAspectRatio = 1.0
         request.minimumConfidence = 0.7
-        request.maximumObservations = 1
+        request.maximumObservations = 12
         return request
+    }
+
+    static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
+        observations
+            .map { observation in
+                (
+                    observation: observation,
+                    score: cardRectangleScore(observation.boundingBox.cgRect, confidence: observation.confidence)
+                )
+            }
+            .filter { $0.score > 0 }
+            .max { $0.score < $1.score }?
+            .observation
+    }
+
+    static func bestCardRectIndex(candidates: [(rect: CGRect, confidence: Float)]) -> Int? {
+        candidates
+            .enumerated()
+            .map { index, candidate in
+                (
+                    index: index,
+                    score: cardRectangleScore(candidate.rect, confidence: candidate.confidence)
+                )
+            }
+            .filter { $0.score > 0 }
+            .max { $0.score < $1.score }?
+            .index
+    }
+
+    private static func cardRectangleScore(_ rect: CGRect, confidence: Float) -> CGFloat {
+        let area = rect.width * rect.height
+        guard (0.015...0.80).contains(area) else { return -1 }
+
+        let width = max(rect.width, 0.001)
+        let height = max(rect.height, 0.001)
+        let shortLongAspect = min(width, height) / max(width, height)
+        guard (0.35...0.85).contains(shortLongAspect) else { return -1 }
+
+        let businessCardAspect: CGFloat = 0.58
+        let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
+        let areaScore = min(area / 0.12, 1.0)
+        let hugeRectPenalty = area > 0.45 ? (area - 0.45) * 2.0 : 0
+
+        return CGFloat(confidence) * 2.0 + aspectScore * 3.0 + areaScore - hugeRectPenalty
     }
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）
