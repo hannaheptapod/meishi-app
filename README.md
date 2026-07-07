@@ -25,10 +25,10 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 |------|------|
 | UI | SwiftUI |
 | データ永続化 | CoreData + NSPersistentCloudKitContainer |
-| OCR | Vision Framework（VNRecognizeTextRequest / VNDetectRectanglesRequest） |
+| OCR | Vision Framework（RecognizeTextRequest / DetectRectanglesRequest） |
 | AI分析（Apple Intelligence対応端末） | Foundation Models（iOS 26+） |
 | AI分析（非対応端末） | Qwen3-0.6B Anemll CoreML（Embed+FFN+LMHead 3モデル・ANE対応） |
-| カメラ | AVFoundation |
+| カメラ | UIKit UIImagePickerController（標準カメラUI + オーバーレイ） |
 | 連絡先 | Contacts Framework |
 | 生体認証 | LocalAuthentication |
 | モデル配布 | CloudKit Public Database |
@@ -37,7 +37,7 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 
 ```mermaid
 flowchart TD
-  A[カメラ撮影] --> B[OCR<br/>Vision Framework<br/>VNRecognizeTextRequest / .accurate<br/>ja-JP, en-US]
+  A[カメラ撮影] --> B[OCR<br/>Vision Framework<br/>RecognizeTextRequest / .accurate<br/>textDirection<br/>ja-JP, en-US]
   B --> C[ハイブリッド前段処理 常時・LLM 不使用<br/>CardFieldClassifier.classifyStructuredFields]
   C --> C1[Pass1: 正規表現で email・phone・URL・住所・会社・部署・役職を抽出]
   C --> C2[Pass2: 座標ベース名前スコアリング<br/>フリガナ近接・フォントサイズ・位置]

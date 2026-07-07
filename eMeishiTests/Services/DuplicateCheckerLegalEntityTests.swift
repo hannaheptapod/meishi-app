@@ -138,20 +138,20 @@ struct DuplicateCheckerLegalEntityTests {
 
     @Test func generateReadingPreservesKatakanaLongVowelMark() {
         // カタカナ会社名の ー がひらがなでも保存されること
-        #expect(NameReadingGenerator.generateReading(from: "アバナード") == "あばなーど")
-        #expect(NameReadingGenerator.generateReading(from: "グーグル") == "ぐーぐる")
-        #expect(NameReadingGenerator.generateReading(from: "ジョーンズ") == "じょーんず")
-        #expect(NameReadingGenerator.generateReading(from: "マイクロソフト") == "まいくろそふと")
+        #expect(NameReadingGenerator.generateReading(from: "サンプルサービス") == "さんぷるさーびす")
+        #expect(NameReadingGenerator.generateReading(from: "テストデータ") == "てすとでーた")
+        #expect(NameReadingGenerator.generateReading(from: "サンプルツール") == "さんぷるつーる")
+        #expect(NameReadingGenerator.generateReading(from: "テストフォーム") == "てすとふぉーむ")
 
         // NameProcessor 側も同様
-        #expect(NameProcessor.generateReading(from: "アバナード") == "あばなーど")
-        #expect(NameProcessor.generateReading(from: "グーグル") == "ぐーぐる")
+        #expect(NameProcessor.generateReading(from: "サンプルサービス") == "さんぷるさーびす")
+        #expect(NameProcessor.generateReading(from: "テストデータ") == "てすとでーた")
     }
 
     @Test func normalizeToHiraganaPreservesLongVowelMark() {
         // OCRフリガナ行のカタカナ→ひらがな変換で ー が保存されること
-        #expect(NameProcessor.normalizeToHiragana("アバナード") == "あばなーど")
-        #expect(NameProcessor.normalizeToHiragana("ジョーンズ") == "じょーんず")
+        #expect(NameProcessor.normalizeToHiragana("サンプルサービス") == "さんぷるさーびす")
+        #expect(NameProcessor.normalizeToHiragana("テストツール") == "てすとつーる")
         #expect(NameProcessor.normalizeToHiragana("タナカ タロー") == "たなか たろー")
     }
 

@@ -395,6 +395,32 @@ struct CardFormViewModelOCRTests {
         #expect(vm.isProcessingOCR == false)
     }
 
+    @Test func populateFromOCRDoesNotStoreAsciiOnlyReadingsAsFurigana() async {
+        let ctx = makeContext()
+        let mockOCR = MockOCRService()
+        mockOCR.linesToReturn = [makeLine("田中 花子"), makeLine("TANAKA Hanako")]
+
+        var parsed = CardFieldClassifier.ParsedCard()
+        parsed.lastName = "田中"
+        parsed.firstName = "花子"
+        parsed.lastNameReading = "TANAKA"
+        parsed.firstNameReading = "Hanako"
+
+        let vm = CardFormViewModel(
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: parsed, unclassifiedLines: []),
+            llmService: MockLLMService(modelAvailable: false),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await vm.populateFromOCR(image: UIImage())
+        #expect(vm.lastName == "田中")
+        #expect(vm.firstName == "花子")
+        #expect(vm.lastNameReading.isEmpty)
+        #expect(vm.firstNameReading.isEmpty)
+    }
+
     @Test func populateFromOCRLocalLLMNotAvailableSetsError() async {
         let ctx = makeContext()
         let mockOCR = MockOCRService()

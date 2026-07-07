@@ -487,11 +487,18 @@ class CardFormViewModel: ObservableObject {
                 : parsed.companyReading
             return BusinessCard.stripLegalEntityReading(from: raw)
         }()
-        apply(lastName: parsed.lastName, lastNameReading: lastR,
-              firstName: parsed.firstName, firstNameReading: firstR,
+        apply(lastName: parsed.lastName, lastNameReading: Self.sanitizeReading(lastR),
+              firstName: parsed.firstName, firstNameReading: Self.sanitizeReading(firstR),
               company: parsed.company, companyReading: companyR,
               department: parsed.department, title: parsed.title, phones: parsed.phones,
               email: parsed.email, address: parsed.address, website: parsed.website)
+    }
+
+    private static func sanitizeReading(_ reading: String) -> String {
+        let trimmed = reading.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) { return "" }
+        return trimmed
     }
 
     private func apply(lastName: String, lastNameReading: String = "",

@@ -8,6 +8,7 @@ import os
 // showsCameraControls = true で標準カメラUI（ズーム・タップフォーカス等）をすべて維持。
 // cameraOverlayView で「完了」ボタンを標準UIの上に重ねる。
 
+@MainActor
 class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
 
     static let shared = CameraBatchCapture()
@@ -15,6 +16,7 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
     private var images: [UIImage] = []
     private var completion: (([UIImage]) -> Void)?
     private let haptic = UIImpactFeedbackGenerator(style: .light)
+    private let ocrService = OCRService()
     /// dismiss → re-present の隙間を隠すスナップショット
     private var snapshotView: UIView?
 
@@ -76,20 +78,38 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
         _ picker: UIImagePickerController,
         didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
     ) {
+        let capturedImage: UIImage?
         if let image = info[.originalImage] as? UIImage,
            let data = image.jpegData(compressionQuality: 0.8),
            let compressed = UIImage(data: data) {
-            images.append(compressed)
-            haptic.impactOccurred()
+            capturedImage = compressed
+        } else {
+            capturedImage = nil
         }
+
         // dismiss 前にスナップショットを window に貼る → CardListView が見えない
         coverWithSnapshot(from: picker)
-        picker.dismiss(animated: false) { [weak self] in
-            self?.presentPicker()
-            // present のアニメーション完了を待ってからスナップショットを除去
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(0.05))
-                self?.removeSnapshot()
+
+        Task { [weak self, weak picker] in
+            guard let self else { return }
+            if let capturedImage {
+                let croppedImage = await ocrService.detectAndCropCard(from: capturedImage)
+                images.append(croppedImage)
+                haptic.impactOccurred()
+            }
+
+            guard let picker else {
+                removeSnapshot()
+                return
+            }
+
+            picker.dismiss(animated: false) { [weak self] in
+                self?.presentPicker()
+                // present のアニメーション完了を待ってからスナップショットを除去
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(0.05))
+                    self?.removeSnapshot()
+                }
             }
         }
     }
