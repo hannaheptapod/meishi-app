@@ -8,26 +8,42 @@ struct OCRServiceTests {
 
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
         let lines = [
-            makeLine("岸本", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),
-            makeLine("仁", midX: 0.55, midY: 0.70, width: 0.05, height: 0.06),
+            makeLine("田中", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),
+            makeLine("花子", midX: 0.55, midY: 0.70, width: 0.08, height: 0.06),
         ]
 
         let merged = OCRService.mergeAdjacentFragments(lines)
 
         #expect(merged.count == 1)
-        #expect(merged.first?.text == "岸本仁")
+        #expect(merged.first?.text == "田中花子")
     }
 
     @Test func mergeAdjacentFragmentsDoesNotUseVerticalModeForHorizontalCards() {
         let lines = [
-            makeLine("岸本", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06, textDirection: .topToBottom),
-            makeLine("仁", midX: 0.55, midY: 0.70, width: 0.05, height: 0.06, textDirection: .topToBottom),
+            makeLine("田中", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),
+            makeLine("花子", midX: 0.55, midY: 0.70, width: 0.08, height: 0.06),
         ]
 
         let merged = OCRService.mergeAdjacentFragments(lines, isVerticalCard: false)
 
         #expect(merged.count == 1)
-        #expect(merged.first?.text == "岸本仁")
+        #expect(merged.first?.text == "田中花子")
+    }
+
+    @Test func mergeAdjacentFragmentsDoesNotVerticallyMergeHorizontalTextOnPortraitCard() {
+        let lines = [
+            makeLine("田中 花子", midX: 0.30, midY: 0.72, width: 0.20, height: 0.05),
+            makeLine("サンプル株式会社", midX: 0.32, midY: 0.62, width: 0.28, height: 0.05),
+            makeLine("営業部", midX: 0.28, midY: 0.54, width: 0.12, height: 0.05),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines, isVerticalCard: true)
+        let texts = merged.map { $0.text }
+
+        #expect(texts.contains("田中 花子"))
+        #expect(texts.contains("サンプル株式会社"))
+        #expect(texts.contains("営業部"))
+        #expect(!texts.contains("田中 花子サンプル株式会社営業部"))
     }
 
     @Test func mergeAdjacentFragmentsMergesVerticalJapaneseColumnsRightToLeft() {
@@ -49,17 +65,17 @@ struct OCRServiceTests {
 
     @Test func mergeAdjacentFragmentsDoesNotVerticallyMergeAsciiContacts() {
         let lines = [
-            makeLine("shinya", midX: 0.72, midY: 0.82, width: 0.18, height: 0.04),
-            makeLine("sato@example.com", midX: 0.72, midY: 0.72, width: 0.30, height: 0.04),
-            makeLine("03-1234-5678", midX: 0.72, midY: 0.62, width: 0.24, height: 0.04),
+            makeLine("hanako", midX: 0.72, midY: 0.82, width: 0.18, height: 0.04),
+            makeLine("tanaka@example.com", midX: 0.72, midY: 0.72, width: 0.30, height: 0.04),
+            makeLine("03-0000-0000", midX: 0.72, midY: 0.62, width: 0.24, height: 0.04),
         ]
 
         let merged = OCRService.mergeAdjacentFragments(lines, isVerticalCard: true)
         let texts = merged.map { $0.text }
 
-        #expect(texts.contains("shinya"))
-        #expect(texts.contains("sato@example.com"))
-        #expect(texts.contains("03-1234-5678"))
-        #expect(!texts.contains("shinyasato@example.com03-1234-5678"))
+        #expect(texts.contains("hanako"))
+        #expect(texts.contains("tanaka@example.com"))
+        #expect(texts.contains("03-0000-0000"))
+        #expect(!texts.contains("hanakotanaka@example.com03-0000-0000"))
     }
 }

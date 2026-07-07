@@ -29,6 +29,7 @@ struct CardFieldClassifier {
     }
 
     func classifyStructuredFields(lines: [RecognizedLine]) -> StructuredFieldsResult {
+        let lines = expandCombinedNameCompanyLines(lines)
         var result = ParsedCard()
         var unclassified: [RecognizedLine] = []
 
@@ -133,6 +134,7 @@ struct CardFieldClassifier {
     // MARK: - 分類エントリポイント（従来API: 全フィールド分類）
 
     func classify(lines: [RecognizedLine]) -> ParsedCard {
+        let lines = expandCombinedNameCompanyLines(lines)
         var result = ParsedCard()
         var unclassified: [RecognizedLine] = []
 
@@ -211,5 +213,82 @@ struct CardFieldClassifier {
         }
 
         return result
+    }
+
+    private func expandCombinedNameCompanyLines(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        lines.flatMap { splitCombinedNameCompanyLine($0) }
+    }
+
+    private func splitCombinedNameCompanyLine(_ line: RecognizedLine) -> [RecognizedLine] {
+        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [line] }
+        guard FieldDetector.isCompany(text) else { return [line] }
+        guard ContactPatternExtractor.extractEmail(from: text) == nil,
+              ContactPatternExtractor.extractPhone(from: text) == nil,
+              ContactPatternExtractor.extractURL(from: text) == nil,
+              !FieldDetector.isAddress(text) else {
+            return [line]
+        }
+
+        let parts = text.components(separatedBy: CharacterSet(charactersIn: " \u{3000}"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard parts.count >= 2, isJapaneseNamePart(parts[0]) else { return [line] }
+
+        if parts.count >= 3,
+           isJapaneseNamePart(parts[1]) {
+            let company = parts.dropFirst(2).joined(separator: "")
+            if FieldDetector.isCompany(company) {
+                return makeSplitLines(name: "\(parts[0]) \(parts[1])", company: company, source: line)
+            }
+        }
+
+        let second = parts[1]
+        guard let legalRange = earliestLegalEntityRange(in: second),
+              legalRange.lowerBound > second.startIndex else {
+            return [line]
+        }
+        let firstName = String(second[..<legalRange.lowerBound])
+        let company = String(second[legalRange.lowerBound...]) + parts.dropFirst(2).joined()
+        guard isJapaneseNamePart(firstName), FieldDetector.isCompany(company) else { return [line] }
+
+        return makeSplitLines(name: "\(parts[0]) \(firstName)", company: company, source: line)
+    }
+
+    private func makeSplitLines(name: String, company: String, source: RecognizedLine) -> [RecognizedLine] {
+        [
+            RecognizedLine(
+                text: name,
+                boundingBox: source.boundingBox,
+                confidence: source.confidence,
+                textDirection: source.textDirection
+            ),
+            RecognizedLine(
+                text: company,
+                boundingBox: source.boundingBox,
+                confidence: source.confidence,
+                textDirection: source.textDirection
+            ),
+        ]
+    }
+
+    private func earliestLegalEntityRange(in text: String) -> Range<String.Index>? {
+        LegalEntityTerms.allDetectionTerms
+            .compactMap { text.range(of: $0) }
+            .min { lhs, rhs in
+                lhs.lowerBound < rhs.lowerBound
+            }
+    }
+
+    private func isJapaneseNamePart(_ text: String) -> Bool {
+        let stripped = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...4).contains(stripped.count) else { return false }
+        guard stripped.unicodeScalars.allSatisfy({ scalar in
+            (0x3040...0x30FF).contains(scalar.value)
+                || (0x4E00...0x9FFF).contains(scalar.value)
+        }) else { return false }
+        return !FieldDetector.companySuffixes.contains { stripped.contains($0) }
+            && !FieldDetector.departmentSuffixes.contains { stripped.contains($0) }
+            && !FieldDetector.jobTitleKeywords.contains { stripped.contains($0) }
     }
 }

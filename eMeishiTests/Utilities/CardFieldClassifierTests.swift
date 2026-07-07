@@ -126,6 +126,21 @@ struct CardFieldClassifierTests {
         #expect(result.firstName == "太郎")
     }
 
+    @Test func classifiesCombinedNameAndCompanyLine() {
+        let lines = [
+            makeLine("田中 花子株式会社サンプル", midX: 0.40, midY: 0.74, width: 0.38, height: 0.06),
+            makeLine("TANAKA Hanako", midX: 0.40, midY: 0.67, width: 0.28, height: 0.04),
+        ]
+
+        let result = classifier.classifyStructuredFields(lines: lines).parsed
+
+        #expect(result.lastName == "田中")
+        #expect(result.firstName == "花子")
+        #expect(result.company == "株式会社サンプル")
+        #expect(result.lastNameReading == "たなか")
+        #expect(result.firstNameReading == "はなこ")
+    }
+
     // MARK: 複合テスト
 
     @Test func classifiesFullBusinessCard() {
