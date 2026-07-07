@@ -283,6 +283,17 @@ struct CardFieldClassifier {
     private func isJapaneseNamePart(_ text: String) -> Bool {
         let stripped = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (1...4).contains(stripped.count) else { return false }
+        let nonNameBusinessTerms: Set<String> = [
+            "営業", "開発", "企画", "管理", "総務", "人事", "経理", "財務",
+            "販売", "賃貸", "相談", "本社", "支店", "店舗", "代理", "事業",
+        ]
+        guard !nonNameBusinessTerms.contains(stripped) else { return false }
+        guard !FieldDetector.isCompany(stripped),
+              !FieldDetector.isDepartment(stripped),
+              !FieldDetector.isJobTitle(stripped),
+              !FieldDetector.isAddress(stripped) else {
+            return false
+        }
         guard stripped.unicodeScalars.allSatisfy({ scalar in
             (0x3040...0x30FF).contains(scalar.value)
                 || (0x4E00...0x9FFF).contains(scalar.value)

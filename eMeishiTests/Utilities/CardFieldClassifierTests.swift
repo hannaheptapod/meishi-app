@@ -141,6 +141,18 @@ struct CardFieldClassifierTests {
         #expect(result.firstNameReading == "はなこ")
     }
 
+    @Test func doesNotSplitBusinessTermsBeforeCompanyAsName() {
+        let lines = [
+            makeLine("東京 営業 株式会社サンプル", midX: 0.40, midY: 0.74, width: 0.42, height: 0.06),
+        ]
+
+        let result = classifier.classifyStructuredFields(lines: lines).parsed
+
+        #expect(result.lastName.isEmpty)
+        #expect(result.firstName.isEmpty)
+        #expect(result.company == "東京 営業 株式会社サンプル")
+    }
+
     // MARK: 複合テスト
 
     @Test func classifiesFullBusinessCard() {
