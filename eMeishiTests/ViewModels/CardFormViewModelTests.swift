@@ -78,7 +78,9 @@ private func makeLine(_ text: String) -> RecognizedLine {
 
 @MainActor
 private func makeTestImage(size: CGSize, color: UIColor) -> UIImage {
-    UIGraphicsImageRenderer(size: size).image { context in
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { context in
         color.setFill()
         context.fill(CGRect(origin: .zero, size: size))
     }
