@@ -27,6 +27,10 @@ final class EMeishiUITests: XCTestCase {
         app.descendants(matching: .any)["cardRow_\(name)"]
     }
 
+    /// CI の表示領域差で下位行がまだ materialize されない場合があるため、
+    /// コンテキストメニュー系は先頭付近の安定して見えるカードを使う。
+    private var stableVisibleCardName: String { "山田 太郎" }
+
     /// confirmationDialog が表示されているか（iOS 26: sheetとして表示される）
     private func confirmationDialogIsPresented() -> Bool {
         app.sheets.count > 0
@@ -81,7 +85,7 @@ final class EMeishiUITests: XCTestCase {
     func testCardListShowsCards() throws {
         // サンプルデータのカード名が表示される（上位2件を確認）
         XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: 5))
-        XCTAssertTrue(cardRow("山田 花子").exists)
+        XCTAssertTrue(cardRow("山田 花子").waitForExistence(timeout: 5))
     }
 
     // MARK: - ツールバーボタンの存在確認
@@ -196,12 +200,14 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testLongPressShowsContextMenu() throws {
-        // 非お気に入りの山田花子を使用（山田太郎はpreviewデータでisFavorite=true）
-        let card = cardRow("山田 花子")
+        let card = cardRow(stableVisibleCardName)
         showContextMenu(for: card)
 
         // コンテキストメニューの項目が表示される
-        XCTAssertTrue(app.buttons["お気に入りに追加"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(
+            app.buttons["お気に入りに追加"].waitForExistence(timeout: Self.shortTimeout)
+            || app.buttons["お気に入り解除"].waitForExistence(timeout: Self.shortTimeout)
+        )
         XCTAssertTrue(app.buttons["編集"].exists)
         XCTAssertTrue(app.buttons["vCardとして共有"].exists)
         XCTAssertTrue(app.buttons["連絡先に保存"].exists)
@@ -210,20 +216,25 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testContextMenuFavoriteToggle() throws {
-        // 非お気に入り→お気に入りへのトグルを検証するので、初期状態が非お気に入りのカードを使う
-        let card = cardRow("山田 花子")
+        let card = cardRow(stableVisibleCardName)
         showContextMenu(for: card)
 
-        // お気に入りに追加
-        let favoriteButton = app.buttons["お気に入りに追加"]
-        XCTAssertTrue(favoriteButton.waitForExistence(timeout: Self.shortTimeout))
-        favoriteButton.tap()
+        let addFavoriteButton = app.buttons["お気に入りに追加"]
+        let removeFavoriteButton = app.buttons["お気に入り解除"]
+        let wasFavorite = removeFavoriteButton.waitForExistence(timeout: Self.shortTimeout)
+        if wasFavorite {
+            removeFavoriteButton.tap()
+        } else {
+            XCTAssertTrue(addFavoriteButton.waitForExistence(timeout: Self.shortTimeout))
+            addFavoriteButton.tap()
+        }
 
-        // 再度長押しして「お気に入り解除」になっていることを確認
+        // 再度長押ししてトグル後の文言になっていることを確認
         // コンテキストメニューが閉じるのを待つ
         XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))
         showContextMenu(for: card)
-        XCTAssertTrue(app.buttons["お気に入り解除"].waitForExistence(timeout: Self.shortTimeout))
+        let expectedIdentifier = wasFavorite ? "お気に入りに追加" : "お気に入り解除"
+        XCTAssertTrue(app.buttons[expectedIdentifier].waitForExistence(timeout: Self.shortTimeout))
 
         // メニューを閉じる（背景タップ）
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
@@ -231,8 +242,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testContextMenuDeleteShowsConfirmation() throws {
-        // カードを長押し（リスト上位のカードを使用：Landscape対応）
-        let card = cardRow("山田 花子")
+        let card = cardRow(stableVisibleCardName)
         showContextMenu(for: card)
 
         // コンテキストメニューの削除をタップ
@@ -248,7 +258,7 @@ final class EMeishiUITests: XCTestCase {
         dismissConfirmationDialog()
 
         // カードがまだ存在する
-        XCTAssertTrue(cardRow("山田 花子").waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardRow(stableVisibleCardName).waitForExistence(timeout: Self.shortTimeout))
     }
 
     // MARK: - 一括削除
