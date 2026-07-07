@@ -1,4 +1,5 @@
 import Testing
+import CoreGraphics
 @testable import eMeishi
 
 // MARK: - OCR 後処理テスト
