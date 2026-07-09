@@ -27,6 +27,18 @@ final class EMeishiUITests: XCTestCase {
         app.descendants(matching: .any)["cardRow_\(name)"]
     }
 
+    /// LazyVStack でまだ生成されていない行を、限定回数スクロールして探す。
+    private func waitForCardRow(_ name: String, maxSwipes: Int = 3) -> Bool {
+        let row = cardRow(name)
+        if row.waitForExistence(timeout: Self.shortTimeout) { return true }
+
+        for _ in 0..<maxSwipes {
+            app.swipeUp()
+            if row.waitForExistence(timeout: 1) { return true }
+        }
+        return false
+    }
+
     /// CI の表示領域差で下位行がまだ materialize されない場合があるため、
     /// コンテキストメニュー系は先頭付近の安定して見えるカードを使う。
     private var stableVisibleCardName: String { "山田 太郎" }
@@ -44,6 +56,19 @@ final class EMeishiUITests: XCTestCase {
         if asMenuItem.exists { return asMenuItem }
         // どちらにも見つからない場合は descendants 全体から探す
         return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// 小画面でメニュー末尾が未生成の場合、メニュー内をスクロールして探す。
+    private func waitForMenuItem(identifier: String, maxSwipes: Int = 2) -> Bool {
+        var item = menuItem(identifier: identifier)
+        if item.waitForExistence(timeout: Self.shortTimeout) { return true }
+
+        for _ in 0..<maxSwipes {
+            app.swipeUp()
+            item = menuItem(identifier: identifier)
+            if item.waitForExistence(timeout: 1) { return true }
+        }
+        return false
     }
 
     /// confirmationDialog を閉じる（iOS 26: キャンセルボタンが非表示のためシート外タップで閉じる）
@@ -85,7 +110,7 @@ final class EMeishiUITests: XCTestCase {
     func testCardListShowsCards() throws {
         // サンプルデータのカード名が表示される（上位2件を確認）
         XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: 5))
-        XCTAssertTrue(cardRow("山田 花子").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForCardRow("山田 花子"))
     }
 
     // MARK: - ツールバーボタンの存在確認
@@ -319,13 +344,13 @@ final class EMeishiUITests: XCTestCase {
         // iOS 26 の SwiftUI Menu では buttons / menuItems のどちらで公開されるか
         // バージョンによって異なるため、accessibilityIdentifier を付与した上で両方を探す
         XCTAssertTrue(
-            menuItem(identifier: "importFromContacts").waitForExistence(timeout: Self.defaultTimeout)
+            waitForMenuItem(identifier: "importFromContacts")
         )
         XCTAssertTrue(
-            menuItem(identifier: "tagManager").waitForExistence(timeout: Self.shortTimeout)
+            waitForMenuItem(identifier: "tagManager")
         )
         XCTAssertTrue(
-            menuItem(identifier: "settingsMenu").waitForExistence(timeout: Self.shortTimeout)
+            waitForMenuItem(identifier: "settingsMenu")
         )
     }
 
