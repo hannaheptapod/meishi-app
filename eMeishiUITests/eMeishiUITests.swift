@@ -10,6 +10,7 @@ final class EMeishiUITests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
         app.launchArguments = ["-UITestMode"]
         app.launch()
@@ -48,27 +49,17 @@ final class EMeishiUITests: XCTestCase {
         app.sheets.count > 0
     }
 
-    /// SwiftUI Menu の項目を取得する（iOS 26 で menuItems として公開される場合がある）
-    private func menuItem(identifier: String) -> XCUIElement {
-        let asButton = app.buttons[identifier]
-        if asButton.exists { return asButton }
-        let asMenuItem = app.menuItems[identifier]
-        if asMenuItem.exists { return asMenuItem }
-        // どちらにも見つからない場合は descendants 全体から探す
-        return app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    /// 小画面でメニュー末尾が未生成の場合、メニュー内をスクロールして探す。
-    private func waitForMenuItem(identifier: String, maxSwipes: Int = 2) -> Bool {
-        var item = menuItem(identifier: identifier)
-        if item.waitForExistence(timeout: Self.shortTimeout) { return true }
-
-        for _ in 0..<maxSwipes {
-            app.swipeUp()
-            item = menuItem(identifier: identifier)
-            if item.waitForExistence(timeout: 1) { return true }
-        }
-        return false
+    /// SwiftUI Menu は端末によって identifier が伝播しない場合があるため、表示ラベルも使う。
+    private func waitForMenuItem(identifier: String, label: String) -> Bool {
+        let predicate = NSPredicate(
+            format: "identifier == %@ OR label == %@",
+            identifier,
+            label
+        )
+        return app.descendants(matching: .any)
+            .matching(predicate)
+            .firstMatch
+            .waitForExistence(timeout: Self.defaultTimeout)
     }
 
     /// confirmationDialog を閉じる（iOS 26: キャンセルボタンが非表示のためシート外タップで閉じる）
@@ -341,16 +332,16 @@ final class EMeishiUITests: XCTestCase {
         ellipsisMenu.tap()
 
         // メニュー項目が表示される
-        // iOS 26 の SwiftUI Menu では buttons / menuItems のどちらで公開されるか
-        // バージョンによって異なるため、accessibilityIdentifier を付与した上で両方を探す
+        // iOS 26 の SwiftUI Menu は要素種別や identifier の伝播が端末構成で異なるため、
+        // identifier または表示ラベルで項目を確認する
         XCTAssertTrue(
-            waitForMenuItem(identifier: "importFromContacts")
+            waitForMenuItem(identifier: "importFromContacts", label: "連絡先からインポート")
         )
         XCTAssertTrue(
-            waitForMenuItem(identifier: "tagManager")
+            waitForMenuItem(identifier: "tagManager", label: "タグ管理")
         )
         XCTAssertTrue(
-            waitForMenuItem(identifier: "settingsMenu")
+            waitForMenuItem(identifier: "settingsMenu", label: "設定")
         )
     }
 
