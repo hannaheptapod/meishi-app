@@ -94,7 +94,7 @@ echo ""
 echo "=== Debug Info.plist ==="
 if [[ -f "$DEBUG_PLIST" ]]; then
   if plutil -lint "$DEBUG_PLIST" > /dev/null 2>&1; then
-    ok "plutil -lint OK ($DEBUG_PLIST)"
+    ok "plutil -lint OK (${DEBUG_PLIST})"
   else
     fail "plutil -lint NG: $(plutil -lint "$DEBUG_PLIST" 2>&1)"
   fi
@@ -160,7 +160,7 @@ if [[ $FAIL -gt 0 ]]; then
     echo "FAIL 検出 (archive)。ビルドをブロックします。"
     exit 1
   else
-    echo "FAIL 検出 ($CI_XCODEBUILD_ACTION)。警告として続行します。"
+    echo "FAIL 検出 (${CI_XCODEBUILD_ACTION})。警告として続行します。"
   fi
 else
   echo "全項目 PASS。"

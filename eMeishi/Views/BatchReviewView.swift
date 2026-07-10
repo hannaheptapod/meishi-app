@@ -13,7 +13,7 @@ struct BatchReviewView: View {
     var body: some View {
         if currentIndex < images.count {
             CardFormView(
-                image: images[currentIndex],
+                croppedImage: images[currentIndex],
                 batchProgress: CardFormView.BatchProgress(
                     current: currentIndex + 1,
                     total: images.count

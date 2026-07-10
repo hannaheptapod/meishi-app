@@ -5,12 +5,33 @@ import CoreImage
 import os
 
 // OCR で認識した1行分のデータ（テキスト・位置・信頼度）
-struct RecognizedLine {
+nonisolated enum RecognizedTextDirection: Sendable, Equatable {
+    case leftToRight
+    case rightToLeft
+    case topToBottom
+    case unknown
+}
+
+nonisolated struct RecognizedLine: Sendable {
     let text: String
     /// Vision 座標系（正規化済み。原点は画像左下、x/y は 0.0〜1.0）
     let boundingBox: CGRect
     /// Vision の認識信頼度（0.0〜1.0）
     let confidence: Float
+    /// OCR が返した文字方向。縦書き名刺の後処理で使用する
+    let textDirection: RecognizedTextDirection
+
+    init(
+        text: String,
+        boundingBox: CGRect,
+        confidence: Float,
+        textDirection: RecognizedTextDirection = .unknown
+    ) {
+        self.text = text
+        self.boundingBox = boundingBox
+        self.confidence = confidence
+        self.textDirection = textDirection
+    }
 }
 
 // Vision Framework を使って名刺画像からテキストを抽出するサービス
@@ -27,39 +48,146 @@ actor OCRService {
         let normalized = Self.normalizeOrientation(image)
         guard let cgImage = normalized.cgImage else { return image }
 
-        return await withCheckedContinuation { continuation in
-            let request = VNDetectRectanglesRequest { request, error in
-                guard error == nil,
-                      let results = request.results as? [VNRectangleObservation],
-                      let rect = results.first else {
-                    // 矩形未検出 → 元画像を返す
-                    continuation.resume(returning: normalized)
-                    return
-                }
-                let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect)
-                continuation.resume(returning: cropped ?? normalized)
+        do {
+            let request = Self.cardRectangleRequest()
+            let observations = try await request.perform(on: cgImage)
+            guard let rect = Self.bestCardRectangle(from: observations),
+                  let cropped = Self.perspectiveCorrected(cgImage: cgImage, observation: rect) else {
+                return normalized
             }
-
-            // 名刺に近いアスペクト比（横長・縦長どちらも許容）
-            request.minimumAspectRatio = 0.4
-            request.maximumAspectRatio = 2.5
-            request.minimumConfidence  = 0.7
-            request.maximumObservations = 1
-
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(returning: normalized)
-            }
+            return cropped
+        } catch {
+            AppLogger.ocr.debug("名刺矩形検出に失敗。元画像を使用: \(error)")
+            return normalized
         }
+    }
+
+    static func cardRectangleRequest() -> DetectRectanglesRequest {
+        var request = DetectRectanglesRequest()
+        // DetectRectanglesRequest の aspect ratio は 0...1 の短辺/長辺比。旧 API の 0.4...2.5 とは範囲が違う。
+        request.minimumAspectRatio = 0.32
+        request.maximumAspectRatio = 1.0
+        request.minimumConfidence = 0.45
+        request.minimumSize = 0.04
+        request.maximumObservations = 20
+        return request
+    }
+
+    static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
+        observations
+            .enumerated()
+            .map { index, observation in
+                (
+                    observation: observation,
+                    score: cardRectangleScore(
+                        metrics: cardRectangleMetrics(for: observation),
+                        confidence: observation.confidence,
+                        visionOrder: index
+                    )
+                )
+            }
+            .filter { $0.score > 0 }
+            .max { $0.score < $1.score }?
+            .observation
+    }
+
+    static func bestCardRectIndex(candidates: [(rect: CGRect, confidence: Float)]) -> Int? {
+        candidates
+            .enumerated()
+            .map { index, candidate in
+                (
+                    index: index,
+                    score: cardRectangleScore(
+                        metrics: cardRectangleMetrics(for: candidate.rect),
+                        confidence: candidate.confidence,
+                        visionOrder: index
+                    )
+                )
+            }
+            .filter { $0.score > 0 }
+            .max { $0.score < $1.score }?
+            .index
+    }
+
+    private struct CardRectangleMetrics {
+        let area: CGFloat
+        let shortLongAspect: CGFloat
+        let oppositeSideBalance: CGFloat
+    }
+
+    private static func cardRectangleMetrics(for observation: RectangleObservation) -> CardRectangleMetrics {
+        let topLeft = observation.topLeft.cgPoint
+        let topRight = observation.topRight.cgPoint
+        let bottomLeft = observation.bottomLeft.cgPoint
+        let bottomRight = observation.bottomRight.cgPoint
+
+        let top = distance(topLeft, topRight)
+        let bottom = distance(bottomLeft, bottomRight)
+        let left = distance(topLeft, bottomLeft)
+        let right = distance(topRight, bottomRight)
+        let horizontal = (top + bottom) / 2
+        let vertical = (left + right) / 2
+        let shortLongAspect = min(horizontal, vertical) / max(horizontal, vertical, 0.001)
+        let horizontalBalance = min(top, bottom) / max(top, bottom, 0.001)
+        let verticalBalance = min(left, right) / max(left, right, 0.001)
+        let area = polygonArea([topLeft, topRight, bottomRight, bottomLeft])
+
+        return CardRectangleMetrics(
+            area: area,
+            shortLongAspect: shortLongAspect,
+            oppositeSideBalance: min(horizontalBalance, verticalBalance)
+        )
+    }
+
+    private static func cardRectangleMetrics(for rect: CGRect) -> CardRectangleMetrics {
+        let shortLongAspect = min(rect.width, rect.height) / max(rect.width, rect.height, 0.001)
+        return CardRectangleMetrics(
+            area: rect.width * rect.height,
+            shortLongAspect: shortLongAspect,
+            oppositeSideBalance: 1
+        )
+    }
+
+    private static func cardRectangleScore(
+        metrics: CardRectangleMetrics,
+        confidence: Float,
+        visionOrder: Int
+    ) -> CGFloat {
+        let area = metrics.area
+        guard (0.02...0.80).contains(area) else { return -1 }
+
+        let shortLongAspect = metrics.shortLongAspect
+        guard (0.32...0.90).contains(shortLongAspect) else { return -1 }
+        guard metrics.oppositeSideBalance > 0.55 else { return -1 }
+
+        let businessCardAspect: CGFloat = 0.58
+        let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
+        let areaScore = min(area / 0.12, 1.0)
+        let shapeScore = metrics.oppositeSideBalance
+        let hugeRectPenalty = area > 0.45 ? (area - 0.45) * 2.0 : 0
+        let orderPenalty = CGFloat(visionOrder) * 0.12
+
+        return CGFloat(confidence) * 2.0 + aspectScore * 2.0 + areaScore + shapeScore - hugeRectPenalty - orderPenalty
+    }
+
+    private static func distance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
+    }
+
+    private static func polygonArea(_ points: [CGPoint]) -> CGFloat {
+        guard points.count >= 3 else { return 0 }
+        let sum = points.enumerated().reduce(CGFloat.zero) { partial, item in
+            let next = points[(item.offset + 1) % points.count]
+            return partial + item.element.x * next.y - next.x * item.element.y
+        }
+        return abs(sum) / 2
     }
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）
 
     private static func perspectiveCorrected(
         cgImage: CGImage,
-        observation: VNRectangleObservation
+        observation: RectangleObservation
     ) -> UIImage? {
         let width  = CGFloat(cgImage.width)
         let height = CGFloat(cgImage.height)
@@ -72,10 +200,10 @@ actor OCRService {
         let ciImage = CIImage(cgImage: cgImage)
         guard let filter = CIFilter(name: "CIPerspectiveCorrection") else { return nil }
         filter.setValue(ciImage,                         forKey: kCIInputImageKey)
-        filter.setValue(toCI(observation.topLeft),       forKey: "inputTopLeft")
-        filter.setValue(toCI(observation.topRight),      forKey: "inputTopRight")
-        filter.setValue(toCI(observation.bottomLeft),    forKey: "inputBottomLeft")
-        filter.setValue(toCI(observation.bottomRight),   forKey: "inputBottomRight")
+        filter.setValue(toCI(observation.topLeft.cgPoint), forKey: "inputTopLeft")
+        filter.setValue(toCI(observation.topRight.cgPoint), forKey: "inputTopRight")
+        filter.setValue(toCI(observation.bottomLeft.cgPoint), forKey: "inputBottomLeft")
+        filter.setValue(toCI(observation.bottomRight.cgPoint), forKey: "inputBottomRight")
 
         guard let outputCIImage = filter.outputImage else { return nil }
         guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: outputCIImage.extent) else { return nil }
@@ -104,42 +232,56 @@ actor OCRService {
         let startTime = CFAbsoluteTimeGetCurrent()
         AppLogger.ocr.info("OCR開始")
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error = error {
-                    AppLogger.ocr.error("OCR失敗: \(error)")
-                    continuation.resume(throwing: error)
-                    return
-                }
-                let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                // 各Observationから最上位候補のテキスト・信頼度・boundingBox を取得
-                let rawLines: [RecognizedLine] = observations.compactMap { obs in
-                    guard let candidate = obs.topCandidates(1).first else { return nil }
-                    return RecognizedLine(
-                        text: candidate.string,
-                        boundingBox: obs.boundingBox,
-                        confidence: candidate.confidence
-                    )
-                }
-                // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
-                let lines = Self.mergeAdjacentFragments(rawLines)
-                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
-                continuation.resume(returning: lines)
-            }
-
+        do {
+            var request = RecognizeTextRequest()
             // 精度最大・言語補正あり・日本語＋英語対応
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
-            request.recognitionLanguages = ["ja-JP", "en-US"]
+            request.recognitionLanguages = [
+                Locale.Language(identifier: "ja-JP"),
+                Locale.Language(identifier: "en-US"),
+            ]
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                AppLogger.ocr.error("OCR失敗: \(error)")
-                continuation.resume(throwing: error)
+            let observations = try await request.perform(on: cgImage)
+            let rawLines: [RecognizedLine] = observations.compactMap { obs in
+                let text = obs.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return RecognizedLine(
+                    text: text,
+                    boundingBox: obs.boundingBox.cgRect,
+                    confidence: obs.confidence,
+                    textDirection: Self.mapDirection(obs.textDirection)
+                )
             }
+
+            // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
+            let lines = Self.mergeAdjacentFragments(
+                rawLines,
+                isVerticalCard: image.size.height > image.size.width * 1.1
+            )
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
+            return lines
+        } catch {
+            AppLogger.ocr.error("OCR失敗: \(error)")
+            throw error
+        }
+    }
+
+    private static func mapDirection(
+        _ direction: RecognizedTextObservation.Direction?
+    ) -> RecognizedTextDirection {
+        switch direction {
+        case .leftToRight:
+            return .leftToRight
+        case .rightToLeft:
+            return .rightToLeft
+        case .topToBottom:
+            return .topToBottom
+        case .some:
+            return .unknown
+        case nil:
+            return .unknown
         }
     }
 
@@ -147,11 +289,31 @@ actor OCRService {
 
     /// Vision が等間隔文字や空白区切りで分断した行を統合する。
     ///
-    /// 名刺では名前を均等配置する慣習があり、OCR が「岸本」「仁」のように
+    /// 名刺では名前を均等配置する慣習があり、OCR が「田中」「花子」のように
     /// 1つの名前を複数の observation に分割することがある。
     /// 同一行（Y座標近接）かつ X 方向に近い短い断片を結合し、
     /// 下流の分類ロジックに安定した行を渡す。
-    static func mergeAdjacentFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+    static func mergeAdjacentFragments(
+        _ lines: [RecognizedLine],
+        isVerticalCard: Bool = false
+    ) -> [RecognizedLine] {
+        guard lines.count > 1 else { return lines }
+
+        let shouldUseVerticalMerge = lines.contains { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+
+        guard shouldUseVerticalMerge else {
+            return mergeHorizontalFragments(lines)
+        }
+
+        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+
+        let mergedVertical = mergeVerticalFragments(verticalCandidates)
+        let mergedHorizontal = mergeHorizontalFragments(horizontalCandidates)
+        return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
+    }
+
+    private static func mergeHorizontalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
         guard lines.count > 1 else { return lines }
 
         // インデックス管理用
@@ -227,12 +389,151 @@ actor OCRService {
                 let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
 
                 AppLogger.ocr.debug("行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + "), privacy: .private) → \(mergedText, privacy: .private)")
-                result.append(RecognizedLine(text: mergedText, boundingBox: mergedBox, confidence: avgConfidence))
+                result.append(RecognizedLine(
+                    text: mergedText,
+                    boundingBox: mergedBox,
+                    confidence: avgConfidence,
+                    textDirection: dominantDirection(sorted.map { $0.line })
+                ))
             }
         }
 
         // 元の Y 座標順（上から下 = Vision Y 降順）で返す
         return result.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+    }
+
+    private static func mergeVerticalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        guard lines.count > 1 else { return lines }
+
+        var used = Set<Int>()
+        var result: [RecognizedLine] = []
+        // 日本語縦書きの読み順: 右列から左列。同一列内は上から下。
+        let indexed = lines.enumerated().sorted {
+            if abs($0.element.boundingBox.midX - $1.element.boundingBox.midX) > 0.01 {
+                return $0.element.boundingBox.midX > $1.element.boundingBox.midX
+            }
+            return $0.element.boundingBox.midY > $1.element.boundingBox.midY
+        }
+
+        for (i, anchor) in indexed {
+            if used.contains(i) { continue }
+            used.insert(i)
+
+            var group: [(index: Int, line: RecognizedLine)] = [(i, anchor)]
+            let anchorW = anchor.boundingBox.width
+
+            for (j, candidate) in indexed {
+                if used.contains(j) { continue }
+                let candW = candidate.boundingBox.width
+                let maxW = max(anchorW, candW)
+
+                let groupMinX = group.map { $0.line.boundingBox.minX }.min()!
+                let groupMaxX = group.map { $0.line.boundingBox.maxX }.max()!
+                let groupMinY = group.map { $0.line.boundingBox.minY }.min()!
+                let groupMaxY = group.map { $0.line.boundingBox.maxY }.max()!
+
+                let xOverlap = min(groupMaxX, candidate.boundingBox.maxX) - max(groupMinX, candidate.boundingBox.minX)
+                let sameColumn = abs(candidate.boundingBox.midX - anchor.boundingBox.midX) < maxW * 0.8
+                    || xOverlap > min(maxW, candidate.boundingBox.width) * 0.35
+                guard sameColumn else { continue }
+
+                let gap: CGFloat
+                if candidate.boundingBox.minY > groupMaxY {
+                    gap = candidate.boundingBox.minY - groupMaxY
+                } else if candidate.boundingBox.maxY < groupMinY {
+                    gap = groupMinY - candidate.boundingBox.maxY
+                } else {
+                    gap = 0
+                }
+
+                if gap < maxW * 2.4 {
+                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
+                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
+                    if anchorChars <= 6 || candChars <= 6 {
+                        used.insert(j)
+                        group.append((j, candidate))
+                    }
+                }
+            }
+
+            if group.count == 1 {
+                result.append(anchor)
+            } else {
+                let sorted = group.sorted { $0.line.boundingBox.midY > $1.line.boundingBox.midY }
+                let mergedText = sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) }.joined()
+                let mergedBox = unionBoundingBox(sorted.map { $0.line })
+                let avgConfidence = sorted.map { $0.line.confidence }.reduce(0, +) / Float(sorted.count)
+
+                AppLogger.ocr.debug("縦書き行統合: \(sorted.map { "'\($0.line.text)'" }.joined(separator: " + "), privacy: .private) → \(mergedText, privacy: .private)")
+                result.append(RecognizedLine(
+                    text: mergedText,
+                    boundingBox: mergedBox,
+                    confidence: avgConfidence,
+                    textDirection: .topToBottom
+                ))
+            }
+        }
+
+        return sortForReadingOrder(result, preferVertical: true)
+    }
+
+    private static func isVerticalMergeCandidate(_ line: RecognizedLine, isVerticalCard: Bool) -> Bool {
+        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        guard !isContactLike(text), !isMostlyASCII(text) else { return false }
+        let hasJapanese = text.unicodeScalars.contains {
+            (0x3040...0x30FF).contains($0.value) || (0x4E00...0x9FFF).contains($0.value)
+        }
+        guard hasJapanese else { return false }
+        if line.textDirection == .topToBottom { return true }
+        guard isVerticalCard else { return false }
+        return line.boundingBox.height > line.boundingBox.width * 1.4
+    }
+
+    private static func isContactLike(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if lower.contains("@") || lower.contains("http") || lower.contains("www.") { return true }
+        let digits = text.unicodeScalars.filter { (0x30...0x39).contains($0.value) }.count
+        if digits >= 7 { return true }
+        if text.range(of: #"^\+?[0-9][0-9\-()\s]{5,}$"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
+    }
+
+    private static func isMostlyASCII(_ text: String) -> Bool {
+        let scalars = text.unicodeScalars.filter { !$0.properties.isWhitespace }
+        guard !scalars.isEmpty else { return false }
+        let asciiCount = scalars.filter { $0.isASCII }.count
+        return Double(asciiCount) / Double(scalars.count) >= 0.7
+    }
+
+    private static func unionBoundingBox(_ lines: [RecognizedLine]) -> CGRect {
+        let minX = lines.map { $0.boundingBox.minX }.min() ?? 0
+        let minY = lines.map { $0.boundingBox.minY }.min() ?? 0
+        let maxX = lines.map { $0.boundingBox.maxX }.max() ?? 0
+        let maxY = lines.map { $0.boundingBox.maxY }.max() ?? 0
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private static func dominantDirection(_ lines: [RecognizedLine]) -> RecognizedTextDirection {
+        if lines.contains(where: { $0.textDirection == .topToBottom }) { return .topToBottom }
+        if lines.contains(where: { $0.textDirection == .rightToLeft }) { return .rightToLeft }
+        if lines.contains(where: { $0.textDirection == .leftToRight }) { return .leftToRight }
+        return .unknown
+    }
+
+    private static func sortForReadingOrder(_ lines: [RecognizedLine], preferVertical: Bool) -> [RecognizedLine] {
+        guard preferVertical else {
+            return lines.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+        }
+        return lines.sorted {
+            let maxW = max($0.boundingBox.width, $1.boundingBox.width)
+            if abs($0.boundingBox.midX - $1.boundingBox.midX) > maxW * 0.6 {
+                return $0.boundingBox.midX > $1.boundingBox.midX
+            }
+            return $0.boundingBox.midY > $1.boundingBox.midY
+        }
     }
 
     enum OCRError: LocalizedError {

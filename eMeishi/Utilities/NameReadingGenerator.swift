@@ -1,5 +1,51 @@
 import Foundation
 
+// CFStringTransform に渡す前のローマ字正規化を一元管理する。
+enum RomajiReadingNormalizer {
+
+    /// Kunrei式 → Hepburn式の前処理 + 長音正規化 + 撥音境界補正
+    static func normalize(_ romaji: String) -> String {
+        var s = romaji.lowercased()
+        let replacements: [(String, String)] = [
+            ("sha", "sha"), ("shi", "shi"), ("shu", "shu"), ("sho", "sho"),
+            ("chi", "chi"), ("tchi", "cchi"), ("tsu", "tsu"),
+            ("sya", "sha"), ("syi", "shi"), ("syu", "shu"), ("syo", "sho"),
+            ("tya", "cha"), ("tyi", "chi"), ("tyu", "chu"), ("tyo", "cho"),
+            ("zya", "ja"),  ("zyi", "ji"),  ("zyu", "ju"),  ("zyo", "jo"),
+            ("si", "shi"), ("ti", "chi"), ("tu", "tsu"), ("hu", "fu"),
+            ("zi", "ji"),  ("di", "ji"),  ("du", "zu"),
+        ]
+        for (from, to) in replacements {
+            s = s.replacingOccurrences(of: from, with: to)
+        }
+        // Hepburn長音: oh + 子音 → ouh（例: ohta → ouhta → おうた）
+        s = s.replacingOccurrences(
+            of: #"oh(?=[bcdfghjklmnpqrstvwxyz])"#,
+            with: "ouh",
+            options: .regularExpression
+        )
+        // 語末の oh → ou（例: itoh → itou → いとう）
+        s = s.replacingOccurrences(
+            of: #"oh$"#,
+            with: "ou",
+            options: .regularExpression
+        )
+        // 日本語名の撥音境界: shinya → shin'ya → しんや
+        s = s.replacingOccurrences(
+            of: #"n(?=y)"#,
+            with: "n'",
+            options: .regularExpression
+        )
+        return s
+    }
+
+    static func hiragana(from romaji: String) -> String {
+        let mutable = NSMutableString(string: normalize(romaji))
+        CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
+        return mutable as String
+    }
+}
+
 // 読み仮名の自動生成・メールアドレスからの読み推定
 enum NameReadingGenerator {
 
@@ -137,40 +183,12 @@ enum NameReadingGenerator {
 
     /// Kunrei式ローマ字をHepburn式に正規化してからひらがなに変換する
     static func romajiToHiragana(_ romaji: String) -> String {
-        let normalized = normalizeRomaji(romaji)
-        let mutable = NSMutableString(string: normalized)
-        CFStringTransform(mutable, nil, kCFStringTransformLatinHiragana, false)
-        return mutable as String
+        RomajiReadingNormalizer.hiragana(from: romaji)
     }
 
     /// Kunrei式 → Hepburn式の前処理 + 長音正規化
     static func normalizeRomaji(_ romaji: String) -> String {
-        var s = romaji.lowercased()
-        let replacements: [(String, String)] = [
-            ("sha", "sha"), ("shi", "shi"), ("shu", "shu"), ("sho", "sho"),
-            ("chi", "chi"), ("tchi", "cchi"), ("tsu", "tsu"),
-            ("sya", "sha"), ("syi", "shi"), ("syu", "shu"), ("syo", "sho"),
-            ("tya", "cha"), ("tyi", "chi"), ("tyu", "chu"), ("tyo", "cho"),
-            ("zya", "ja"),  ("zyi", "ji"),  ("zyu", "ju"),  ("zyo", "jo"),
-            ("si", "shi"), ("ti", "chi"), ("tu", "tsu"), ("hu", "fu"),
-            ("zi", "ji"),  ("di", "ji"),  ("du", "zu"),
-        ]
-        for (from, to) in replacements {
-            s = s.replacingOccurrences(of: from, with: to)
-        }
-        // Hepburn長音: oh + 子音 → ouh（例: ohta → ouhta → おうた）
-        s = s.replacingOccurrences(
-            of: #"oh(?=[bcdfghjklmnpqrstvwxyz])"#,
-            with: "ouh",
-            options: .regularExpression
-        )
-        // 語末の oh → ou（例: itoh → itou → いとう）
-        s = s.replacingOccurrences(
-            of: #"oh$"#,
-            with: "ou",
-            options: .regularExpression
-        )
-        return s
+        RomajiReadingNormalizer.normalize(romaji)
     }
 
     /// ひらがな読みの一致判定（長音の有無を許容）

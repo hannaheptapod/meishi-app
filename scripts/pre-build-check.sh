@@ -24,7 +24,7 @@ echo "=== ビルド番号 ==="
 LATEST=$(~/.blitz/bin/asc builds list --app 6761180218 --platform IOS --limit 3 2>/dev/null \
   | python3 -c "import sys,json; b=json.load(sys.stdin)['data']; print(b[0]['attributes']['version']) if b else print('none')")
 CURRENT=$(~/.blitz/bin/asc xcode version view 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['buildNumber'])")
-echo "  ASC最新: $LATEST  プロジェクト: $CURRENT（Xcode Cloud が自動更新するためチェックスキップ）"
+echo "  ASC最新: ${LATEST}  プロジェクト: ${CURRENT}（Xcode Cloud が自動更新するためチェックスキップ）"
 ok "ビルド番号（CI 自動管理）"
 
 echo ""
@@ -88,7 +88,7 @@ echo ""
 echo "=== Debug Info.plist の値チェック ==="
 if [[ -f "$DEBUG_PLIST" ]]; then
   if plutil -lint "$DEBUG_PLIST" > /dev/null 2>&1; then
-    ok "plutil -lint OK ($DEBUG_PLIST)"
+    ok "plutil -lint OK (${DEBUG_PLIST})"
   else
     fail "plutil -lint NG: $(plutil -lint $DEBUG_PLIST 2>&1)"
   fi
@@ -135,22 +135,22 @@ DBG_SVER=$(grep -E "^SWIFT_VERSION\s*=" "$DEBUG_XCCONFIG" | sed 's/.*=\s*//' | t
 if [[ "$REL_STRICT" == "complete" ]]; then
   ok "SWIFT_STRICT_CONCURRENCY (Release) = complete"
 else
-  fail "SWIFT_STRICT_CONCURRENCY (Release) = '$REL_STRICT' （complete 必須）"
+  fail "SWIFT_STRICT_CONCURRENCY (Release) = '${REL_STRICT}' （complete 必須）"
 fi
 if [[ "$DBG_STRICT" == "complete" ]]; then
   ok "SWIFT_STRICT_CONCURRENCY (Debug) = complete"
 else
-  fail "SWIFT_STRICT_CONCURRENCY (Debug) = '$DBG_STRICT' （complete 必須）"
+  fail "SWIFT_STRICT_CONCURRENCY (Debug) = '${DBG_STRICT}' （complete 必須）"
 fi
 if [[ "$REL_SVER" == "6.0" ]]; then
   ok "SWIFT_VERSION (Release) = 6.0"
 else
-  fail "SWIFT_VERSION (Release) = '$REL_SVER' （6.0 必須）"
+  fail "SWIFT_VERSION (Release) = '${REL_SVER}' （6.0 必須）"
 fi
 if [[ "$DBG_SVER" == "6.0" ]]; then
   ok "SWIFT_VERSION (Debug) = 6.0"
 else
-  fail "SWIFT_VERSION (Debug) = '$DBG_SVER' （6.0 必須）"
+  fail "SWIFT_VERSION (Debug) = '${DBG_SVER}' （6.0 必須）"
 fi
 
 # project.pbxproj に SWIFT_VERSION = 5.x が残っていないか直接検証。
@@ -191,7 +191,7 @@ echo "=== CloudKit Production schema deploy ==="
 # には設定していないため、自動検査は行わず「self-confirm + env override」で
 # ヒューマンチェックを強制する。
 if [[ -n "${CLOUDKIT_SCHEMA_DEPLOYED:-}" ]]; then
-  ok "CloudKit schema deploy 確認（env CLOUDKIT_SCHEMA_DEPLOYED=$CLOUDKIT_SCHEMA_DEPLOYED）"
+  ok "CloudKit schema deploy 確認（env CLOUDKIT_SCHEMA_DEPLOYED=${CLOUDKIT_SCHEMA_DEPLOYED}）"
 elif [[ -t 0 ]]; then
   echo "  確認手順: CloudKit Dashboard → iCloud.com.jinks.emeishi → Development"
   echo "           → Deploy Schema Changes... → 差分確認 → Deploy"
