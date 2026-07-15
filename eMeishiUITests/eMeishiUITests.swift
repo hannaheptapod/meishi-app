@@ -112,24 +112,27 @@ final class EMeishiUITests: XCTestCase {
         let selectButton = app.buttons["selectButton"]
         XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
 
-        // 追加ボタン
-        let addButton = app.buttons["addButton"]
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: Self.shortTimeout))
+
+        // 標準Tab Bar中央の追加
+        let addButton = tabBar.buttons["追加"]
         XCTAssertTrue(addButton.exists)
-        XCTAssertLessThan(abs(addButton.frame.midX - app.frame.midX), 3, "追加ボタンは画面中央に配置する")
+        XCTAssertLessThan(abs(addButton.frame.midX - app.frame.midX), 4, "追加ボタンは標準Tab Bar中央に配置する")
 
         // 3点メニュー
         let ellipsisMenu = app.buttons["ellipsisMenu"]
         XCTAssertTrue(ellipsisMenu.exists)
 
-        XCTAssertTrue(app.buttons["appTab_一覧"].exists)
-        XCTAssertTrue(app.buttons["appTab_めくる"].exists)
-        XCTAssertTrue(app.buttons["appTab_インサイト"].exists)
-        XCTAssertTrue(app.buttons["appTab_設定"].exists)
+        XCTAssertTrue(tabBar.buttons["一覧"].exists)
+        XCTAssertTrue(tabBar.buttons["めくる"].exists)
+        XCTAssertTrue(tabBar.buttons["インサイト"].exists)
+        XCTAssertTrue(tabBar.buttons["設定"].exists)
     }
 
     @MainActor
     func testCenterAddOpensAdditionChoices() throws {
-        let addButton = app.buttons["addButton"]
+        let addButton = app.tabBars.buttons["追加"]
         XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
         addButton.tap()
 
@@ -141,15 +144,15 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testBrowseTabAndDetailRootBarVisibility() throws {
-        app.buttons["appTab_めくる"].tap()
+        app.tabBars.buttons["めくる"].tap()
         XCTAssertTrue(app.navigationBars.staticTexts["めくる"].waitForExistence(timeout: Self.shortTimeout))
 
-        app.buttons["appTab_一覧"].tap()
+        app.tabBars.buttons["一覧"].tap()
         let card = cardRow("山田 太郎")
         XCTAssertTrue(card.waitForExistence(timeout: Self.defaultTimeout))
         card.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
-        XCTAssertFalse(app.buttons["appTab_インサイト"].exists, "詳細ではルートナビゲーションを表示しない")
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable, "詳細では標準Tab Barを操作可能な状態で表示しない")
     }
 
     // MARK: - 選択モード
@@ -166,6 +169,40 @@ final class EMeishiUITests: XCTestCase {
 
         // 一括削除ボタンが表示される
         XCTAssertTrue(app.buttons["bulkDeleteButton"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable, "選択操作用bottomBarと標準Tab Barを重ねない")
+    }
+
+    @MainActor
+    func testFilterControlsScrollAwayWithList() throws {
+        let filterBar = app.descendants(matching: .any)["filterControlBar"]
+        XCTAssertTrue(filterBar.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(filterBar.isHittable)
+
+        app.swipeUp()
+        app.swipeUp()
+
+        XCTAssertFalse(filterBar.isHittable, "フィルターだけを上端へ固定して検索バーと重ねない")
+    }
+
+    @MainActor
+    func testVisibleRowsDoNotOverlapStandardTabBarAtBottom() throws {
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: Self.shortTimeout))
+
+        for _ in 0..<6 { app.swipeUp() }
+
+        let visibleRows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'cardRow_'"))
+        XCTAssertGreaterThan(visibleRows.count, 0)
+        for index in 0..<visibleRows.count {
+            let row = visibleRows.element(boundBy: index)
+            guard row.isHittable else { continue }
+            XCTAssertLessThanOrEqual(
+                row.frame.maxY,
+                tabBar.frame.minY + 1,
+                "最終行まで標準Tab Barの上へスクロールできる"
+            )
+        }
     }
 
     @MainActor
@@ -450,7 +487,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testInsightsSurvivesContinuousScrolling() throws {
-        let insights = app.buttons["appTab_インサイト"]
+        let insights = app.tabBars.buttons["インサイト"]
         XCTAssertTrue(insights.waitForExistence(timeout: Self.shortTimeout))
         insights.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
@@ -466,7 +503,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testInsightActionShowsFilterAtTopOfCardList() throws {
-        app.buttons["appTab_インサイト"].tap()
+        app.tabBars.buttons["インサイト"].tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
 
         let recentAction = app.buttons["insightAction_clock"]

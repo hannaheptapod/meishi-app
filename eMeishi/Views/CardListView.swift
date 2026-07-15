@@ -282,6 +282,15 @@ struct CardListView: View {
             .onChange(of: navigationState.isCardAdditionRequested) { _, requested in
                 if requested { presentRequestedAddSheetIfNeeded() }
             }
+            .onChange(of: editMode) { _, mode in
+                // 選択用bottomBarと標準Tab Barを同時に表示しない。
+                navigationState.isRootBarHidden = mode == .active
+            }
+            .onDisappear {
+                if editMode == .active {
+                    navigationState.isRootBarHidden = false
+                }
+            }
             .task {
                 await loadPendingOCR()
             }
@@ -492,6 +501,13 @@ struct CardListView: View {
             (viewModel.sortKey == .name || viewModel.sortKey == .company)
         return ScrollViewReader { proxy in
             List(selection: selectionBinding) {
+                if editMode == .inactive {
+                    filterControlBar
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+
                 if viewModel.isSearchActive {
                     // 検索中はフラット表示
                     ForEach(viewModel.filteredCards) { card in
@@ -545,11 +561,6 @@ struct CardListView: View {
             .background(screenBackground)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
-            .safeAreaBar(edge: .top, spacing: 0) {
-                if editMode == .inactive {
-                    filterControlBar
-                }
-            }
             .overlay(alignment: .trailing) {
                 if showIndex {
                     SectionIndexView(
@@ -804,6 +815,7 @@ struct CardListView: View {
                     value: viewModel.selectedTagIDs
                 )
         }
+        .accessibilityIdentifier("filterControlBar")
     }
 
     // MARK: - カード行（コンテキストメニュー付き）
@@ -933,7 +945,7 @@ struct CardListView: View {
         ContentUnavailableView(
             "名刺がありません",
             systemImage: "person.crop.rectangle.stack",
-            description: Text("右上の追加ボタンから、名刺を撮影または読み込めます。")
+            description: Text("画面下部中央の追加から、名刺を撮影または読み込めます。")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

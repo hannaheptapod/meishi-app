@@ -4,6 +4,7 @@ import SwiftUI
 nonisolated enum AppTab: Hashable, Sendable {
     case cards
     case browse
+    case add
     case insights
     case settings
 }

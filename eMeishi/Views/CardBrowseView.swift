@@ -37,8 +37,7 @@ struct CardBrowseView: View {
                     }
                     .padding(.horizontal, AppTheme.Spacing.xLarge)
                     .padding(.top, AppTheme.Spacing.medium)
-                    // ルートGlassバーの上に要約と前後操作を完全に表示する。
-                    .padding(.bottom, 96)
+                    .padding(.bottom, AppTheme.Spacing.medium)
                     .frame(maxWidth: AppTheme.contentMaximumWidth)
                     .frame(maxWidth: .infinity)
                 }

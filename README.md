@@ -79,7 +79,7 @@ meishi-app/
 │   │   ├── Tag+CoreDataProperties.swift
 │   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
 │   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
-│   ├── ContentView.swift                        # 4画面＋中央追加のLiquid Glassルートシェル
+│   ├── ContentView.swift                        # 標準TabViewによる一覧・めくる・中央追加・インサイト・設定
 │   ├── Views/
 │   │   ├── CardListView.swift
 │   │   ├── CardBrowseView.swift                # 名刺画像を左右にめくるリッチ閲覧モード

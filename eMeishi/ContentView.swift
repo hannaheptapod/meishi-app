@@ -11,40 +11,39 @@ struct ContentView: View {
                 NavigationStack(path: $navigationState.cardsPath) {
                     CardListView()
                 }
-                .toolbar(.hidden, for: .tabBar)
+                .toolbar(navigationState.isRootBarHidden ? .hidden : .visible, for: .tabBar)
             }
 
             Tab("めくる", systemImage: "rectangle.stack", value: AppTab.browse) {
                 NavigationStack(path: $navigationState.browsePath) {
                     CardBrowseView()
                 }
-                .toolbar(.hidden, for: .tabBar)
+                .toolbar(navigationState.isRootBarHidden ? .hidden : .visible, for: .tabBar)
+            }
+
+            // 標準Tab Barの中央に置くアクション専用項目。
+            // 選択されたら一覧へ戻して追加シートを開くため、独立画面は持たない。
+            Tab("追加", systemImage: "plus.circle.fill", value: AppTab.add) {
+                Color.clear
             }
 
             Tab("インサイト", systemImage: "chart.xyaxis.line", value: AppTab.insights) {
                 NavigationStack(path: $navigationState.insightsPath) {
                     InsightsView()
                 }
-                .toolbar(.hidden, for: .tabBar)
+                .toolbar(navigationState.isRootBarHidden ? .hidden : .visible, for: .tabBar)
             }
 
             Tab("設定", systemImage: "gearshape", value: AppTab.settings) {
                 NavigationStack(path: $navigationState.settingsPath) {
                     SettingsView()
                 }
-                .toolbar(.hidden, for: .tabBar)
+                .toolbar(navigationState.isRootBarHidden ? .hidden : .visible, for: .tabBar)
             }
         }
-        .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !navigationState.isRootBarHidden {
-                AppRootBar(
-                    selection: $navigationState.selectedTab,
-                    onAdd: navigationState.requestCardAddition
-                )
-                .padding(.horizontal, AppTheme.Spacing.large)
-                .padding(.bottom, AppTheme.Spacing.small)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+        .onChange(of: navigationState.selectedTab) { _, tab in
+            if tab == .add {
+                navigationState.requestCardAddition()
             }
         }
         .background(AppTheme.background.ignoresSafeArea())
@@ -59,57 +58,5 @@ struct ContentView: View {
             default: navigationState.selectedTab = .cards
             }
         }
-    }
-}
-
-private struct AppRootBar: View {
-    @Binding var selection: AppTab
-    let onAdd: () -> Void
-
-    var body: some View {
-        GlassEffectContainer(spacing: AppTheme.Spacing.small) {
-            HStack(spacing: AppTheme.Spacing.xSmall) {
-                tabButton(.cards, title: "一覧", systemImage: "list.bullet")
-                tabButton(.browse, title: "めくる", systemImage: "rectangle.stack")
-
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.title3.weight(.semibold))
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .tint(AppTheme.brandOrange)
-                .accessibilityLabel("名刺を追加")
-                .accessibilityIdentifier("addButton")
-
-                tabButton(.insights, title: "インサイト", systemImage: "chart.xyaxis.line")
-                tabButton(.settings, title: "設定", systemImage: "gearshape")
-            }
-            .padding(6)
-            .glassEffect(.regular, in: .capsule)
-        }
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity)
-    }
-
-    private func tabButton(_ tab: AppTab, title: String, systemImage: String) -> some View {
-        Button {
-            selection = tab
-        } label: {
-            VStack(spacing: 2) {
-                Image(systemName: systemImage)
-                    .font(.body.weight(selection == tab ? .semibold : .regular))
-                Text(title)
-                    .font(.caption2.weight(selection == tab ? .semibold : .regular))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(selection == tab ? AppTheme.brandOrange : Color.secondary)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("appTab_\(title)")
-        .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
