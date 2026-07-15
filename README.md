@@ -4,7 +4,8 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 
 ## 主な機能
 
-- **カメラ撮影 + AI自動読み取り** — OCR + オンデバイスAI（Apple Intelligence / Qwen3-0.6B）で名刺のフィールドを自動分類。連続撮影にも対応
+- **カメラ／写真ライブラリ + AI自動読み取り** — OCR + オンデバイスAI（Apple Intelligence / Qwen3-0.6B）で名刺のフィールドを自動分類。連続撮影と写真の最大10枚取込みに対応
+- **バックグラウンド読み取り** — 処理段階・推定残り時間を表示し、Dynamic Island／システムLive Activityから進捗を確認可能
 - **ふりがな自動生成** — 名前・会社名のふりがなを自動取得。名前順・会社名順ソートに使用
 - **連絡先連携** — iPhoneの連絡先へワンタップ保存、連絡先からのインポート
 - **CSV / vCard エクスポート** — Excel対応のCSV（UTF-8 BOM付き）、vCard 3.0/4.0
@@ -29,6 +30,8 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 | AI分析（Apple Intelligence対応端末） | Foundation Models（iOS 26+） |
 | AI分析（非対応端末） | Qwen3-0.6B Anemll CoreML（Embed+FFN+LMHead 3モデル・ANE対応） |
 | カメラ | UIKit UIImagePickerController（標準カメラUI + オーバーレイ） |
+| 写真取込み | PhotosUI PhotosPicker（順序付き・最大10枚） |
+| バックグラウンド処理 | BackgroundTasks BGContinuedProcessingTask |
 | 連絡先 | Contacts Framework |
 | 生体認証 | LocalAuthentication |
 | モデル配布 | CloudKit Public Database |
@@ -37,7 +40,7 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 
 ```mermaid
 flowchart TD
-  A[カメラ撮影] --> B[OCR<br/>Vision Framework<br/>RecognizeTextRequest / .accurate<br/>textDirection<br/>ja-JP, en-US]
+  A[カメラ撮影 / 写真ライブラリ] --> B[OCR<br/>Vision Framework<br/>RecognizeTextRequest / .accurate<br/>textDirection<br/>ja-JP, en-US]
   B --> C[ハイブリッド前段処理 常時・LLM 不使用<br/>CardFieldClassifier.classifyStructuredFields]
   C --> C1[Pass1: 正規表現で email・phone・URL・住所・会社・部署・役職を抽出]
   C --> C2[Pass2: 座標ベース名前スコアリング<br/>フリガナ近接・フォントサイズ・位置]
@@ -72,7 +75,9 @@ meishi-app/
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
 │   │   ├── Tag+CoreDataClass.swift
-│   │   └── Tag+CoreDataProperties.swift
+│   │   ├── Tag+CoreDataProperties.swift
+│   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
+│   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
 │   ├── ContentView.swift                        # ルートレベルに配置
 │   ├── Views/
 │   │   ├── CardListView.swift
@@ -95,6 +100,7 @@ meishi-app/
 │   │   ├── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
 │   │   └── Components/
 │   │       ├── CardRowView.swift               # 一覧行セル
+│   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -111,21 +117,31 @@ meishi-app/
 │   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative / duplicateAI）
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
+│   │   ├── PhotoImportService.swift             # PhotosPicker画像の順次ロード・正規化
+│   │   ├── OCRProcessingCoordinator.swift       # OCR進捗・実測ETA・中断画像管理
+│   │   ├── OCRBackgroundTaskManager.swift       # BGContinuedProcessingTask連携
+│   │   ├── PendingOCRStore.swift                 # OCR再開キューの原子的な保存・復元
+│   │   ├── CardThumbnailService.swift           # 58pt長辺基準の表示寸法計算
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
 │   │   ├── CloudKitModelUploader.swift         # #if DEBUG 限定のモデルアップローダ（開発者向け）
+│   │   ├── CloudKitEntitlementChecker.swift    # 署名entitlementとテスト環境のCloudKit利用可否判定
+│   │   ├── ModelInstallService.swift            # 検証済みモデルの原子的置換・ロールバック
 │   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
+│   │   ├── LocalLLMInferenceWorker.swift        # Core MLモデル状態と推論を直列化するactor
 │   │   ├── AISearchService.swift               # AI自然言語検索（時間表現抽出 + フィールド分類）
 │   │   ├── AutoTagService.swift                # AI自動タグ提案（既存タグからカード内容に該当するものを提案）
 │   │   ├── InsightsService.swift               # 人脈インサイト集計（会社別・エリア別・職種別・月別）
 │   │   └── Qwen25Tokenizer.swift               # BPE トークナイザー（Qwen3互換）
 │   ├── Utilities/
 │   │   ├── AppLogger.swift                     # os.Logger ラッパー
+│   │   ├── AppTheme.swift                      # ブランド色と非オレンジのグラフ配色
 │   │   ├── CardFieldClassifier.swift           # 正規表現ベースのフィールド分類（ハイブリッド前段処理）
 │   │   ├── CardGroupingService.swift           # 50音セクション分割
 │   │   ├── ContactPatternExtractor.swift       # email/phone/URL/住所の正規表現抽出
 │   │   ├── DuplicateChecker.swift              # Levenshtein 距離による重複判定
+│   │   ├── ExternalURLNormalizer.swift          # WebサイトURLのhttps補完・許可スキーム判定
 │   │   ├── FieldDetector.swift                 # OCR 行からフィールド種別の初期判定
 │   │   ├── FlowLayout.swift                    # SwiftUI タグ折返しレイアウト
 │   │   ├── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
@@ -139,8 +155,9 @@ meishi-app/
 ├── eMeishiTests/
 │   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
 │   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
-│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存・キャンセル終了
 │   ├── OCRServiceTests.swift                   # OCR 行結合（横書き・縦書き）の後処理テスト
+│   ├── CardThumbnailServiceTests.swift         # 横長・縦長サムネイル寸法テスト
 │   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
 │   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
 │   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
@@ -156,7 +173,9 @@ meishi-app/
 ├── eMeishi-Unit.xctestplan                         # PR Validation 用 Unit テストプラン（Unit テストのみ）
 ├── Configuration.storekit                          # StoreKit Configuration（Xcode テスト用・proMonthly/proYearly・Family Sharing 有効）
 ├── scripts/
-│   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
+│   ├── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
+│   ├── cloudkit-models.sh                      # 10MiB分割・再開・stable/rollback CLI
+│   └── tests/cloudkit-models-test.sh           # CLIマニフェスト・チャンク検証
 ├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
 ├── metadata/                                   # App Store Connect メタデータ
 │   ├── app_info.yaml                           # アプリ基本情報（カテゴリ・URL 等）

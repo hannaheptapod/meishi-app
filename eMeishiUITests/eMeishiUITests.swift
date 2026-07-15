@@ -192,7 +192,7 @@ final class EMeishiUITests: XCTestCase {
         card.tap()
 
         // 詳細画面のナビゲーションタイトルが表示される
-        XCTAssertTrue(app.navigationBars.staticTexts["山田 太郎"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
     }
 
     @MainActor
@@ -203,7 +203,7 @@ final class EMeishiUITests: XCTestCase {
         card.tap()
 
         // 詳細画面が表示される
-        XCTAssertTrue(app.navigationBars.staticTexts["山田 太郎"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
 
         // 戻る
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -363,5 +363,78 @@ final class EMeishiUITests: XCTestCase {
         // 「山田」を含まないカードは非表示
         XCTAssertFalse(cardRow("佐藤 誠").exists)
         XCTAssertFalse(cardRow("鈴木 一郎").exists)
+    }
+
+    // MARK: - 1.2.0 回帰テスト
+
+    @MainActor
+    func testSortPopoverUsesFixedOptionRows() throws {
+        let sortButton = app.buttons["sortButton"]
+        XCTAssertTrue(sortButton.waitForExistence(timeout: Self.defaultTimeout))
+        sortButton.tap()
+
+        let options = ["名前", "会社名", "登録日時", "更新日時"].map {
+            app.buttons["sortOption_\($0)"]
+        }
+        for option in options {
+            XCTAssertTrue(option.waitForExistence(timeout: Self.shortTimeout))
+        }
+        let optionX = options.map { $0.frame.minX }
+        let optionWidths = options.map { $0.frame.width }
+        XCTAssertLessThan((optionX.max() ?? 0) - (optionX.min() ?? 0), 2,
+                          "全ソート項目が同じ固定列に配置されるべき")
+        XCTAssertLessThan((optionWidths.max() ?? 0) - (optionWidths.min() ?? 0), 2,
+                          "全ソート項目が同じ固定幅であるべき")
+    }
+
+    @MainActor
+    func testContextMenuBackgroundDismissDoesNotOpenUnderlyingCard() throws {
+        let card = cardRow(stableVisibleCardName)
+        showContextMenu(for: card)
+        XCTAssertTrue(app.buttons["編集"].waitForExistence(timeout: Self.shortTimeout))
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.75)).tap()
+
+        XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(app.navigationBars.staticTexts["名刺詳細"].exists)
+    }
+
+    @MainActor
+    func testFullScreenCardImageSupportsZoomAndDismiss() throws {
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: Self.defaultTimeout))
+        card.tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+
+        let preview = app.buttons["cardImagePreview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: Self.shortTimeout))
+        preview.tap()
+
+        let fullScreenImage = app.scrollViews["fullScreenCardImage"]
+        XCTAssertTrue(fullScreenImage.waitForExistence(timeout: Self.shortTimeout))
+        fullScreenImage.pinch(withScale: 2.0, velocity: 1.0)
+        fullScreenImage.doubleTap()
+        XCTAssertTrue(app.buttons["閉じる"].waitForExistence(timeout: Self.shortTimeout))
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+    }
+
+    @MainActor
+    func testInsightsSurvivesContinuousScrolling() throws {
+        let ellipsisMenu = app.buttons["ellipsisMenu"]
+        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
+        ellipsisMenu.tap()
+        let insights = app.buttons["インサイト"]
+        XCTAssertTrue(insights.waitForExistence(timeout: Self.shortTimeout))
+        insights.tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
+
+        let scrollView = app.scrollViews["insightsScrollView"]
+        XCTAssertTrue(scrollView.waitForExistence(timeout: Self.shortTimeout))
+        for _ in 0..<8 { scrollView.swipeUp() }
+        for _ in 0..<4 { scrollView.swipeDown() }
+
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].exists)
     }
 }

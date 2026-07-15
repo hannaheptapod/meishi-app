@@ -75,6 +75,12 @@ class CardListViewModel: ObservableObject {
 
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
+    private var duplicateDetectionGeneration = UUID()
+
+    private struct CardRevision: Hashable {
+        let id: String
+        let updatedAt: Date?
+    }
 
     init(context: NSManagedObjectContext? = nil) {
         if let context = context {
@@ -198,6 +204,8 @@ class CardListViewModel: ObservableObject {
             try context.save()
             fetchTags()
         } catch {
+            context.rollback()
+            fetchTags()
             errorMessage = "タグの作成に失敗しました: \(error.localizedDescription)"
         }
     }
@@ -209,18 +217,26 @@ class CardListViewModel: ObservableObject {
             try context.save()
             fetchTags()
         } catch {
+            context.rollback()
+            fetchTags()
             errorMessage = "タグの更新に失敗しました: \(error.localizedDescription)"
         }
     }
 
     func deleteTag(_ tag: Tag) {
+        let tagID = tag.id
         context.delete(tag)
-        selectedTagIDs.remove(tag.id ?? UUID())
         do {
             try context.save()
+            if let tagID {
+                selectedTagIDs.remove(tagID)
+            }
             fetchTags()
             updateFilteredCards()
         } catch {
+            context.rollback()
+            fetchTags()
+            fetchCards()
             errorMessage = "タグの削除に失敗しました: \(error.localizedDescription)"
         }
     }
@@ -412,16 +428,30 @@ class CardListViewModel: ObservableObject {
 
     /// 重複検出。ルールベースは常に実行、AI 二次判定は Pro 限定。
     func detectDuplicates() {
+        let generation = UUID()
+        duplicateDetectionGeneration = generation
         let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
         // 即時: ルールベースで表示
         duplicatePairs = checker.findDuplicates(in: cards)
         // 非同期: AI 二次判定でボーダーライン候補を追加（Pro/Grandfather のみ）
         guard EntitlementStore.shared.hasAccess else { return }
         let snapshot = cards
+        let revisions = Set(snapshot.map {
+            CardRevision(
+                id: $0.objectID.uriRepresentation().absoluteString,
+                updatedAt: $0.updatedAt
+            )
+        })
         Task {
             let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
-            // カードが差し替えられていたら反映しない
-            guard snapshot.count == self.cards.count else { return }
+            let currentRevisions = Set(self.cards.map {
+                CardRevision(
+                    id: $0.objectID.uriRepresentation().absoluteString,
+                    updatedAt: $0.updatedAt
+                )
+            })
+            guard generation == self.duplicateDetectionGeneration,
+                  revisions == currentRevisions else { return }
             self.duplicatePairs = enhanced
         }
     }
@@ -504,6 +534,8 @@ class CardListViewModel: ObservableObject {
                 fetchCards()
                 importResultMessage = "\(count)件の連絡先をインポートしました"
             } catch {
+                context.rollback()
+                fetchCards()
                 errorMessage = error.localizedDescription
             }
         }
@@ -526,6 +558,8 @@ class CardListViewModel: ObservableObject {
             try context.save()
             fetchCards()
         } catch {
+            context.rollback()
+            fetchCards()
             errorMessage = "削除に失敗しました: \(error.localizedDescription)"
         }
     }
@@ -537,6 +571,9 @@ class CardListViewModel: ObservableObject {
             try context.save()
             fetchCards()
         } catch {
+            context.rollback()
+            fetchCards()
+            fetchTags()
             errorMessage = "保存に失敗しました: \(error.localizedDescription)"
         }
     }

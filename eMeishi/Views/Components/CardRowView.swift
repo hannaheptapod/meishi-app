@@ -8,23 +8,25 @@ struct CardRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            CardAvatarView(card: card, size: 40)
+            CardThumbnailView(card: card)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                        .font(.headline)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                     if card.isFavorite {
                         Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.yellow)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.yellow.gradient)
+                            .symbolEffect(.bounce, value: card.isFavorite)
                     }
                 }
                 if let company = card.company, !company.isEmpty {
                     Text(company)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary.opacity(0.9))
                         .lineLimit(1)
                 }
                 let dept = card.department ?? ""
@@ -33,7 +35,7 @@ struct CardRowView: View {
                 if !deptTitle.isEmpty {
                     Text(deptTitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
                 if !cardTags.isEmpty {
@@ -52,8 +54,17 @@ struct CardRowView: View {
                     .lineLimit(1)
                 }
             }
+
+            Spacer(minLength: 8)
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: .rect(cornerRadius: 18, style: .continuous)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(cardAccessibilityLabel)
     }

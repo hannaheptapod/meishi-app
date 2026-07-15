@@ -10,12 +10,16 @@ private final class MockOCRService: OCRServiceProtocol {
     var linesToReturn: [RecognizedLine] = []
     var errorToThrow: Error? = nil
     var croppedImageToReturn: UIImage? = nil
+    var recognitionDelayNanoseconds: UInt64 = 0
 
     func detectAndCropCard(from image: UIImage) async -> UIImage {
         croppedImageToReturn ?? image
     }
 
     func recognizeText(from image: UIImage) async throws -> [RecognizedLine] {
+        if recognitionDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: recognitionDelayNanoseconds)
+        }
         if let error = errorToThrow { throw error }
         return linesToReturn
     }
@@ -118,6 +122,8 @@ struct CardFormViewModelInitTests {
         card.email = "yamada@example.com"
         card.phone = "03-1234-5678\n090-9999-0000"
         card.notes = "備考"
+        let imageData = Data([0x01, 0x02, 0x03])
+        card.imageData = imageData
         card.createdAt = Date()
         card.updatedAt = Date()
 
@@ -128,6 +134,7 @@ struct CardFormViewModelInitTests {
         #expect(vm.email == "yamada@example.com")
         #expect(vm.phones.count == 2)
         #expect(vm.notes == "備考")
+        #expect(vm.capturedImageData == imageData)
         #expect(vm.isEditing == true)
     }
 
@@ -167,7 +174,7 @@ struct CardFormViewModelSaveTests {
         vm.lastName = "佐藤"
         vm.firstName = "花子"
         vm.company = "株式会社テスト"
-        vm.save()
+        try vm.save()
         try ctx.save()
 
         let request = BusinessCard.fetchRequest()
@@ -191,7 +198,7 @@ struct CardFormViewModelSaveTests {
 
         let vm = CardFormViewModel(card: card, context: ctx)
         vm.lastName = "新姓"
-        vm.save()
+        try vm.save()
 
         #expect(card.lastName == "新姓")
         #expect(card.updatedAt! > oldDate)
@@ -202,7 +209,7 @@ struct CardFormViewModelSaveTests {
         let vm = CardFormViewModel(context: ctx)
         vm.lastName = "  山田  "
         vm.email = " test@example.com "
-        vm.save()
+        try vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -215,7 +222,7 @@ struct CardFormViewModelSaveTests {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)
         vm.phones = ["03-1234-5678", "090-0000-0001", ""]
-        vm.save()
+        try vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -236,13 +243,32 @@ struct CardFormViewModelSaveTests {
 
         let vm = CardFormViewModel(context: ctx)
         vm.selectedTags = [tag.id!]
-        vm.save()
+        try vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
         let saved = try #require(cards.first)
         let tags = (saved.tags as? Set<eMeishi.Tag>) ?? []
         #expect(tags.contains(tag))
+    }
+
+    @Test func saveExistingCardPreservesImageWhenImageWasNotChanged() throws {
+        let ctx = makeContext()
+        let originalImageData = Data((0..<128).map(UInt8.init))
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "山田"
+        card.imageData = originalImageData
+        card.createdAt = Date()
+        card.updatedAt = Date()
+        try ctx.save()
+
+        let vm = CardFormViewModel(card: card, context: ctx)
+        vm.lastName = "佐藤"
+        try vm.save()
+
+        #expect(card.lastName == "佐藤")
+        #expect(card.imageData == originalImageData)
     }
 }
 
@@ -304,6 +330,30 @@ struct CardFormViewModelTagSuggestionTests {
 
 @MainActor
 struct CardFormViewModelOCRTests {
+
+    @Test func cancelOCRAndWaitFinishesWithCancelledState() async {
+        let ctx = makeContext()
+        let mockOCR = MockOCRService()
+        mockOCR.recognitionDelayNanoseconds = 5_000_000_000
+        mockOCR.linesToReturn = [makeLine("山田太郎")]
+
+        let vm = CardFormViewModel(
+            croppedImage: makeTestImage(size: CGSize(width: 120, height: 60), color: .white),
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: CardFieldClassifier.ParsedCard()),
+            llmService: MockLLMService(),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await Task.yield()
+        await vm.cancelOCRAndWait()
+
+        #expect(vm.isProcessingOCR == false)
+        #expect(vm.ocrProcessingState.phase == .cancelled)
+        let coordinatorState = await OCRProcessingCoordinator.shared.currentState(jobID: vm.ocrJobID)
+        #expect(coordinatorState?.phase == .cancelled)
+    }
 
     @Test func imageInitStoresCroppedImageData() async throws {
         let ctx = makeContext()

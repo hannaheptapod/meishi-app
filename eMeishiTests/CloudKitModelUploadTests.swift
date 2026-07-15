@@ -16,7 +16,6 @@ import CloudKit
 ///     -only-testing:eMeishiTests/CloudKitModelUploadTests/testUploadCorrectModels
 class CloudKitModelUploadTests: XCTestCase {
 
-    private let database   = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
     private let recordID   = CKRecord.ID(recordName: "65526C03-31FB-4EE0-A61D-7C2C91C1C424")
     private let chunkBytes = 200 * 1024 * 1024  // 200 MB
 
@@ -24,9 +23,16 @@ class CloudKitModelUploadTests: XCTestCase {
     private let modelBase = URL(fileURLWithPath: "/Users/jink/dev/pers/anemll-Qwen-Qwen3-0.6B-ctx512_0.3.4")
 
     func testUploadCorrectModels() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["ALLOW_CLOUDKIT_MODEL_UPLOAD"] == "1",
+            "ALLOW_CLOUDKIT_MODEL_UPLOAD=1 が明示された場合だけ実CloudKitへアップロードします"
+        )
         // CI 環境（Xcode Cloud では CI=TRUE が注入される）では自動スキップ
         try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
                       "CloudKit モデルアップロードは手動実行専用（ローカル環境・実モデルファイル前提）")
+
+        // ガード判定より前に CKContainer を生成しない。通常テストではここへ到達しない。
+        let database = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
 
         // タイムアウトを長めに設定（700MB+ のアップロードがある）
         // continueAfterFailure は false のまま（エラーで即停止）

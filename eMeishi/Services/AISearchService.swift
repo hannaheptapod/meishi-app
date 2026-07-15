@@ -1,6 +1,5 @@
 import Foundation
 import CoreData
-import CoreML
 import os
 
 #if canImport(FoundationModels)
@@ -314,7 +313,7 @@ class AISearchService {
         cards: [BusinessCard]
     ) async -> ChatMessage? {
         let llm = LocalLLMService.shared
-        guard let models = llm.ensureModelLoaded() else { return nil }
+        guard llm.isModelAvailable else { return nil }
 
         var matchedIDs: [UUID] = []
 
@@ -322,9 +321,7 @@ class AISearchService {
             let summary = compactSummary(card: card)
             let isMatch = await classifyRelevance(
                 query: query,
-                cardSummary: summary,
-                prefill: models.prefill,
-                tokenizer: models.tokenizer
+                cardSummary: summary
             )
             if isMatch, let cardID = card.id {
                 matchedIDs.append(cardID)
@@ -340,45 +337,12 @@ class AISearchService {
     /// カード1枚の関連性を単一 forward pass で判定
     private func classifyRelevance(
         query: String,
-        cardSummary: String,
-        prefill: MLModel,
-        tokenizer: Qwen25Tokenizer
+        cardSummary: String
     ) async -> Bool {
         let systemInstruction = "この名刺が検索クエリに直接関連するか判定。会社名・部署名・役職に検索テーマと直接関係する語が含まれる場合のみyes。間接的な関連はno。迷ったらno。yesかnoのみ回答。"
         let prompt = "<|im_start|>system\n\(systemInstruction)<|im_end|>\n<|im_start|>user\n検索:「\(query)」\n名刺:\(cardSummary)\n関連する?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
-        let ids = tokenizer.encode(prompt)
-        guard ids.count <= LocalLLMService.shared.maxContextLength else { return false }
-
-        let yesTokenIds = tokenizer.encode("yes")
-        let noTokenIds = tokenizer.encode("no")
-        guard let yesId = yesTokenIds.last, let noId = noTokenIds.last else { return false }
-
-        do {
-            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
-
-            let shape = logits.shape.map { $0.intValue }
-            let vocabSize = shape.last ?? 0
-            guard vocabSize > 0 else { return false }
-
-            let totalElements = shape.reduce(1, *)
-            let lastTokenOffset = totalElements - vocabSize
-
-            if logits.dataType == .float16 {
-                let ptr = logits.dataPointer.assumingMemoryBound(to: UInt16.self)
-                let yesScore = float16ToFloat32(ptr[lastTokenOffset + yesId])
-                let noScore = float16ToFloat32(ptr[lastTokenOffset + noId])
-                return yesScore > noScore
-            } else {
-                let ptr = logits.dataPointer.assumingMemoryBound(to: Float32.self)
-                let yesScore = ptr[lastTokenOffset + yesId]
-                let noScore = ptr[lastTokenOffset + noId]
-                return yesScore > noScore
-            }
-        } catch {
-            AppLogger.search.error("Qwen 判定エラー: \(error)")
-            return false
-        }
+        return await LocalLLMService.shared.yesNo(prompt: prompt)
     }
 
     /// Float16 (UInt16) → Float32 変換

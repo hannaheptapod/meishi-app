@@ -48,6 +48,27 @@ struct OCRServiceTests {
         #expect(index == 0)
     }
 
+    @Test func bestCardRectPrefersOuterCardOverCenteredLogoAndQRCode() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.08, y: 0.22, width: 0.84, height: 0.49), 0.88),
+            (CGRect(x: 0.34, y: 0.38, width: 0.32, height: 0.20), 0.99),
+            (CGRect(x: 0.72, y: 0.28, width: 0.14, height: 0.14), 0.99),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 0)
+    }
+
+    @Test func bestCardRectRejectsOnlyTinyInnerCandidates() {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.42, y: 0.44, width: 0.12, height: 0.08), 1.0),
+            (CGRect(x: 0.75, y: 0.65, width: 0.10, height: 0.10), 1.0),
+        ]
+
+        #expect(OCRService.bestCardRectIndex(candidates: candidates) == nil)
+    }
+
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
         let lines = [
             makeLine("田中", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),

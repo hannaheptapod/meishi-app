@@ -15,6 +15,7 @@ struct PaywallView: View {
     @State private var isPurchasing = false
     @State private var isRestoring = false
     @State private var errorMessage: String? = nil
+    @State private var alertTitle = "エラー"
     @State private var selectedProductID: String? = nil
     @State private var loadFailed = false
 
@@ -42,7 +43,7 @@ struct PaywallView: View {
             }
         }
         .task { await loadProducts() }
-        .alert("エラー", isPresented: Binding(
+        .alert(alertTitle, isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
@@ -247,6 +248,7 @@ struct PaywallView: View {
             let success = try await StoreService.shared.purchase(product)
             if success { dismiss() }
         } catch {
+            alertTitle = "購入エラー"
             errorMessage = "購入に失敗しました。しばらく経ってから再試行してください。"
         }
     }
@@ -254,8 +256,18 @@ struct PaywallView: View {
     private func restore() async {
         isRestoring = true
         defer { isRestoring = false }
-        await StoreService.shared.restorePurchases()
-        if entitlementStore.hasPro { dismiss() }
+        do {
+            switch try await StoreService.shared.restorePurchases() {
+            case .restored:
+                dismiss()
+            case .nothingToRestore:
+                alertTitle = "購入の復元"
+                errorMessage = "復元できる購入が見つかりませんでした。購入時と同じApple Accountでサインインしているか確認してください。"
+            }
+        } catch {
+            alertTitle = "復元エラー"
+            errorMessage = "購入情報を復元できませんでした。通信状態を確認して、もう一度お試しください。"
+        }
     }
 
     // MARK: - Device Compatibility

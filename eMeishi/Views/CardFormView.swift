@@ -12,6 +12,7 @@ struct CardFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var listViewModel: CardListViewModel
     @FocusState private var focusedField: FormField?
+    @State private var isSkipping = false
 
     // 連続撮影時のバッチ進捗
     struct BatchProgress {
@@ -90,17 +91,37 @@ struct CardFormView: View {
                 // OCR処理中インジケーター
                 if viewModel.isProcessingOCR {
                     Section {
-                        HStack(spacing: 12) {
-                            ProgressView()
+                        VStack(alignment: .leading, spacing: 10) {
+                            ProgressView(value: viewModel.ocrProcessingState.progress)
+                                .tint(AppTheme.brandOrange)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(viewModel.ocrStage)
-                                    .foregroundStyle(.secondary)
-                                if viewModel.ocrStage == "AIモデルで分析中..." {
-                                    Text("初回はモデルのロードに時間がかかります")
-                                        .font(.caption)
+                                    .font(.subheadline.weight(.medium))
+                                HStack(spacing: 8) {
+                                    if let remaining = viewModel.ocrProcessingState.remainingTimeText {
+                                        Text(remaining)
+                                    }
+                                    if viewModel.ocrProcessingState.phase == .aiAssistance {
+                                        Text("初回はモデル準備に時間がかかる場合があります")
+                                    }
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            if viewModel.canContinueOCRInBackground {
+                                HStack(alignment: .top, spacing: 7) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(AppTheme.brandOrange)
+                                    Text("読み取り中はアプリを閉じても処理を続けられます。進捗はDynamic Islandまたはロック画面で確認できます。")
                                         .foregroundStyle(.secondary)
                                 }
+                                .font(.caption)
+                                .accessibilityElement(children: .combine)
                             }
+                            Button("読み取りを中止", role: .cancel) {
+                                viewModel.cancelOCR()
+                            }
+                            .font(.caption)
                         }
                         .padding(.vertical, 4)
                     }
@@ -338,21 +359,56 @@ struct CardFormView: View {
             } message: {
                 Text("オンデバイスAIモデルを取得すると、名刺の読み取り精度が向上します。Wi-Fi環境を推奨します。")
             }
+            .alert(
+                "保存に失敗しました",
+                isPresented: Binding(
+                    get: { viewModel.saveErrorMessage != nil },
+                    set: { if !$0 { viewModel.saveErrorMessage = nil } }
+                )
+            ) {
+                Button("閉じる", role: .cancel) {}
+            } message: {
+                Text(viewModel.saveErrorMessage ?? "名刺を保存できませんでした。")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if let onSkip = onSkip {
-                        Button("スキップ") { onSkip() }
+                        Button("スキップ") {
+                            guard !isSkipping else { return }
+                            isSkipping = true
+                            Task {
+                                await viewModel.cancelOCRAndWait()
+                                onSkip()
+                            }
+                        }
+                        .disabled(isSkipping)
                     } else {
-                        Button { dismiss() } label: { Image(systemName: "xmark") }
+                        Button {
+                            if viewModel.isProcessingOCR {
+                                Task {
+                                    await viewModel.cancelOCRAndWait()
+                                    dismiss()
+                                }
+                            } else {
+                                dismiss()
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButtonTitle) {
                         focusedField = nil
-                        viewModel.save()
-                        onSave()
-                        if batchProgress == nil {
-                            dismiss()
+                        do {
+                            try viewModel.save()
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            onSave()
+                            if batchProgress == nil {
+                                dismiss()
+                            }
+                        } catch {
+                            // ViewModel がエラー表示を保持する。フォームは閉じず入力を維持する。
                         }
                     }
                     .disabled(
@@ -366,6 +422,7 @@ struct CardFormView: View {
                     Button("完了") { focusedField = nil }
                 }
             }
+            .interactiveDismissDisabled(viewModel.isProcessingOCR)
         }
     }
 

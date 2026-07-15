@@ -17,8 +17,12 @@ struct SettingsView: View {
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
     @State private var isShowingPaywall = false
+    @State private var isRestoringPurchases = false
+    @State private var purchaseRestoreMessage: String?
 #if DEBUG
     @State private var showSeedConfirm = false
+    @AppStorage(OCRProcessingCoordinator.debugDelayDefaultsKey)
+    private var ocrDebugPhaseDelaySeconds = 0.0
 #endif
 
     var body: some View {
@@ -61,6 +65,17 @@ struct SettingsView: View {
                     }
                 }
             }
+            .alert(
+                "購入の復元",
+                isPresented: Binding(
+                    get: { purchaseRestoreMessage != nil },
+                    set: { if !$0 { purchaseRestoreMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(purchaseRestoreMessage ?? "")
+            }
         }
     }
 
@@ -85,8 +100,23 @@ struct SettingsView: View {
                 }
                 .fontWeight(.semibold)
                 Button("購入を復元") {
-                    Task { await StoreService.shared.restorePurchases() }
+                    guard !isRestoringPurchases else { return }
+                    isRestoringPurchases = true
+                    Task {
+                        defer { isRestoringPurchases = false }
+                        do {
+                            switch try await StoreService.shared.restorePurchases() {
+                            case .restored:
+                                purchaseRestoreMessage = "購入情報を復元しました。"
+                            case .nothingToRestore:
+                                purchaseRestoreMessage = "復元できる購入が見つかりませんでした。"
+                            }
+                        } catch {
+                            purchaseRestoreMessage = "購入情報を復元できませんでした。通信状態を確認して、もう一度お試しください。"
+                        }
+                    }
                 }
+                .disabled(isRestoringPurchases)
                 .foregroundStyle(.secondary)
             }
         }
@@ -277,6 +307,15 @@ struct SettingsView: View {
 
     private var debugSection: some View {
         Section("開発者向け") {
+            Picker("OCRテスト速度", selection: $ocrDebugPhaseDelaySeconds) {
+                Text("通常").tag(0.0)
+                Text("低速（各段階3秒）").tag(3.0)
+                Text("非常に低速（各段階10秒）").tag(10.0)
+            }
+            Text("進捗・残り時間・バックグラウンド表示の確認用です。実測時間の学習には人工遅延を含めません。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Button {
                 showSeedConfirm = true
             } label: {
@@ -421,10 +460,12 @@ private struct AdvancedSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
             Button("削除", role: .destructive) {
-                do {
-                    try llm.deleteModel()
-                } catch {
-                    modelError = error.localizedDescription
+                Task {
+                    do {
+                        try await llm.deleteModel()
+                    } catch {
+                        modelError = error.localizedDescription
+                    }
                 }
             }
         } message: {

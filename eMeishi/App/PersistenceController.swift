@@ -1,6 +1,7 @@
 import CoreData
 import CloudKit
 import os
+import UIKit
 
 // CoreData スタックの管理（iCloud 同期対応）
 struct PersistenceController {
@@ -72,6 +73,8 @@ struct PersistenceController {
         cards[0].isFavorite = true
         cards[2].isFavorite = true
         cards[4].isFavorite = true
+        cards[0].imageData = ScreenshotMockSupport.mockBusinessCardImage()
+            .jpegData(compressionQuality: 0.88)
 
         // タグ付与
         cards[0].addToTags(tagImportant); cards[0].addToTags(tagIT) // 山田太郎: 重要+IT
@@ -215,6 +218,7 @@ struct PersistenceController {
         // 既存データの companyReading から法人格を除去（一度だけ実行）
         if !inMemory {
             Self.migrateCompanyReadings(context: container.viewContext)
+            Self.migrateCompanyLatinInitialismReadings(context: container.viewContext)
         }
     }
 
@@ -250,10 +254,60 @@ struct PersistenceController {
             }
         }
 
-        if changed {
-            try? context.save()
+        guard changed else {
+            UserDefaults.standard.set(true, forKey: key)
+            return
         }
-        UserDefaults.standard.set(true, forKey: key)
+
+        do {
+            try context.save()
+            UserDefaults.standard.set(true, forKey: key)
+        } catch {
+            context.rollback()
+            AppLogger.persistence.error("会社名読みの移行保存に失敗しました: \(error)")
+        }
+    }
+
+    /// 旧ロジックが自動生成した英字略称の読みだけを名称読みに更新する。
+    /// 手入力された読みは、旧自動生成値と完全一致しない限り変更しない。
+    private static func migrateCompanyLatinInitialismReadings(context: NSManagedObjectContext) {
+        let key = "didMigrateCompanyReadingLatinInitialisms"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let request = BusinessCard.fetchRequest()
+        guard let cards = try? context.fetch(request) else { return }
+
+        var changed = false
+        for card in cards {
+            guard let company = card.company, company.contains(where: { $0.isASCII && $0.isLetter }),
+                  let reading = card.companyReading, !reading.isEmpty else { continue }
+
+            let legacyReading = BusinessCard.stripLegalEntityReading(
+                from: NameReadingGenerator.generateReading(from: company)
+            )
+            let revisedReading = BusinessCard.stripLegalEntityReading(
+                from: NameReadingGenerator.generateCompanyReading(from: company)
+            )
+            guard !revisedReading.isEmpty,
+                  reading == legacyReading,
+                  reading != revisedReading else { continue }
+
+            card.companyReading = revisedReading
+            changed = true
+        }
+
+        guard changed else {
+            UserDefaults.standard.set(true, forKey: key)
+            return
+        }
+
+        do {
+            try context.save()
+            UserDefaults.standard.set(true, forKey: key)
+        } catch {
+            context.rollback()
+            AppLogger.persistence.error("会社名英字略称の読み移行保存に失敗しました: \(error)")
+        }
     }
 }
 

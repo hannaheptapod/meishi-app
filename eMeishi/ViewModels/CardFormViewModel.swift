@@ -32,6 +32,9 @@ class CardFormViewModel: ObservableObject {
     @Published var isProcessingOCR: Bool = false
     @Published var ocrStage: String = "名刺を読み取り中..."
     @Published var ocrErrorMessage: String? = nil
+    @Published var saveErrorMessage: String? = nil
+    @Published var ocrProcessingState: OCRProcessingState = .idle
+    @Published var canContinueOCRInBackground = false
 
     // モデル未取得時にダウンロード同意アラートを表示するフラグ
     @Published var shouldPromptLLMDownload: Bool = false
@@ -49,6 +52,7 @@ class CardFormViewModel: ObservableObject {
     private let llmService: LocalLLMServiceProtocol
     private let autoTagService: AutoTagServiceProtocol
     private let settings: SettingsProviding
+    private(set) var ocrJobID = OCRJobID()
     private var ocrTask: Task<Void, Never>?
 
     deinit {
@@ -94,12 +98,21 @@ class CardFormViewModel: ObservableObject {
         self.isProcessingOCR = true
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
-            let cardImage = await self.ocrService.detectAndCropCard(from: image)
-            guard !Task.isCancelled else { return }
-            // 補正済み画像で保存データを上書き
-            self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
-            await populateFromOCR(image: cardImage)
+            do {
+                try await self.beginOCRProcessing()
+                // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
+                let cardImage = await self.ocrService.detectAndCropCard(from: image)
+                try Task.checkCancellation()
+                // 補正済み画像で保存データを上書き
+                self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
+                try await self.setOCRPhase(.textRecognition)
+                await self.populateFromOCR(image: cardImage)
+            } catch is CancellationError {
+                await self.finishCancelledOCR()
+                self.isProcessingOCR = false
+            } catch {
+                await self.finishOCRFailure(message: error.localizedDescription)
+            }
         }
     }
 
@@ -122,7 +135,16 @@ class CardFormViewModel: ObservableObject {
         self.isProcessingOCR = true
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            await populateFromOCR(image: croppedImage)
+            do {
+                try await self.beginOCRProcessing()
+                try await self.setOCRPhase(.textRecognition)
+                await self.populateFromOCR(image: croppedImage)
+            } catch is CancellationError {
+                await self.finishCancelledOCR()
+                self.isProcessingOCR = false
+            } catch {
+                await self.finishOCRFailure(message: error.localizedDescription)
+            }
         }
     }
 
@@ -156,6 +178,7 @@ class CardFormViewModel: ObservableObject {
         address   = card.address   ?? ""
         website   = card.website   ?? ""
         notes     = card.notes     ?? ""
+        capturedImageData = card.imageData
         selectedTags = Set(card.tagArray.compactMap { $0.id })
     }
 
@@ -163,34 +186,38 @@ class CardFormViewModel: ObservableObject {
 
     func populateFromOCR(image: UIImage) async {
         isProcessingOCR = true
-        ocrStage = "文字を認識中..."
         ocrErrorMessage = nil
+        var didFail = false
 
         do {
+            if ocrProcessingState == .idle {
+                try await beginOCRProcessing()
+                try await setOCRPhase(.textRecognition)
+            }
             let lines = try await ocrService.recognizeText(from: image)
+            try Task.checkCancellation()
             guard !lines.isEmpty else {
-                ocrErrorMessage = "テキストを認識できませんでした"
-                isProcessingOCR = false
+                await finishOCRFailure(message: "テキストを認識できませんでした")
                 return
             }
 
-            ocrStage = "フィールドを分析中..."
+            try await setOCRPhase(.fieldAnalysis)
 
             switch settings.readingMethod {
             case .automatic:
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) {
-                    await populateWithFoundationModels(lines: lines)
+                    try await populateWithFoundationModels(lines: lines)
                 } else {
-                    await populateWithLocalLLMOrClassifier(lines: lines)
+                    try await populateWithLocalLLMOrClassifier(lines: lines)
                 }
                 #else
-                await populateWithLocalLLMOrClassifier(lines: lines)
+                try await populateWithLocalLLMOrClassifier(lines: lines)
                 #endif
             case .appleIntelligence:
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) {
-                    await populateWithFoundationModelsOnly(lines: lines)
+                    try await populateWithFoundationModelsOnly(lines: lines)
                 } else {
                     ocrErrorMessage = "Apple Intelligence は iOS 26 以降で利用できます。標準読み取りで処理しました。"
                     populateWithClassifier(lines: lines)
@@ -201,22 +228,121 @@ class CardFormViewModel: ObservableObject {
                 #endif
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
-                await populateWithLocalLLMOnly(lines: lines)
+                try await populateWithLocalLLMOnly(lines: lines)
             }
+            try Task.checkCancellation()
+
+            try await setOCRPhase(.saving)
+            try Task.checkCancellation()
+            guard let completed = await OCRProcessingCoordinator.shared.complete(jobID: ocrJobID) else {
+                throw CancellationError()
+            }
+            ocrProcessingState = completed
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: completed)
+            OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: true)
+            canContinueOCRInBackground = false
+            isProcessingOCR = false
+
+            // 完了した同一ジョブだけがAIタグ提案を開始できる。
+            requestTagSuggestions()
+        } catch is CancellationError {
+            didFail = true
+            await finishCancelledOCR()
         } catch {
+            didFail = true
             ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
+            if let failed = await OCRProcessingCoordinator.shared.fail(
+                jobID: ocrJobID,
+                message: error.localizedDescription
+            ) {
+                ocrProcessingState = failed
+                OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
+            }
+            OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
+            canContinueOCRInBackground = false
         }
 
+        if didFail { isProcessingOCR = false }
+    }
+
+    private func finishOCRFailure(message: String) async {
+        ocrErrorMessage = message
+        isProcessingOCR = false
+        if let failed = await OCRProcessingCoordinator.shared.fail(jobID: ocrJobID, message: message) {
+            ocrProcessingState = failed
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
+        }
+        OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
+        canContinueOCRInBackground = false
+    }
+
+    func cancelOCR() {
+        Task {
+            await cancelOCRAndWait()
+        }
+    }
+
+    /// バッチのスキップ時は旧OCRの終了完了後に次の名刺へ進み、
+    /// 旧Live Activityの残留や新しいOCRへの終了処理の競合を防ぐ。
+    func cancelOCRAndWait() async {
+        let task = ocrTask
+        task?.cancel()
         isProcessingOCR = false
 
-        // OCR完了後にAIタグ提案を非同期で実行
-        requestTagSuggestions()
+        // キャンセル非対応の処理が残っていても、表示は即時終了する。
+        await finishCancelledOCR()
+
+        // 旧タスクが完全に終了するまで、新しいバッチ項目を開始させない。
+        await task?.value
+        ocrTask = nil
+
+        // 旧タスクの終了処理が状態を書き戻した場合にも最終状態を揃える。
+        await finishCancelledOCR()
+    }
+
+    private func finishCancelledOCR() async {
+        if let cancelled = await OCRProcessingCoordinator.shared.cancel(jobID: ocrJobID) {
+            ocrProcessingState = cancelled
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: cancelled)
+        }
+        OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
+        canContinueOCRInBackground = false
+    }
+
+    private func beginOCRProcessing() async throws {
+        try Task.checkCancellation()
+        ocrProcessingState = await OCRProcessingCoordinator.shared.start(jobID: ocrJobID, totalItems: 1)
+        ocrStage = ocrProcessingState.phase.title
+        canContinueOCRInBackground = OCRBackgroundTaskManager.shared.begin(jobID: ocrJobID, totalItems: 1) { [weak self] in
+            self?.cancelOCR()
+        }
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: ocrProcessingState)
+#if DEBUG
+        try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
+#endif
+        try Task.checkCancellation()
+    }
+
+    private func setOCRPhase(_ phase: OCRProcessingPhase) async throws {
+        try Task.checkCancellation()
+        guard let state = await OCRProcessingCoordinator.shared.transition(jobID: ocrJobID, to: phase) else {
+            throw CancellationError()
+        }
+        ocrProcessingState = state
+        ocrStage = phase.title
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+#if DEBUG
+        try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
+#endif
+        try Task.checkCancellation()
     }
 
     // MARK: - AIタグ提案
 
     /// OCR完了後に既存タグから該当するものをAIで提案する
     func requestTagSuggestions() {
+        guard ocrProcessingState.phase != .cancelled,
+              ocrProcessingState.phase != .failed else { return }
         // 既にタグが選択されている場合（編集時）はスキップ
         guard !isEditing, selectedTags.isEmpty else { return }
 
@@ -272,7 +398,8 @@ class CardFormViewModel: ObservableObject {
     /// 2. 未分類行を LLM バックエンドに送信（Foundation Models / Qwen / なし）
     /// 3. LLM 結果を OCR テキストで照合バリデーション — 全 Tier 共通
     /// 4. ルールベース結果と LLM 結果をマージ — 全 Tier 共通
-    private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async {
+    private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async throws {
+        try Task.checkCancellation()
         // --- Step 1: ルールベース前段処理（全 Tier 共通） ---
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
         var result = ruleResult.parsed
@@ -285,12 +412,17 @@ class CardFormViewModel: ObservableObject {
             return
         }
 
+        if llmBackend != .none {
+            try await setOCRPhase(.aiAssistance)
+        }
+
         // --- Step 2: LLM バックエンドで未分類行を分類 ---
         let llmResult: CardFieldClassifier.ParsedCard? = await runLLMBackend(
             llmBackend,
             unclassifiedLines: ruleResult.unclassifiedLines,
             baseParsed: result
         )
+        try Task.checkCancellation()
 
         // --- Step 3: LLM 結果の OCR テキスト照合バリデーション + マージ（全 Tier 共通） ---
         if let llm = llmResult {
@@ -325,7 +457,7 @@ class CardFormViewModel: ObservableObject {
     }
 
     /// LLM バックエンドの種別
-    private enum LLMBackend {
+    private enum LLMBackend: Equatable {
         case foundationModels
         case qwen
         case none  // Tier 3: ルールベースのみ
@@ -412,46 +544,46 @@ class CardFormViewModel: ObservableObject {
     #if canImport(FoundationModels)
     // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
     @available(iOS 26.0, *)
-    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
+    private func populateWithFoundationModels(lines: [RecognizedLine]) async throws {
         switch SystemLanguageModel.default.availability {
         case .available:
-            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
-            await populateWithLocalLLMOrClassifier(lines: lines)
+            try await populateWithLocalLLMOrClassifier(lines: lines)
         }
     }
 
     // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
     @available(iOS 26.0, *)
-    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
+    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async throws {
         switch SystemLanguageModel.default.availability {
         case .available:
-            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
             ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
         }
     }
     #endif
 
     // 明示指定モード: AIアシスト（Qwen）
-    private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
+    private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async throws {
         guard llmService.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
+        try await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
     // 自動モード: LocalLLM → Classifier のフォールバック
-    private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
+    private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async throws {
         if !llmService.isModelAvailable {
             shouldPromptLLMDownload = true
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
+        try await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
     private func populateWithClassifier(lines: [RecognizedLine]) {
@@ -483,7 +615,7 @@ class CardFormViewModel: ObservableObject {
         // 会社名読みは法人格を除いた読みで保存する（OCR/LLM由来でも除去する）
         let companyR: String = {
             let raw = parsed.companyReading.isEmpty
-                ? NameReadingGenerator.generateReading(from: parsed.company)
+                ? NameReadingGenerator.generateCompanyReading(from: parsed.company)
                 : parsed.companyReading
             return BusinessCard.stripLegalEntityReading(from: raw)
         }()
@@ -524,7 +656,8 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - 保存
 
-    func save() {
+    func save() throws {
+        saveErrorMessage = nil
         let target = card ?? {
             let newCard = BusinessCard(context: context)
             newCard.id = UUID()
@@ -541,7 +674,7 @@ class CardFormViewModel: ObservableObject {
         let companyReadingRaw = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
         let companyReadingFinal: String = {
             let raw = companyReadingRaw.isEmpty
-                ? NameReadingGenerator.generateReading(from: company.trimmingCharacters(in: .whitespacesAndNewlines))
+                ? NameReadingGenerator.generateCompanyReading(from: company.trimmingCharacters(in: .whitespacesAndNewlines))
                 : companyReadingRaw
             return BusinessCard.stripLegalEntityReading(from: raw)
         }()
@@ -560,8 +693,9 @@ class CardFormViewModel: ObservableObject {
         target.updatedAt = Date()
 
         // タグのリレーションを更新
-        let tagRequest = Tag.fetchRequest()
-        if let allTags = try? context.fetch(tagRequest) {
+        do {
+            let tagRequest = Tag.fetchRequest()
+            let allTags = try context.fetch(tagRequest)
             // 既存のタグをすべて外す
             if let currentTags = target.tags as? Set<Tag> {
                 for tag in currentTags {
@@ -572,12 +706,12 @@ class CardFormViewModel: ObservableObject {
             for tag in allTags where selectedTags.contains(tag.id ?? UUID()) {
                 target.addToTags(tag)
             }
-        }
-
-        do {
             try context.save()
         } catch {
+            context.rollback()
+            saveErrorMessage = "名刺を保存できませんでした。入力内容を確認して、もう一度お試しください。"
             AppLogger.persistence.error("名刺の保存に失敗しました: \(error)")
+            throw error
         }
     }
 }

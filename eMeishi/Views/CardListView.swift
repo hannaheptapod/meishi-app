@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -11,6 +12,16 @@ struct CardListView: View {
     @State private var isShowingSettings = false
     @State private var isShowingImportConfirm = false
     @State private var isShowingTagManager = false
+    @State private var isShowingPhotoPicker = false
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var isImportingPhotos = false
+    @State private var photoImportMessage: String?
+    @State private var isShowingPendingOCRPrompt = false
+    @State private var pendingOCRImages: [UIImage] = []
+    @State private var cardForDetail: BusinessCard?
+    @State private var isShowingSortPopover = false
+    @State private var isContextMenuPresented = false
+    @State private var suppressCardTapUntil = Date.distantPast
 
     // コンテキストメニュー用
     @State private var cardToEdit: BusinessCard? = nil
@@ -28,6 +39,8 @@ struct CardListView: View {
     @State private var isShowingMockOCRForm = false
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -40,13 +53,22 @@ struct CardListView: View {
         )
     }
 
+    private var screenBackground: Color {
+        Color(uiColor: .systemGroupedBackground)
+    }
+
     var body: some View {
+        interactionPresentations
+            .environmentObject(viewModel)
+    }
+
+    private var baseView: AnyView {
+        AnyView(
         NavigationStack {
             Group {
                 if viewModel.cards.isEmpty {
                     emptyState
-                } else if viewModel.isSearchActive && viewModel.filteredCards.isEmpty
-                    && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                } else if shouldShowAISearchPrompt {
                     // テキスト検索で0件 → AI チャット検索を提案
                     aiSearchPrompt
                 } else {
@@ -75,7 +97,20 @@ struct CardListView: View {
                     normalToolbarContent
                 }
             }
+            .toolbarBackground(screenBackground, for: .navigationBar, .bottomBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar, .bottomBar)
             .environment(\.editMode, $editMode)
+            .navigationDestination(item: $cardForDetail) { card in
+                CardDetailView(card: card)
+            }
+        }
+        .background(screenBackground.ignoresSafeArea())
+        )
+    }
+
+    private var importPresentations: AnyView {
+        AnyView(
+            baseView
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
             }
@@ -89,6 +124,43 @@ struct CardListView: View {
                 })
                 .environmentObject(viewModel)
             }
+            .photosPicker(
+                isPresented: $isShowingPhotoPicker,
+                selection: $selectedPhotoItems,
+                maxSelectionCount: 10,
+                selectionBehavior: .ordered,
+                matching: .images,
+                preferredItemEncoding: .compatible
+            )
+            .onChange(of: selectedPhotoItems) { _, items in
+                handlePhotoSelection(items)
+            }
+            .alert("写真の読込み", isPresented: Binding(
+                get: { photoImportMessage != nil },
+                set: { if !$0 { photoImportMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { photoImportMessage = nil }
+            } message: {
+                Text(photoImportMessage ?? "")
+            }
+            .alert("未完了の読み取り", isPresented: $isShowingPendingOCRPrompt) {
+                Button("再開") {
+                    batchImages = pendingOCRImages
+                    isReviewingBatch = !batchImages.isEmpty
+                }
+                Button("破棄", role: .destructive) {
+                    pendingOCRImages = []
+                    Task { await discardPendingOCR() }
+                }
+            } message: {
+                Text("前回中断した名刺が\(pendingOCRImages.count)枚あります。")
+            }
+        )
+    }
+
+    private var managementPresentations: AnyView {
+        AnyView(
+            importPresentations
             .sheet(item: $viewModel.exportItem) { item in
                 ShareSheet(activityItems: [item.url])
             }
@@ -122,6 +194,12 @@ struct CardListView: View {
             } message: {
                 Text(viewModel.importResultMessage ?? "")
             }
+        )
+    }
+
+    private var interactionPresentations: AnyView {
+        AnyView(
+            managementPresentations
             // コンテキストメニューからの編集シート
             .sheet(item: $cardToEdit, onDismiss: viewModel.fetchCards) { card in
                 CardFormView(card: card, onSave: { cardToEdit = nil })
@@ -174,6 +252,9 @@ struct CardListView: View {
                 viewModel.fetchCards()
                 handleScreenshotMode()
             }
+            .task {
+                await loadPendingOCR()
+            }
             .sheet(isPresented: $isShowingAIChat) {
                 AISearchChatView()
                     .environmentObject(viewModel)
@@ -189,8 +270,7 @@ struct CardListView: View {
                 }, onSave: { isShowingMockOCRForm = false })
                 .environmentObject(viewModel)
             }
-        }
-        .environmentObject(viewModel)
+        )
     }
 
     private func openAISearch() {
@@ -199,6 +279,12 @@ struct CardListView: View {
         } else {
             isShowingPaywall = true
         }
+    }
+
+    private var shouldShowAISearchPrompt: Bool {
+        viewModel.isSearchActive
+            && viewModel.filteredCards.isEmpty
+            && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
@@ -306,20 +392,22 @@ struct CardListView: View {
 
         // 右: 追加ボタン
         ToolbarItem(placement: .bottomBar) {
-            Button {
-                CameraBatchCapture.shared.start { images in
-                    batchImages = images
-                    if !images.isEmpty {
-                        // batchImages の更新を SwiftUI に反映させてから sheet を表示する
-                        Task {
-                            try? await Task.sleep(for: .seconds(0.1))
-                            isReviewingBatch = true
-                        }
-                    }
+            Menu {
+                Button {
+                    startCameraCapture()
+                } label: {
+                    Label("カメラで撮影", systemImage: "camera")
+                }
+                Button {
+                    selectedPhotoItems = []
+                    isShowingPhotoPicker = true
+                } label: {
+                    Label("写真から読み込む", systemImage: "photo.on.rectangle.angled")
                 }
             } label: {
                 Label("追加", systemImage: "plus")
             }
+            .disabled(isImportingPhotos)
             .accessibilityIdentifier("addButton")
         }
     }
@@ -437,17 +525,29 @@ struct CardListView: View {
                             }
                             .deleteDisabled(editMode == .active)
                         } header: {
-                            Text(section.title)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
-                                .textCase(nil)
+                            HStack(spacing: 7) {
+                                Text(section.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Text("\(section.cards.count)")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                            .textCase(nil)
                         }
                         .id(section.id)
                     }
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(8)
+            .listSectionSpacing(12)
+            .scrollContentBackground(.hidden)
+            .background(screenBackground)
+            .scrollEdgeEffectHidden(true, for: .vertical)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
             .safeAreaInset(edge: .top) {
@@ -467,23 +567,89 @@ struct CardListView: View {
         }
     }
 
+    private func startCameraCapture() {
+        CameraBatchCapture.shared.start { images in
+            batchImages = images
+            if !images.isEmpty {
+                Task {
+                    let inputs = images.compactMap { image in
+                        image.jpegData(compressionQuality: 0.82).map {
+                            CardImageInput(data: $0, source: .camera)
+                        }
+                    }
+                    do {
+                        try await PendingOCRStore.shared.persist(inputs)
+                    } catch {
+                        photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+                    }
+                    try? await Task.sleep(for: .seconds(0.1))
+                    isReviewingBatch = true
+                }
+            }
+        }
+    }
+
+    private func importSelectedPhotos(_ items: [PhotosPickerItem]) async {
+        isImportingPhotos = true
+        defer {
+            isImportingPhotos = false
+            selectedPhotoItems = []
+        }
+
+        let result = await PhotoImportService.shared.importImages(from: items)
+        batchImages = result.images.compactMap { UIImage(data: $0.data) }
+
+        if batchImages.isEmpty {
+            let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
+            photoImportMessage = "読込みに失敗しました。\(reason)。もう一度お試しください。"
+            return
+        }
+
+        if !result.failures.isEmpty {
+            photoImportMessage = "\(batchImages.count)枚を読み込み、\(result.failures.count)枚は読み込めませんでした。"
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        do {
+            try await PendingOCRStore.shared.persist(result.images)
+        } catch {
+            photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+        }
+        isReviewingBatch = true
+    }
+
+    private func handlePhotoSelection(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        Task { await importSelectedPhotos(items) }
+    }
+
+    private func loadPendingOCR() async {
+        guard !ScreenshotMode.isActive else { return }
+        do {
+            let restored = try await PendingOCRStore.shared.restore()
+            pendingOCRImages = restored.compactMap { UIImage(data: $0.data) }
+            isShowingPendingOCRPrompt = !pendingOCRImages.isEmpty
+        } catch {
+            photoImportMessage = "前回の未完了読み取りを復元できませんでした。破損した一時データは設定を変えずに保持しています。"
+        }
+    }
+
+    private func discardPendingOCR() async {
+        do {
+            try await PendingOCRStore.shared.discard()
+        } catch {
+            photoImportMessage = "未完了の読み取り情報を破棄できませんでした。"
+        }
+    }
+
     // MARK: - フィルター・ソート統合バー
 
     private var filterSortBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+        GlassEffectContainer(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
                 // ── 並び替え ──
-                Menu {
-                    ForEach(CardSortKey.allCases) { key in
-                        Button { viewModel.toggleSort(key: key) } label: {
-                            if viewModel.sortKey == key {
-                                Label(key.rawValue, systemImage: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                            } else {
-                                Text(key.rawValue)
-                            }
-                        }
-                        .menuActionDismissBehavior(.disabled)
-                    }
+                Button {
+                    isShowingSortPopover.toggle()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: viewModel.sortAscending ? "arrow.up" : "arrow.down")
@@ -494,8 +660,51 @@ struct CardListView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 32)
-                    .background(Color(.secondarySystemFill))
-                    .clipShape(Capsule())
+                    .glassEffect(
+                        .regular.tint(AppTheme.brandOrange.opacity(0.16)).interactive(),
+                        in: .capsule
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sortButton")
+                .accessibilityValue("\(viewModel.sortKey.rawValue)・\(viewModel.sortAscending ? "昇順" : "降順")")
+                .popover(
+                    isPresented: $isShowingSortPopover,
+                    attachmentAnchor: .rect(.bounds),
+                    arrowEdge: .top
+                ) {
+                    VStack(spacing: 0) {
+                        ForEach(CardSortKey.allCases) { key in
+                            Button {
+                                haptic.impactOccurred()
+                                viewModel.toggleSort(key: key)
+                            } label: {
+                                HStack(spacing: 14) {
+                                    Image(systemName: viewModel.sortAscending ? "arrow.up" : "arrow.down")
+                                        .font(.body.weight(.medium))
+                                        .opacity(viewModel.sortKey == key ? 1 : 0)
+                                        .frame(width: 24, alignment: .center)
+                                        .accessibilityIdentifier("sortDirection_\(key.rawValue)")
+                                        .accessibilityHidden(viewModel.sortKey != key)
+
+                                    Text(key.rawValue)
+                                        .foregroundStyle(.primary)
+
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 18)
+                                .frame(width: 250, height: 44)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("sortOption_\(key.rawValue)")
+                            .accessibilityValue(viewModel.sortKey == key
+                                ? (viewModel.sortAscending ? "昇順" : "降順")
+                                : "")
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .presentationCompactAdaptation(.popover)
                 }
 
                 // ── 区切り + フィルタアイコン ──
@@ -509,7 +718,10 @@ struct CardListView: View {
                 }
 
                 // ── お気に入りフィルタ ──
-                Button { viewModel.toggleFavoritesFilter() } label: {
+                Button {
+                    haptic.impactOccurred()
+                    viewModel.toggleFavoritesFilter()
+                } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "star.fill")
                             .font(.caption)
@@ -518,8 +730,12 @@ struct CardListView: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 32)
-                    .background(viewModel.showFavoritesOnly ? Color.yellow.opacity(0.2) : Color(.secondarySystemFill))
-                    .clipShape(Capsule())
+                    .glassEffect(
+                        viewModel.showFavoritesOnly
+                            ? .regular.tint(Color.yellow.opacity(0.20)).interactive()
+                            : .clear.interactive(),
+                        in: .capsule
+                    )
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("お気に入りフィルタ")
@@ -528,7 +744,10 @@ struct CardListView: View {
                 // ── タグフィルタ ──
                 ForEach(viewModel.allTags) { tag in
                     let isSelected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                    Button { viewModel.toggleTagFilter(tag) } label: {
+                    Button {
+                        haptic.impactOccurred()
+                        viewModel.toggleTagFilter(tag)
+                    } label: {
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(tag.color)
@@ -538,16 +757,29 @@ struct CardListView: View {
                         }
                         .padding(.horizontal, 12)
                         .frame(minHeight: 32)
-                        .background(isSelected ? tag.color.opacity(0.2) : Color(.secondarySystemFill))
-                        .clipShape(Capsule())
+                        .glassEffect(
+                            isSelected
+                                ? .regular.tint(tag.color.opacity(0.18)).interactive()
+                                : .clear.interactive(),
+                            in: .capsule
+                        )
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("タグフィルタ: \(tag.tagName)")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .animation(
+                    reduceMotion ? nil : .snappy(duration: 0.22),
+                    value: viewModel.showFavoritesOnly
+                )
+                .animation(
+                    reduceMotion ? nil : .snappy(duration: 0.22),
+                    value: viewModel.selectedTagIDs
+                )
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
         }
     }
 
@@ -556,12 +788,19 @@ struct CardListView: View {
     @ViewBuilder
     private func cardRow(for card: BusinessCard) -> some View {
         if editMode == .inactive {
-            NavigationLink {
-                CardDetailView(card: card)
-            } label: {
-                CardRowView(card: card)
+            CardRowView(card: card)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .onTapGesture {
+                guard !isContextMenuPresented, Date() >= suppressCardTapUntil else { return }
+                haptic.impactOccurred(intensity: 0.55)
+                cardForDetail = card
             }
             .accessibilityIdentifier("cardRow_\(card.fullName)")
+            .accessibilityHint("詳細を表示")
+            .accessibilityAddTraits(.isButton)
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             .swipeActions(edge: .leading) {
                 Button {
                     haptic.impactOccurred()
@@ -579,10 +818,21 @@ struct CardListView: View {
             } preview: {
                 CardDetailView(card: card)
                     .environmentObject(viewModel)
+                    .onAppear {
+                        isContextMenuPresented = true
+                    }
+                    .onDisappear {
+                        isContextMenuPresented = false
+                        // dismissalに使った背面タップが次の行へ伝播する期間だけ無効化する。
+                        suppressCardTapUntil = Date().addingTimeInterval(0.35)
+                    }
             }
         } else {
             CardRowView(card: card)
                 .accessibilityIdentifier("cardRow_\(card.fullName)")
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
         }
     }
 

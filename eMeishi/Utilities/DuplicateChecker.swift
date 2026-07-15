@@ -1,6 +1,5 @@
 import Foundation
 import CoreData
-import CoreML
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -170,14 +169,12 @@ struct DuplicateChecker {
     ) async -> [DuplicatePair] {
         var pairs = confirmed
         let llm = LocalLLMService.shared
-        guard let models = llm.ensureModelLoaded() else { return pairs }
+        guard llm.isModelAvailable else { return pairs }
 
         for candidate in candidates.prefix(10) {
             let isMatch = await verifyDuplicateWithQwen(
                 card1: candidate.cardA,
-                card2: candidate.cardB,
-                prefill: models.prefill,
-                tokenizer: models.tokenizer
+                card2: candidate.cardB
             )
             if isMatch {
                 var aiPair = candidate.pair
@@ -189,22 +186,12 @@ struct DuplicateChecker {
     }
 
     /// 1ペアをQwenで同一人物判定
-    private func verifyDuplicateWithQwen(card1: BusinessCard, card2: BusinessCard,
-                                         prefill: MLModel, tokenizer: Qwen25Tokenizer) async -> Bool {
+    private func verifyDuplicateWithQwen(card1: BusinessCard, card2: BusinessCard) async -> Bool {
         let summary1 = cardSummary(card1)
         let summary2 = cardSummary(card2)
         let prompt = "<|im_start|>system\nAre these two business cards the same person? Reply yes or no.<|im_end|>\n<|im_start|>user\nCard1: \(summary1)\nCard2: \(summary2)\nSame person?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
-        let ids = tokenizer.encode(prompt)
-        do {
-            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
-            guard let tokenId = LocalLLMService.shared.argmaxLastToken(logits: logits) else { return false }
-            let decoded = tokenizer.decode([tokenId]).lowercased()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return decoded.hasPrefix("y") || decoded.hasPrefix("はい") || decoded.hasPrefix("yes")
-        } catch {
-            return false
-        }
+        return await LocalLLMService.shared.yesNo(prompt: prompt)
     }
 
     private func cardSummary(_ card: BusinessCard) -> String {

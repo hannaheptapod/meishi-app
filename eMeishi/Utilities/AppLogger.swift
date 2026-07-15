@@ -18,4 +18,5 @@ nonisolated enum AppLogger {
     static let export      = Logger(subsystem: subsystem, category: "export")
     static let contacts    = Logger(subsystem: subsystem, category: "contacts")
     static let camera      = Logger(subsystem: subsystem, category: "camera")
+    static let cloudKit    = Logger(subsystem: subsystem, category: "cloudKit")
 }

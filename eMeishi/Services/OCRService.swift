@@ -113,6 +113,7 @@ actor OCRService {
         let area: CGFloat
         let shortLongAspect: CGFloat
         let oppositeSideBalance: CGFloat
+        let edgeInset: CGFloat
     }
 
     private static func cardRectangleMetrics(for observation: RectangleObservation) -> CardRectangleMetrics {
@@ -131,11 +132,20 @@ actor OCRService {
         let horizontalBalance = min(top, bottom) / max(top, bottom, 0.001)
         let verticalBalance = min(left, right) / max(left, right, 0.001)
         let area = polygonArea([topLeft, topRight, bottomRight, bottomLeft])
+        let xs = [topLeft.x, topRight.x, bottomLeft.x, bottomRight.x]
+        let ys = [topLeft.y, topRight.y, bottomLeft.y, bottomRight.y]
+        let edgeInset = min(
+            xs.min() ?? 0,
+            ys.min() ?? 0,
+            1 - (xs.max() ?? 1),
+            1 - (ys.max() ?? 1)
+        )
 
         return CardRectangleMetrics(
             area: area,
             shortLongAspect: shortLongAspect,
-            oppositeSideBalance: min(horizontalBalance, verticalBalance)
+            oppositeSideBalance: min(horizontalBalance, verticalBalance),
+            edgeInset: max(0, edgeInset)
         )
     }
 
@@ -144,7 +154,8 @@ actor OCRService {
         return CardRectangleMetrics(
             area: rect.width * rect.height,
             shortLongAspect: shortLongAspect,
-            oppositeSideBalance: 1
+            oppositeSideBalance: 1,
+            edgeInset: max(0, min(rect.minX, rect.minY, 1 - rect.maxX, 1 - rect.maxY))
         )
     }
 
@@ -154,7 +165,8 @@ actor OCRService {
         visionOrder: Int
     ) -> CGFloat {
         let area = metrics.area
-        guard (0.02...0.80).contains(area) else { return -1 }
+        // ロゴやQRコード程度の小矩形は候補から外し、画面をほぼ覆う矩形も除外する。
+        guard (0.055...0.92).contains(area) else { return -1 }
 
         let shortLongAspect = metrics.shortLongAspect
         guard (0.32...0.90).contains(shortLongAspect) else { return -1 }
@@ -162,12 +174,19 @@ actor OCRService {
 
         let businessCardAspect: CGFloat = 0.58
         let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
-        let areaScore = min(area / 0.12, 1.0)
+        // 面積の大きい外周を優先する。旧実装の hugeRectPenalty は影の外側にある
+        // 正しい名刺外周を不利にしていたため廃止する。
+        let areaScore = min(sqrt(area / 0.30), 1.0)
+        let edgeScore = max(0, 1 - metrics.edgeInset / 0.24)
         let shapeScore = metrics.oppositeSideBalance
-        let hugeRectPenalty = area > 0.45 ? (area - 0.45) * 2.0 : 0
-        let orderPenalty = CGFloat(visionOrder) * 0.12
+        let orderPenalty = CGFloat(visionOrder) * 0.04
 
-        return CGFloat(confidence) * 2.0 + aspectScore * 2.0 + areaScore + shapeScore - hugeRectPenalty - orderPenalty
+        return CGFloat(confidence) * 1.5
+            + aspectScore * 1.5
+            + areaScore * 2.5
+            + edgeScore
+            + shapeScore
+            - orderPenalty
     }
 
     private static func distance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {

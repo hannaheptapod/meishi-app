@@ -3,8 +3,40 @@
 本アプリの LLM モデル（Anemll Qwen3-0.6B-ctx512）は CloudKit Public Database
 経由でユーザーに配布される。モデルを差し替えるときは以下の手順で再アップロードする。
 
-本手順は **開発用の Settings 画面ボタン方式**を前提にしている。ターミナル完結の
-アップロードツール（CloudKit Web Services API / Swift CLI）は Issue で追跡中。
+推奨手順は `scripts/cloudkit-models.sh` を使うターミナル完結方式。既存のSettings画面ボタンは
+従来レコードを更新する緊急フォールバックとして残している。
+
+## CLI方式（推奨）
+
+CloudKit DashboardでServer-to-Server Keyを登録し、秘密鍵とKey IDを環境変数で渡す。
+秘密鍵はリポジトリへ置かない。
+
+```bash
+export CLOUDKIT_KEY_ID='<key-id>'
+export CLOUDKIT_PRIVATE_KEY="$HOME/.config/eMeishi/cloudkit-server-key.pem"
+export CLOUDKIT_ENVIRONMENT=development
+
+./scripts/cloudkit-models.sh upload 1.2.0 /path/to/LocalLLM
+./scripts/cloudkit-models.sh promote 1.2.0
+./scripts/cloudkit-models.sh status
+```
+
+- 全ファイルを10MiB以下へ分割し、ファイル・チャンク双方のSHA-256を保存する
+- `.cloudkit-model-upload/`の状態から、成功済みチャンクをスキップして再開する
+- `promote`は現行版をrollback先へ退避してstableを切り替える
+- `rollback`は直前版へ、`rollback <version>`は指定版へ切り替える
+- v2取得失敗時、アプリは従来の固定レコードへ自動フォールバックする
+- 既存`MLModelPackage`フィールドを再利用するため、CloudKit schemaの追加は不要
+
+署名とアセットアップロードはAppleの
+[CloudKit Web Services認証](https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/SettingUpWebServices.html)と
+[assets/upload](https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/UploadAssets.html)に準拠する。
+
+```bash
+./scripts/tests/cloudkit-models-test.sh
+```
+
+## Settings画面方式（従来・緊急用）
 
 ## 前提
 
@@ -77,9 +109,3 @@ LocalLLM/
 | アップロード途中でネットワークエラー | CloudKit save は atomic なので最初からやり直し | 安定した回線で再実行。失敗時の再開は未対応（follow-up 課題） |
 | "保存は成功したが検証失敗" | レコードには書かれたが CloudKit 側が値を受け取っていない | 数分待って再度タップ（レプリケーション遅延の可能性） |
 | ダウンロード側で "weight.bin が破損しています" | 配布中のレコードと SHA256 が不整合 | 再アップロードする。旧レコードを dashboard で消さない（ロールバック用） |
-
-## 今後の改善
-
-このフロー自体の刷新は GitHub Issue でトラッキング:
-- (A) CloudKit Web Services API 経由のシェルスクリプト化
-- (B) Swift 製 CLI ターゲット化

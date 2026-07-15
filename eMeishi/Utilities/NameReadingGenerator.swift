@@ -49,6 +49,15 @@ enum RomajiReadingNormalizer {
 // 読み仮名の自動生成・メールアドレスからの読み推定
 enum NameReadingGenerator {
 
+    private static let latinLetterReadings: [Character: String] = [
+        "a": "えー", "b": "びー", "c": "しー", "d": "でぃー", "e": "いー",
+        "f": "えふ", "g": "じー", "h": "えいち", "i": "あい", "j": "じぇー",
+        "k": "けー", "l": "える", "m": "えむ", "n": "えぬ", "o": "おー",
+        "p": "ぴー", "q": "きゅー", "r": "あーる", "s": "えす", "t": "てぃー",
+        "u": "ゆー", "v": "ぶい", "w": "だぶりゅー", "x": "えっくす",
+        "y": "わい", "z": "ぜっと",
+    ]
+
     /// CFStringTokenizer のラテン転写属性からひらがな読みを生成する
     static func generateReading(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,8 +86,8 @@ enum NameReadingGenerator {
             guard let swiftRange = Range(nsRange, in: trimmed) else { continue }
             let token = String(trimmed[swiftRange])
 
-            // カタカナトークンは直接変換（Latin転写だと ー が母音重複になるため）
-            if token.unicodeScalars.allSatisfy({ (0x30A0...0x30FF).contains($0.value) }) {
+            // かなトークンは直接変換（Latin転写だと「てぃー」が「てぃい」になるため）
+            if token.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) }) {
                 result += katakanaToHiragana(token)
             } else if let latin = CFStringTokenizerCopyCurrentTokenAttribute(
                 tokenizer, kCFStringTokenizerAttributeLatinTranscription
@@ -91,6 +100,76 @@ enum NameReadingGenerator {
             }
         }
         return result
+    }
+
+    /// 会社名用の読みを生成する。単独英字と全大文字略称はアルファベット名称として読む。
+    /// 読みを確定できない英単語が含まれる場合は空文字を返し、手入力を優先する。
+    static func generateCompanyReading(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        var result = ""
+        var latinRun = ""
+        var nonLatinRun = ""
+        var containsUnresolvedLatinWord = false
+
+        func convertedLatin(_ run: String) -> String {
+            guard !run.isEmpty else { return "" }
+            guard isLatinInitialism(run) else { return "" }
+            return spellInitialism(run)
+        }
+
+        for character in text {
+            if isASCIILetter(character) {
+                if !nonLatinRun.isEmpty {
+                    result += generateReading(from: nonLatinRun)
+                    nonLatinRun.removeAll(keepingCapacity: true)
+                }
+                latinRun.append(character)
+            } else {
+                if !latinRun.isEmpty {
+                    let converted = convertedLatin(latinRun)
+                    if converted.isEmpty { containsUnresolvedLatinWord = true }
+                    result += converted
+                    latinRun.removeAll(keepingCapacity: true)
+                }
+                nonLatinRun.append(character)
+            }
+        }
+        if !latinRun.isEmpty {
+            let converted = convertedLatin(latinRun)
+            if converted.isEmpty { containsUnresolvedLatinWord = true }
+            result += converted
+        }
+        if !nonLatinRun.isEmpty {
+            result += generateReading(from: nonLatinRun)
+        }
+
+        guard !containsUnresolvedLatinWord else { return "" }
+        return normalizeCompanyReading(result)
+    }
+
+    private static func normalizeCompanyReading(_ reading: String) -> String {
+        let removable = CharacterSet.whitespacesAndNewlines.union(
+            CharacterSet(charactersIn: "・･-‐‑‒–—―_/.,，．&＆")
+        )
+        return String(reading.unicodeScalars.filter { !removable.contains($0) })
+    }
+
+    private static func isLatinInitialism(_ text: String) -> Bool {
+        guard !text.isEmpty, text.allSatisfy(isASCIILetter) else { return false }
+        return text.count == 1 || text == text.uppercased()
+    }
+
+    private static func spellInitialism(_ text: String) -> String {
+        text.lowercased().compactMap { latinLetterReadings[$0] }.joined()
+    }
+
+    private static func isASCIILetter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else {
+            return false
+        }
+        return (0x41...0x5A).contains(scalar.value) || (0x61...0x7A).contains(scalar.value)
     }
 
     /// カタカナをひらがなに変換する（長音符 ー を保存する）

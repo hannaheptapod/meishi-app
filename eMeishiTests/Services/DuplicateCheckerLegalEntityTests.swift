@@ -162,6 +162,22 @@ struct DuplicateCheckerLegalEntityTests {
         #expect(NameProcessor.generateReading(from: "山田") == "やまだ")
     }
 
+    @Test func generateCompanyReadingUsesAlphabetNamesForInitialisms() {
+        #expect(NameReadingGenerator.generateCompanyReading(from: "T") == "てぃー")
+        #expect(NameReadingGenerator.generateCompanyReading(from: "NTTデータ") == "えぬてぃーてぃーでーた")
+        #expect(
+            BusinessCard.stripLegalEntityReading(
+                from: NameReadingGenerator.generateCompanyReading(from: "株式会社ABC商事")
+            ) == "えーびーしーしょうじ"
+        )
+        #expect(NameReadingGenerator.generateCompanyReading(from: "A・B商事") == "えーびーしょうじ")
+        #expect(NameReadingGenerator.generateCompanyReading(from: "t商事") == "てぃーしょうじ")
+    }
+
+    @Test func generateCompanyReadingDoesNotSpellEnglishWordsLetterByLetter() {
+        #expect(NameReadingGenerator.generateCompanyReading(from: "Apple Japan") == "")
+    }
+
     // MARK: - メール推定改善テスト
 
     @Test func readingsMatchToleratesDoubleVowel() {

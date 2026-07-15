@@ -18,7 +18,7 @@ import CryptoKit
 @MainActor
 enum CloudKitModelUploader {
 
-    private static let database   = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
+    private static let containerIdentifier = "iCloud.com.jinks.emeishi"
     private static let recordID   = CKRecord.ID(recordName: "65526C03-31FB-4EE0-A61D-7C2C91C1C424")
     private static let chunkBytes = 200 * 1024 * 1024  // 200 MB
 
@@ -45,6 +45,11 @@ enum CloudKitModelUploader {
     ]
 
     static func uploadCorrectModels(status: @escaping @Sendable @MainActor (String) -> Void) async {
+        guard SignedCloudKitEntitlementChecker().canCreateContainer(identifier: containerIdentifier) else {
+            status("エラー: この環境ではCloudKitへ接続できません")
+            return
+        }
+        let database = CKContainer(identifier: containerIdentifier).publicCloudDatabase
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let base = docs.appendingPathComponent("LocalLLM")
 
@@ -139,7 +144,11 @@ enum CloudKitModelUploader {
             let keys = weightSources.map { $0.sha256Field } + ["weightChunkCount"]
             let verifyOp = CKFetchRecordsOperation(recordIDs: [recordID])
             verifyOp.desiredKeys = keys
-            let verifyRecord = try await fetch(operation: verifyOp, recordID: recordID)
+            let verifyRecord = try await fetch(
+                operation: verifyOp,
+                recordID: recordID,
+                database: database
+            )
 
             var mismatches: [String] = []
             for src in weightSources {
@@ -184,7 +193,11 @@ enum CloudKitModelUploader {
         return (digest, total)
     }
 
-    private static func fetch(operation: CKFetchRecordsOperation, recordID: CKRecord.ID) async throws -> CKRecord {
+    private static func fetch(
+        operation: CKFetchRecordsOperation,
+        recordID: CKRecord.ID,
+        database: CKDatabase
+    ) async throws -> CKRecord {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
             operation.qualityOfService = .userInitiated
             operation.perRecordResultBlock = { _, result in

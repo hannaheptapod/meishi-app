@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // 名刺詳細画面
 struct CardDetailView: View {
@@ -10,12 +11,40 @@ struct CardDetailView: View {
     @State private var exportItem: ExportItem? = nil
     @State private var alertMessage: String? = nil
     @State private var isShowingAlert = false
+    @State private var isShowingCardImage = false
 
     private let contactsService = ContactsService.shared
     private let exportService   = ExportService.shared
 
     var body: some View {
         List {
+            // ── 名刺画像 ──
+            if let data = card.imageData, let image = UIImage(data: data) {
+                Section {
+                    Button {
+                        isShowingCardImage = true
+                    } label: {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 260)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .bottomTrailing) {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .padding(9)
+                                    .glassEffect(.regular, in: .circle)
+                                    .padding(8)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("名刺画像を全画面表示")
+                    .accessibilityHint("ダブルタップすると画像を拡大表示します")
+                    .accessibilityIdentifier("cardImagePreview")
+                }
+            }
+
             // ── プロフィールヘッダー ──
             Section {
                 HStack(spacing: 14) {
@@ -46,18 +75,6 @@ struct CardDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
-            }
-
-            // ── 名刺画像（高さ上限あり） ──
-            if let data = card.imageData, let image = UIImage(data: data) {
-                Section {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 220)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
             }
 
             // ── 連絡先（電話 + メール） ──
@@ -121,7 +138,7 @@ struct CardDetailView: View {
                         .accessibilityHint("タップして地図アプリで開く")
                     }
                     if let website = card.website, !website.isEmpty {
-                        if let url = URL(string: website) {
+                        if let url = ExternalURLNormalizer.websiteURL(from: website) {
                             Label {
                                 Link(website, destination: url)
                                     .tint(.blue)
@@ -179,7 +196,7 @@ struct CardDetailView: View {
                 }
             }
         }
-        .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
+        .navigationTitle("名刺詳細")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -214,6 +231,13 @@ struct CardDetailView: View {
         }
         .sheet(item: $exportItem) { item in
             ShareSheet(activityItems: [item.url])
+        }
+        .fullScreenCover(isPresented: $isShowingCardImage) {
+            if let data = card.imageData, let image = UIImage(data: data) {
+                FullScreenCardImageView(image: image) {
+                    isShowingCardImage = false
+                }
+            }
         }
         .alert("連絡先", isPresented: $isShowingAlert, presenting: alertMessage) { _ in
             Button("OK", role: .cancel) {}
@@ -251,6 +275,131 @@ struct CardDetailView: View {
         } catch {
             alertMessage = "vCard の生成に失敗しました: \(error.localizedDescription)"
             isShowingAlert = true
+        }
+    }
+}
+
+// MARK: - 名刺画像の全画面表示
+
+private struct FullScreenCardImageView: View {
+    let image: UIImage
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            ZoomableCardImageScrollView(image: image)
+                .ignoresSafeArea()
+                .accessibilityLabel("名刺画像")
+                .accessibilityHint("ピンチ操作で拡大、ダブルタップで拡大と元のサイズを切り替えます")
+                .accessibilityIdentifier("fullScreenCardImage")
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.glass)
+                    .tint(.white)
+                    .accessibilityLabel("閉じる")
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+                Spacer()
+            }
+        }
+        .statusBarHidden()
+    }
+}
+
+/// UIScrollView標準のズームとパンを使い、ピンチ中心と慣性を自然に保つ。
+private struct ZoomableCardImageScrollView: UIViewRepresentable {
+    let image: UIImage
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.decelerationRate = .fast
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.backgroundColor = .clear
+
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.isAccessibilityElement = true
+        imageView.accessibilityLabel = "名刺画像"
+        scrollView.addSubview(imageView)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+
+        context.coordinator.imageView = imageView
+
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.imageView?.image = image
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var imageView: UIImageView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView = recognizer.view as? UIScrollView,
+                  let imageView else { return }
+
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+
+            let targetScale = min(2.5, scrollView.maximumZoomScale)
+            let point = recognizer.location(in: imageView)
+            let targetSize = CGSize(
+                width: scrollView.bounds.width / targetScale,
+                height: scrollView.bounds.height / targetScale
+            )
+            let targetRect = CGRect(
+                x: point.x - targetSize.width / 2,
+                y: point.y - targetSize.height / 2,
+                width: targetSize.width,
+                height: targetSize.height
+            )
+            scrollView.zoom(to: targetRect, animated: true)
         }
     }
 }

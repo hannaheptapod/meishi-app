@@ -22,6 +22,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.jinks.emeishi.ocr.*</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
@@ -35,7 +39,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>アプリのロック解除に使用します。生体認証データは OS 内で処理され、本アプリには認証結果（成功・失敗）のみが渡されます。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>名刺画像を写真ライブラリに保存・共有するために使用します。画像が外部サーバーへ送信されることはありません。</string>
+	<string>写真ライブラリから名刺画像を選択して、端末内で読み取り・保存するために使用します。画像が外部サーバーへ送信されることはありません。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -45,6 +49,7 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>processing</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
