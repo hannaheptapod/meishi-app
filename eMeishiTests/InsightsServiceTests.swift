@@ -13,6 +13,9 @@ private func makeCard(
     department: String? = nil,
     title: String? = nil,
     address: String? = nil,
+    email: String? = nil,
+    phone: String? = nil,
+    isFavorite: Bool = false,
     createdAt: Date = Date()
 ) -> BusinessCard {
     let card = BusinessCard(context: context)
@@ -22,9 +25,44 @@ private func makeCard(
     card.department = department
     card.title = title
     card.address = address
+    card.email = email
+    card.phone = phone
+    card.isFavorite = isFavorite
     card.createdAt = createdAt
     card.updatedAt = createdAt
     return card
+}
+
+// MARK: - 整理アクション
+
+@MainActor
+struct InsightsServiceActionCountTests {
+
+    @Test func countsCardsThatNeedOrganization() throws {
+        let context = makeTestContext()
+        let oldDate = try #require(Calendar.current.date(byAdding: .day, value: -60, to: Date()))
+
+        let organized = makeCard(
+            context: context,
+            email: "known@example.com",
+            phone: "03-1234-5678",
+            isFavorite: true,
+            createdAt: oldDate
+        )
+        let tag = eMeishi.Tag(context: context)
+        tag.id = UUID()
+        tag.name = "整理済み"
+        organized.addToTags(tag)
+
+        _ = makeCard(context: context, createdAt: Date())
+        try context.save()
+
+        let insights = InsightsService.shared.generateInsights(context: context)
+        #expect(insights.untaggedCount == 1)
+        #expect(insights.missingContactCount == 1)
+        #expect(insights.recentCount == 1)
+        #expect(insights.favoriteCount == 1)
+    }
 }
 
 // MARK: - 総件数

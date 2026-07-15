@@ -23,6 +23,10 @@ class InsightsService {
         var totalCards: Int = 0
         var currentMonthCount: Int = 0
         var previousMonthCount: Int = 0
+        var untaggedCount: Int = 0
+        var missingContactCount: Int = 0
+        var recentCount: Int = 0
+        var favoriteCount: Int = 0
 
         var previousMonthDelta: Int {
             currentMonthCount - previousMonthCount
@@ -56,6 +60,13 @@ class InsightsService {
         insights.areaGroups = groupByArea(cards)
         insights.roleCategoryGroups = groupByRoleCategory(cards)
         insights.monthlyTrend = groupByMonth(cards)
+        insights.untaggedCount = cards.filter { $0.tagArray.isEmpty }.count
+        insights.missingContactCount = cards.filter {
+            $0.phoneList.isEmpty && ($0.email?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        }.count
+        let recentCutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
+        insights.recentCount = cards.filter { ($0.createdAt ?? .distantPast) >= recentCutoff }.count
+        insights.favoriteCount = cards.filter(\.isFavorite).count
         let calendar = Calendar.current
         let now = Date()
         let currentMonth = Self.yearMonthFormatter.string(from: now)
@@ -78,6 +89,19 @@ class InsightsService {
         case .month(let yearMonth):
             guard let createdAt = card.createdAt else { return false }
             return Self.yearMonthFormatter.string(from: createdAt) == yearMonth
+        case .untagged:
+            return card.tagArray.isEmpty
+        case .missingContact:
+            let hasEmail = !(card.email?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            return card.phoneList.isEmpty && !hasEmail
+        case .recent(let days):
+            guard let createdAt = card.createdAt,
+                  let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else {
+                return false
+            }
+            return createdAt >= cutoff
+        case .favorite:
+            return card.isFavorite
         }
     }
 

@@ -23,11 +23,24 @@ struct InformationRow: View {
     let title: String
     let value: String
     let systemImage: String
-    var actionSystemImage: String?
     var actionLabel: String?
     var action: (() -> Void)?
 
     var body: some View {
+        Group {
+            if let action {
+                Button(action: action) {
+                    rowContent
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(actionLabel ?? "\(title): \(value)")
+            } else {
+                rowContent
+            }
+        }
+    }
+
+    private var rowContent: some View {
         HStack(spacing: AppTheme.Spacing.medium) {
             Image(systemName: systemImage)
                 .frame(width: 24)
@@ -44,17 +57,9 @@ struct InformationRow: View {
             }
 
             Spacer(minLength: AppTheme.Spacing.small)
-
-            if let action, let actionSystemImage, let actionLabel {
-                Button(action: action) {
-                    Image(systemName: actionSystemImage)
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(actionLabel)
-            }
         }
         .padding(.vertical, AppTheme.Spacing.small)
+        .contentShape(Rectangle())
     }
 }
 

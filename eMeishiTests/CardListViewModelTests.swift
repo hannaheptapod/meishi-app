@@ -267,6 +267,38 @@ struct CardListViewModelFilterTests {
         vm.externalFilter = .area("東京都渋谷区")
         #expect(vm.filteredCards.map(\.lastName) == ["山田"])
     }
+
+    @Test func organizationFiltersMatchActionDashboard() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "整理済み")
+        let oldDate = try #require(Calendar.current.date(byAdding: .day, value: -60, to: Date()))
+
+        let organized = makeCard(
+            context: context,
+            lastName: "整理済",
+            email: "known@example.com",
+            phone: "03-1234-5678",
+            isFavorite: true,
+            createdAt: oldDate
+        )
+        organized.addToTags(tag)
+        _ = makeCard(context: context, lastName: "未整理", createdAt: Date())
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+
+        vm.externalFilter = .untagged
+        #expect(vm.filteredCards.map(\.lastName) == ["未整理"])
+
+        vm.externalFilter = .missingContact
+        #expect(vm.filteredCards.map(\.lastName) == ["未整理"])
+
+        vm.externalFilter = .favorite
+        #expect(vm.filteredCards.map(\.lastName) == ["整理済"])
+
+        vm.externalFilter = .recent(days: 30)
+        #expect(vm.filteredCards.map(\.lastName) == ["未整理"])
+    }
 }
 
 // MARK: - ソート

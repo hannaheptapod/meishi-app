@@ -8,9 +8,6 @@ struct InsightsView: View {
     @State private var isGeneratingNarrative = false
     @State private var narrativeError: String?
     @State private var isShowingPaywall = false
-    @State private var selectedMonth: String?
-    @State private var selectedCompany: String?
-    @State private var selectedRole: String?
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @EnvironmentObject private var navigationState: AppNavigationState
@@ -22,6 +19,9 @@ struct InsightsView: View {
                 LazyVStack(spacing: AppTheme.Spacing.large) {
                     summarySection(insights)
                         .id("summary")
+
+                    organizeSection(insights)
+                        .id("organize")
 
                     if !insights.monthlyTrend.isEmpty {
                         monthlySection(insights)
@@ -64,21 +64,6 @@ struct InsightsView: View {
             guard insights == nil else { return }
             insights = InsightsService.shared.generateInsights(context: managedObjectContext)
         }
-        .onChange(of: selectedMonth) { _, value in
-            guard let value else { return }
-            navigationState.showCards(filteredBy: .month(value))
-            selectedMonth = nil
-        }
-        .onChange(of: selectedCompany) { _, value in
-            guard let value else { return }
-            navigationState.showCards(filteredBy: .company(value))
-            selectedCompany = nil
-        }
-        .onChange(of: selectedRole) { _, value in
-            guard let value else { return }
-            navigationState.showCards(filteredBy: .role(value))
-            selectedRole = nil
-        }
         .sheet(isPresented: $isShowingPaywall) {
             PaywallView(context: .insightsNarrative)
                 .environmentObject(entitlementStore)
@@ -99,6 +84,39 @@ struct InsightsView: View {
         }
     }
 
+    private func organizeSection(_ insights: InsightsService.Insights) -> some View {
+        insightCard(title: "次に整理する名刺") {
+            Text("集計を見るだけでなく、整理が必要な名刺へ直接移動できます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            organizeAction(
+                title: "タグが付いていない",
+                count: insights.untaggedCount,
+                systemImage: "tag.slash",
+                filter: .untagged
+            )
+            organizeAction(
+                title: "電話・メールがない",
+                count: insights.missingContactCount,
+                systemImage: "person.crop.circle.badge.exclamationmark",
+                filter: .missingContact
+            )
+            organizeAction(
+                title: "30日以内に追加",
+                count: insights.recentCount,
+                systemImage: "clock",
+                filter: .recent(days: 30)
+            )
+            organizeAction(
+                title: "お気に入り",
+                count: insights.favoriteCount,
+                systemImage: "star",
+                filter: .favorite
+            )
+        }
+    }
+
     private func monthlySection(_ insights: InsightsService.Insights) -> some View {
         insightCard(title: "月別推移") {
             Chart(Array(insights.monthlyTrend.prefix(12).reversed())) { month in
@@ -114,7 +132,6 @@ struct InsightsView: View {
                 )
                 .foregroundStyle(AppTheme.monthlyBlue)
             }
-            .chartXSelection(value: $selectedMonth)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 6)) { value in
                     AxisGridLine()
@@ -126,9 +143,17 @@ struct InsightsView: View {
                 }
             }
             .frame(height: 220)
-            Text("グラフ上の月を選ぶと、その月の名刺へ移動します")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            Divider()
+
+            ForEach(Array(insights.monthlyTrend.prefix(6))) { month in
+                destinationRow(
+                    title: month.label,
+                    countText: "\(month.count)枚を見る"
+                ) {
+                    navigationState.showCards(filteredBy: .month(month.yearMonth))
+                }
+            }
         }
     }
 
@@ -143,31 +168,24 @@ struct InsightsView: View {
                 .foregroundStyle(AppTheme.companyBlueGray)
                 .cornerRadius(4)
             }
-            .chartYSelection(value: $selectedCompany)
             .frame(height: CGFloat(max(180, groups.count * 34)))
-            Text("会社名を選ぶと該当する名刺へ移動します")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            Divider()
+
+            ForEach(Array(groups.prefix(5))) { group in
+                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
+                    navigationState.showCards(filteredBy: .company(group.label))
+                }
+            }
         }
     }
 
     private func areaSection(_ insights: InsightsService.Insights) -> some View {
         insightCard(title: "エリア別") {
             ForEach(Array(insights.areaGroups.prefix(10))) { group in
-                Button {
+                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
                     navigationState.showCards(filteredBy: .area(group.label))
-                } label: {
-                    HStack {
-                        Text(group.label)
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text("\(group.count)人")
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, AppTheme.Spacing.xSmall)
             }
         }
     }
@@ -187,12 +205,65 @@ struct InsightsView: View {
             }
             .chartForegroundStyleScale(domain: domain, range: range)
             .chartLegend(.hidden)
-            .chartYSelection(value: $selectedRole)
             .frame(height: CGFloat(max(180, groups.count * 34)))
-            Text("職種を選ぶと該当する名刺へ移動します")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            Divider()
+
+            ForEach(Array(groups.prefix(5))) { group in
+                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
+                    navigationState.showCards(filteredBy: .role(group.label))
+                }
+            }
         }
+    }
+
+    private func organizeAction(
+        title: String,
+        count: Int,
+        systemImage: String,
+        filter: CardListExternalFilter
+    ) -> some View {
+        Button {
+            navigationState.showCards(filteredBy: filter)
+        } label: {
+            HStack(spacing: AppTheme.Spacing.medium) {
+                Image(systemName: systemImage)
+                    .frame(width: 24)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text("\(count)件を見る")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(count == 0)
+        .accessibilityIdentifier("insightAction_\(systemImage)")
+    }
+
+    private func destinationRow(
+        title: String,
+        countText: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Text(countText)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

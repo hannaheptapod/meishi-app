@@ -7,6 +7,7 @@ struct CardDetailView: View {
     @ObservedObject var card: BusinessCard
 
     @EnvironmentObject private var listViewModel: CardListViewModel
+    @EnvironmentObject private var navigationState: AppNavigationState
     @Environment(\.openURL) private var openURL
     @State private var isShowingEditForm = false
     @State private var exportItem: ExportItem? = nil
@@ -20,28 +21,27 @@ struct CardDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xLarge) {
-                ContentSurface {
-                    CardImageHero(
-                        imageData: card.imageData,
-                        initials: initials,
-                        maximumHeight: 360,
-                        onTap: card.imageData == nil ? nil : { isShowingCardImage = true }
-                    )
-                    .overlay(alignment: .bottomTrailing) {
-                        if card.imageData != nil {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.footnote.weight(.semibold))
-                                .padding(9)
-                                .glassEffect(.regular, in: .circle)
-                                .padding(8)
-                                .accessibilityHidden(true)
-                        }
+                CardImageHero(
+                    imageData: card.imageData,
+                    initials: initials,
+                    maximumHeight: 420,
+                    onTap: card.imageData == nil ? nil : { isShowingCardImage = true }
+                )
+                .overlay(alignment: .bottomTrailing) {
+                    if card.imageData != nil {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.footnote.weight(.semibold))
+                            .padding(9)
+                            .glassEffect(.regular, in: .circle)
+                            .padding(8)
+                            .accessibilityHidden(true)
                     }
-                    .accessibilityLabel(card.imageData == nil ? "名刺画像なし" : "名刺画像を全画面表示")
-                    .accessibilityIdentifier("cardImagePreview")
                 }
+                .accessibilityLabel(card.imageData == nil ? "名刺画像なし" : "名刺画像を全画面表示")
+                .accessibilityIdentifier("cardImagePreview")
 
                 profileSection
+                detailActions
 
                 if !card.phoneList.isEmpty || !(card.email ?? "").isEmpty {
                     titledSurface("連絡先") {
@@ -50,7 +50,6 @@ struct CardDetailView: View {
                                 title: "電話",
                                 value: phone,
                                 systemImage: "phone",
-                                actionSystemImage: "phone.arrow.up.right",
                                 actionLabel: "\(phone)へ電話",
                                 action: telephoneAction(phone)
                             )
@@ -60,7 +59,6 @@ struct CardDetailView: View {
                                 title: "メール",
                                 value: email,
                                 systemImage: "envelope",
-                                actionSystemImage: "paperplane",
                                 actionLabel: "\(email)へメール",
                                 action: urlAction(URL(string: "mailto:\(email)"))
                             )
@@ -75,7 +73,6 @@ struct CardDetailView: View {
                                 title: "住所",
                                 value: address,
                                 systemImage: "mappin.and.ellipse",
-                                actionSystemImage: "map",
                                 actionLabel: "地図で開く",
                                 action: mapAction(address)
                             )
@@ -85,7 +82,6 @@ struct CardDetailView: View {
                                 title: "Webサイト",
                                 value: website,
                                 systemImage: "globe",
-                                actionSystemImage: "safari",
                                 actionLabel: "ブラウザで開く",
                                 action: urlAction(ExternalURLNormalizer.websiteURL(from: website))
                             )
@@ -142,21 +138,9 @@ struct CardDetailView: View {
                     Button("編集") { isShowingEditForm = true }
                 }
             }
-            // アクションを底部ツールバーに配置
-            ToolbarItemGroup(placement: .bottomBar) {
-                Button {
-                    Task { await exportToContacts() }
-                } label: {
-                    Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
-                }
-                Spacer()
-                Button {
-                    shareVCard()
-                } label: {
-                    Label("vCard として共有", systemImage: "square.and.arrow.up")
-                }
-            }
         }
+        .onAppear { navigationState.isRootBarHidden = true }
+        .onDisappear { navigationState.isRootBarHidden = false }
         .sheet(isPresented: $isShowingEditForm, onDismiss: listViewModel.fetchCards) {
             CardFormView(card: card, onSave: { isShowingEditForm = false })
         }
@@ -178,30 +162,49 @@ struct CardDetailView: View {
     }
 
     private var profileSection: some View {
-        ContentSurface {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
-                if !card.fullNameReading.isEmpty {
-                    Text(card.fullNameReading)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                    .font(.title2.weight(.bold))
-                if let company = card.company, !company.isEmpty {
-                    Text(company)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-                let departmentAndTitle = [card.department, card.title]
-                    .compactMap { $0 }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-                if !departmentAndTitle.isEmpty {
-                    Text(departmentAndTitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
+            if !card.fullNameReading.isEmpty {
+                Text(card.fullNameReading)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
+            Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                .font(.largeTitle.weight(.bold))
+            if let company = card.company, !company.isEmpty {
+                Text(company)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            let departmentAndTitle = [card.department, card.title]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+            if !departmentAndTitle.isEmpty {
+                Text(departmentAndTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.xSmall)
+    }
+
+    private var detailActions: some View {
+        HStack(spacing: AppTheme.Spacing.medium) {
+            Button {
+                Task { await exportToContacts() }
+            } label: {
+                Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.glass)
+
+            Button {
+                shareVCard()
+            } label: {
+                Label("共有", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.glass)
         }
     }
 

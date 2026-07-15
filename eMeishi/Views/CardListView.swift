@@ -273,10 +273,14 @@ struct CardListView: View {
             .onAppear {
                 viewModel.fetchCards()
                 viewModel.externalFilter = navigationState.externalFilter
+                presentRequestedAddSheetIfNeeded()
                 handleScreenshotMode()
             }
             .onChange(of: navigationState.externalFilter) { _, filter in
                 viewModel.externalFilter = filter
+            }
+            .onChange(of: navigationState.isCardAdditionRequested) { _, requested in
+                if requested { presentRequestedAddSheetIfNeeded() }
             }
             .task {
                 await loadPendingOCR()
@@ -305,6 +309,12 @@ struct CardListView: View {
         } else {
             isShowingPaywall = true
         }
+    }
+
+    private func presentRequestedAddSheetIfNeeded() {
+        guard navigationState.isCardAdditionRequested else { return }
+        isShowingAddSheet = true
+        navigationState.consumeCardAdditionRequest()
     }
 
     private var shouldShowAISearchPrompt: Bool {
@@ -340,18 +350,6 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var normalToolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                isShowingAddSheet = true
-            } label: {
-                Label("名刺を追加", systemImage: "plus")
-            }
-            .disabled(isImportingPhotos)
-            .accessibilityIdentifier("addButton")
-        }
-
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-
         ToolbarItem(placement: .topBarTrailing) {
             if !viewModel.cards.isEmpty {
                 Button("選択") {
@@ -545,12 +543,11 @@ struct CardListView: View {
             .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(screenBackground)
-            .scrollEdgeEffectHidden(true, for: .vertical)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
-            .safeAreaInset(edge: .top) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 if editMode == .inactive {
-                    filterSortBar
+                    filterControlBar
                 }
             }
             .overlay(alignment: .trailing) {
@@ -643,6 +640,36 @@ struct CardListView: View {
 
     // MARK: - フィルター・ソート統合バー
 
+    private var filterControlBar: some View {
+        VStack(spacing: 0) {
+            if let externalFilter = viewModel.externalFilter {
+                HStack(spacing: AppTheme.Spacing.small) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(AppTheme.brandOrange)
+                    Text("絞り込み中：\(externalFilter.displayTitle)")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: AppTheme.Spacing.small)
+                    Button {
+                        haptic.impactOccurred()
+                        navigationState.externalFilter = nil
+                        viewModel.clearExternalFilter()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("絞り込みを解除")
+                }
+                .padding(.horizontal, AppTheme.Spacing.large)
+                .frame(minHeight: 40)
+                .accessibilityIdentifier("activeExternalFilter")
+            }
+            filterSortBar
+        }
+        .background(.regularMaterial)
+    }
+
     private var filterSortBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -659,7 +686,7 @@ struct CardListView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 32)
-                    .background(AppTheme.brandOrange.opacity(0.14), in: .capsule)
+                    .background(AppTheme.auxiliarySurface, in: .capsule)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sortButton")
@@ -765,25 +792,6 @@ struct CardListView: View {
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
 
-                if let externalFilter = viewModel.externalFilter {
-                    Button {
-                        haptic.impactOccurred()
-                        navigationState.externalFilter = nil
-                        viewModel.clearExternalFilter()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Text(externalFilter.displayTitle)
-                                .font(.footnote)
-                            Image(systemName: "xmark")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 32)
-                        .background(AppTheme.brandOrange.opacity(0.14), in: .capsule)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("外部フィルターを解除: \(externalFilter.displayTitle)")
-                }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -831,8 +839,7 @@ struct CardListView: View {
             .contextMenu {
                 cardContextMenu(for: card)
             } preview: {
-                CardDetailView(card: card)
-                    .environmentObject(viewModel)
+                CardPeekView(card: card)
                     .onAppear {
                         isContextMenuPresented = true
                     }
@@ -978,7 +985,6 @@ private struct AddCardSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(AppTheme.Spacing.large)
-            .background(AppTheme.background.ignoresSafeArea())
             .navigationTitle("名刺を追加")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -992,25 +998,27 @@ private struct AddCardSheet: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            ContentSurface {
-                HStack(spacing: AppTheme.Spacing.medium) {
-                    Image(systemName: systemImage)
-                        .font(.title3)
-                        .foregroundStyle(AppTheme.brandOrange)
-                        .frame(width: 32)
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
-                        Text(title)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: AppTheme.Spacing.medium) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .foregroundStyle(.primary)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 0)
             }
+            .padding(AppTheme.Spacing.large)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+            .contentShape(.rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glass)
+        .accessibilityLabel(title)
     }
 }
 
@@ -1070,7 +1078,7 @@ private struct SearchBarSparklesInjector: UIViewRepresentable {
         let btn = UIButton(type: .system)
         let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         btn.setImage(UIImage(systemName: "sparkles", withConfiguration: cfg), for: .normal)
-        btn.tintColor = UIColor.tintColor
+        btn.tintColor = UIColor(AppTheme.brandOrange)
         btn.tag = 8888
         btn.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
         btn.addTarget(coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)

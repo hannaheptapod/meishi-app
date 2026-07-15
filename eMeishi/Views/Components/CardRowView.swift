@@ -64,8 +64,9 @@ struct CardRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, AppTheme.Spacing.large)
         .padding(.vertical, AppTheme.Spacing.medium)
-        .background(
-            AppTheme.contentSurface,
+        .background(AppTheme.contentSurface.opacity(0.55))
+        .glassEffect(
+            .regular.interactive(),
             in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
         )
         .contentShape(RoundedRectangle(cornerRadius: AppTheme.contentCornerRadius, style: .continuous))

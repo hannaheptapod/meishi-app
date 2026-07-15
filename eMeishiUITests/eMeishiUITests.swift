@@ -115,31 +115,41 @@ final class EMeishiUITests: XCTestCase {
         // 追加ボタン
         let addButton = app.buttons["addButton"]
         XCTAssertTrue(addButton.exists)
+        XCTAssertLessThan(abs(addButton.frame.midX - app.frame.midX), 3, "追加ボタンは画面中央に配置する")
 
         // 3点メニュー
         let ellipsisMenu = app.buttons["ellipsisMenu"]
         XCTAssertTrue(ellipsisMenu.exists)
 
-        XCTAssertTrue(app.tabBars.buttons["名刺"].exists)
-        XCTAssertTrue(app.tabBars.buttons["インサイト"].exists)
-        XCTAssertTrue(app.tabBars.buttons["設定"].exists)
+        XCTAssertTrue(app.buttons["appTab_一覧"].exists)
+        XCTAssertTrue(app.buttons["appTab_めくる"].exists)
+        XCTAssertTrue(app.buttons["appTab_インサイト"].exists)
+        XCTAssertTrue(app.buttons["appTab_設定"].exists)
     }
 
     @MainActor
-    func testTabSwitchPreservesCardNavigationStack() throws {
+    func testCenterAddOpensAdditionChoices() throws {
+        let addButton = app.buttons["addButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
+        addButton.tap()
+
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(app.buttons["カメラで撮影"].exists)
+        XCTAssertTrue(app.buttons["写真から読み込む"].exists)
+        XCTAssertTrue(app.buttons["手動で入力"].exists)
+    }
+
+    @MainActor
+    func testBrowseTabAndDetailRootBarVisibility() throws {
+        app.buttons["appTab_めくる"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["めくる"].waitForExistence(timeout: Self.shortTimeout))
+
+        app.buttons["appTab_一覧"].tap()
         let card = cardRow("山田 太郎")
         XCTAssertTrue(card.waitForExistence(timeout: Self.defaultTimeout))
         card.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
-
-        app.tabBars.buttons["インサイト"].tap()
-        XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
-
-        app.tabBars.buttons["名刺"].tap()
-        XCTAssertTrue(
-            app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout),
-            "名刺タブへ戻ったときに詳細階層を維持する"
-        )
+        XCTAssertFalse(app.buttons["appTab_インサイト"].exists, "詳細ではルートナビゲーションを表示しない")
     }
 
     // MARK: - 選択モード
@@ -440,7 +450,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testInsightsSurvivesContinuousScrolling() throws {
-        let insights = app.tabBars.buttons["インサイト"]
+        let insights = app.buttons["appTab_インサイト"]
         XCTAssertTrue(insights.waitForExistence(timeout: Self.shortTimeout))
         insights.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
@@ -452,5 +462,19 @@ final class EMeishiUITests: XCTestCase {
 
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].exists)
+    }
+
+    @MainActor
+    func testInsightActionShowsFilterAtTopOfCardList() throws {
+        app.buttons["appTab_インサイト"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
+
+        let recentAction = app.buttons["insightAction_clock"]
+        XCTAssertTrue(recentAction.waitForExistence(timeout: Self.shortTimeout))
+        recentAction.tap()
+
+        let activeFilter = app.descendants(matching: .any)["activeExternalFilter"]
+        XCTAssertTrue(activeFilter.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '30日以内'")).firstMatch.exists)
     }
 }

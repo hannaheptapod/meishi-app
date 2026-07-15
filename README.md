@@ -72,16 +72,17 @@ meishi-app/
 │   │   ├── eMeishiApp.swift
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
-│   │   ├── AppNavigationState.swift              # 3タブのNavigationPath・外部フィルター遷移状態
+│   │   ├── AppNavigationState.swift              # 一覧・めくる・インサイト・設定のNavigationPathと中央追加要求
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
 │   │   ├── Tag+CoreDataClass.swift
 │   │   ├── Tag+CoreDataProperties.swift
 │   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
 │   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
-│   ├── ContentView.swift                        # 名刺・インサイト・設定の3タブルートと共有ViewModel
+│   ├── ContentView.swift                        # 4画面＋中央追加のLiquid Glassルートシェル
 │   ├── Views/
 │   │   ├── CardListView.swift
+│   │   ├── CardBrowseView.swift                # 名刺画像を左右にめくるリッチ閲覧モード
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
 │   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
@@ -103,6 +104,7 @@ meishi-app/
 │   │       ├── CardRowView.swift               # 一覧行セル
 │   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
 │   │       ├── DesignSystemComponents.swift    # 共通サーフェス・情報行・画像・OCR進捗・メトリクス
+│   │       ├── CardPeekView.swift              # コンテキストメニュー専用の読み取り専用プレビュー
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
