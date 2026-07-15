@@ -9,8 +9,6 @@ struct SettingsView: View {
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @ObservedObject private var settings = SettingsStore.shared
 
-    @Environment(\.dismiss) private var dismiss
-
     @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
 
     @State private var showDeleteAllConfirm = false
@@ -26,56 +24,47 @@ struct SettingsView: View {
 #endif
 
     var body: some View {
-        NavigationStack {
-            List {
-                proSection
-                iCloudSection
-                securitySection
-                advancedLinkSection
-                dataSection
+        List {
+            proSection
+            iCloudSection
+            securitySection
+            advancedLinkSection
+            dataSection
 #if DEBUG
-                debugSection
+            debugSection
 #endif
-                appInfoSection
-            }
-            .navigationTitle("設定")
-            .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-                Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
-            } message: {
-                Text("この操作は取り消せません。")
-            }
+            appInfoSection
+        }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle("設定")
+        .navigationBarTitleDisplayMode(.large)
+        .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
+            Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
+        } message: {
+            Text("この操作は取り消せません。")
+        }
 #if DEBUG
-            .confirmationDialog("サンプル名刺を50件追加しますか？", isPresented: $showSeedConfirm, titleVisibility: .visible) {
-                Button("挿入") { listViewModel.seedSampleData() }
-            } message: {
-                Text("既存のデータは削除されません。")
-            }
+        .confirmationDialog("サンプル名刺を50件追加しますか？", isPresented: $showSeedConfirm, titleVisibility: .visible) {
+            Button("挿入") { listViewModel.seedSampleData() }
+        } message: {
+            Text("既存のデータは削除されません。")
+        }
 #endif
-            .sheet(isPresented: $isShowingPaywall) {
-                PaywallView(context: .aiSearch)
-                    .environmentObject(entitlementStore)
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                }
-            }
-            .alert(
-                "購入の復元",
-                isPresented: Binding(
-                    get: { purchaseRestoreMessage != nil },
-                    set: { if !$0 { purchaseRestoreMessage = nil } }
-                )
-            ) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(purchaseRestoreMessage ?? "")
-            }
+        .sheet(isPresented: $isShowingPaywall) {
+            PaywallView(context: .aiSearch)
+                .environmentObject(entitlementStore)
+        }
+        .alert(
+            "購入の復元",
+            isPresented: Binding(
+                get: { purchaseRestoreMessage != nil },
+                set: { if !$0 { purchaseRestoreMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(purchaseRestoreMessage ?? "")
         }
     }
 
@@ -392,7 +381,16 @@ private struct AdvancedSettingsView: View {
                     }
                 }
 
-                aiAssistRow
+                NavigationLink {
+                    ModelManagementView(modelError: $modelError)
+                } label: {
+                    HStack {
+                        Label("AIモデル管理", systemImage: "externaldrive.badge.sparkles")
+                        Spacer()
+                        Text(llm.isModelAvailable ? "利用可能" : (llm.isDownloading ? "取得中" : "未取得"))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 if let err = modelError {
                     Text(err).font(.caption).foregroundStyle(.red)
@@ -609,6 +607,94 @@ private struct AdvancedSettingsView: View {
         case ..<0.65: return "低"
         case ..<0.80: return "中"
         default:      return "高"
+        }
+    }
+}
+
+private struct ModelManagementView: View {
+    @ObservedObject private var llm = LocalLLMService.shared
+    @ObservedObject private var settings = SettingsStore.shared
+    @Binding var modelError: String?
+    @State private var isShowingDeleteConfirm = false
+
+    var body: some View {
+        List {
+            Section("利用状態") {
+                LabeledContent("状態", value: statusText)
+                LabeledContent("ダウンロード容量", value: "約570MB")
+                if llm.isModelAvailable {
+                    Button("このモデルを使用") {
+                        settings.readingMethod = .localLLM
+                    }
+                    .disabled(settings.readingMethod == .localLLM)
+                }
+            }
+
+            Section("更新状態") {
+                if llm.isDownloading {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ProgressView(value: llm.downloadProgress)
+                        Text(llm.downloadProgress, format: .percent.precision(.fractionLength(0)))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } else if !llm.isModelAvailable {
+                    Button {
+                        Task { await downloadModel() }
+                    } label: {
+                        Label("モデルをダウンロード", systemImage: "arrow.down.circle")
+                    }
+                } else {
+                    Label("モデルは利用可能です", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+
+                if let modelError {
+                    InlineErrorView(message: modelError) {
+                        Task { await downloadModel() }
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
+            }
+
+            if llm.isModelAvailable {
+                Section {
+                    Button("モデルを削除", role: .destructive) {
+                        isShowingDeleteConfirm = true
+                    }
+                } footer: {
+                    Text("削除後も、必要なときに再ダウンロードできます。")
+                }
+            }
+        }
+        .navigationTitle("AIモデル")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("AIモデルを削除しますか？", isPresented: $isShowingDeleteConfirm) {
+            Button("削除", role: .destructive) {
+                Task {
+                    do {
+                        try await llm.deleteModel()
+                    } catch {
+                        modelError = error.localizedDescription
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusText: String {
+        if llm.isDownloading { return "ダウンロード中" }
+        if llm.isModelAvailable { return "利用可能" }
+        return "未取得"
+    }
+
+    private func downloadModel() async {
+        modelError = nil
+        do {
+            try await llm.downloadModel()
+        } catch {
+            modelError = error.localizedDescription
         }
     }
 }

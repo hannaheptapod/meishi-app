@@ -133,6 +133,11 @@ struct DuplicateMergeView: View {
 
     private func fieldRows(cardA: BusinessCard, cardB: BusinessCard) -> some View {
         Group {
+            Section {
+                Text("異なる項目だけを先に表示しています。残したい値を選んでください。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             mergeRow(label: "名前",   aVal: cardA.fullName,   bVal: cardB.fullName,   binding: $selections.name)
             mergeRow(label: "会社名", aVal: cardA.company,    bVal: cardB.company,    binding: $selections.company)
             mergeRow(label: "部署",   aVal: cardA.department, bVal: cardB.department, binding: $selections.department)
@@ -147,6 +152,33 @@ struct DuplicateMergeView: View {
             mergeRow(label: "住所",   aVal: cardA.address, bVal: cardB.address, binding: $selections.address)
             mergeRow(label: "Web",    aVal: cardA.website, bVal: cardB.website, binding: $selections.website)
             mergeRow(label: "メモ",   aVal: cardA.notes,   bVal: cardB.notes,   binding: $selections.notes)
+
+            Section("統合後プレビュー") {
+                previewRow("名前", value: selectedValue(cardA.fullName, cardB.fullName, side: selections.name))
+                previewRow("会社名", value: selectedValue(cardA.company, cardB.company, side: selections.company))
+                previewRow("電話", value: selectedValue(
+                    cardA.phoneList.joined(separator: "、"),
+                    cardB.phoneList.joined(separator: "、"),
+                    side: selections.phone
+                ))
+                previewRow("メール", value: selectedValue(cardA.email, cardB.email, side: selections.email))
+            }
+
+            Section("削除対象") {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(cardB.fullName.isEmpty ? "（名前なし）" : cardB.fullName)
+                        if let company = cardB.company, !company.isEmpty {
+                            Text(company)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
+            }
         }
     }
 
@@ -154,7 +186,7 @@ struct DuplicateMergeView: View {
     private func mergeRow(label: String, aVal: String?, bVal: String?, binding: Binding<Side>) -> some View {
         let a = aVal ?? ""
         let b = bVal ?? ""
-        if !a.isEmpty || !b.isEmpty {
+        if (!a.isEmpty || !b.isEmpty) && a != b {
             Section(label) {
                 optionRow(value: a, side: .a, selected: binding.wrappedValue == .a) {
                     binding.wrappedValue = .a
@@ -164,6 +196,14 @@ struct DuplicateMergeView: View {
                 }
             }
         }
+    }
+
+    private func selectedValue(_ a: String?, _ b: String?, side: Side) -> String {
+        side == .a ? (a ?? "") : (b ?? "")
+    }
+
+    private func previewRow(_ label: String, value: String) -> some View {
+        LabeledContent(label, value: value.isEmpty ? "（なし）" : value)
     }
 
     @ViewBuilder

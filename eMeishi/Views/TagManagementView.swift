@@ -6,8 +6,7 @@ struct TagManagementView: View {
     @EnvironmentObject private var viewModel: CardListViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var newTagName: String = ""
-    @State private var selectedColor: String = "#007AFF"
+    @State private var isShowingCreateSheet = false
     @State private var isShowingDeleteConfirm = false
     @State private var tagToDelete: Tag? = nil
     @State private var tagToEdit: Tag? = nil
@@ -27,25 +26,6 @@ struct TagManagementView: View {
     var body: some View {
         NavigationStack {
             List {
-                // 新規タグ作成
-                Section("タグを追加") {
-                    TextField("タグ名", text: $newTagName)
-                        .autocorrectionDisabled()
-
-                    // カラー選択
-                    colorPicker(selected: $selectedColor)
-
-                    Button {
-                        let name = newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !name.isEmpty else { return }
-                        viewModel.createTag(name: name, colorHex: selectedColor)
-                        newTagName = ""
-                    } label: {
-                        Label("追加", systemImage: "plus")
-                    }
-                    .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
                 // 既存タグ一覧
                 if !viewModel.allTags.isEmpty {
                     Section("タグ一覧") {
@@ -63,9 +43,6 @@ struct TagManagementView: View {
                                     Text("\(tag.cardArray.count)件")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
                                 }
                             }
                             .accessibilityElement(children: .combine)
@@ -97,11 +74,20 @@ struct TagManagementView: View {
             }
             .navigationTitle("タグ管理")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     EditButton()
                 }
                 ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        isShowingCreateSheet = true
+                    } label: {
+                        Label("タグを追加", systemImage: "plus")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("完了") { dismiss() }
                 }
             }
@@ -124,6 +110,10 @@ struct TagManagementView: View {
             }
             .sheet(item: $tagToEdit) { tag in
                 TagEditSheet(tag: tag)
+                    .environmentObject(viewModel)
+            }
+            .sheet(isPresented: $isShowingCreateSheet) {
+                TagCreateSheet()
                     .environmentObject(viewModel)
             }
         }
@@ -161,6 +151,44 @@ struct TagManagementView: View {
     // インスタンスメソッド版（body 内で呼ぶ用）
     private func colorPicker(selected: Binding<String>) -> some View {
         Self.colorPicker(selected: selected)
+    }
+}
+
+private struct TagCreateSheet: View {
+    @EnvironmentObject private var viewModel: CardListViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var color = "#007AFF"
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("タグ名") {
+                    TextField("タグ名", text: $name)
+                        .autocorrectionDisabled()
+                }
+                Section("カラー") {
+                    TagManagementView.colorPicker(selected: $color)
+                }
+            }
+            .navigationTitle("タグを追加")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("追加") {
+                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        viewModel.createTag(name: trimmed, colorHex: color)
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }
 

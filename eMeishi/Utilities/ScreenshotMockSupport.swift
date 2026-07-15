@@ -158,12 +158,14 @@ struct ScreenshotHostView: View {
 
     let screen: String
     @StateObject private var viewModel = CardListViewModel()
+    @StateObject private var navigationState = AppNavigationState()
 
     var body: some View {
         NavigationStack {
             content
         }
         .environmentObject(viewModel)
+        .environmentObject(navigationState)
         .onAppear {
             // 重複検出はサンプルデータがロードされてから走らせる
             if screen == "Duplicate" && viewModel.duplicatePairs.isEmpty {

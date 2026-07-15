@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 /// 名刺データの集計とAI解釈を、単一ScrollView内の安定したセクションで表示する。
@@ -7,96 +8,76 @@ struct InsightsView: View {
     @State private var isGeneratingNarrative = false
     @State private var narrativeError: String?
     @State private var isShowingPaywall = false
+    @State private var selectedMonth: String?
+    @State private var selectedCompany: String?
+    @State private var selectedRole: String?
+
     @EnvironmentObject private var entitlementStore: EntitlementStore
+    @EnvironmentObject private var navigationState: AppNavigationState
     @Environment(\.managedObjectContext) private var managedObjectContext
 
     var body: some View {
         ScrollView {
             if let insights {
-                LazyVStack(spacing: 16) {
+                LazyVStack(spacing: AppTheme.Spacing.large) {
+                    summarySection(insights)
+                        .id("summary")
+
+                    if !insights.monthlyTrend.isEmpty {
+                        monthlySection(insights)
+                            .id("monthly-trend")
+                    }
+
                     aiNarrativeCard(insights: insights)
                         .id("ai-narrative")
 
-                    insightCard(title: "概要") {
-                        metricRow(label: "登録名刺数", value: "\(insights.totalCards)枚")
-                    }
-                    .id("summary")
-
                     if !insights.companyGroups.isEmpty {
-                        insightCard(title: "会社別") {
-                            ForEach(Array(insights.companyGroups.prefix(15))) { group in
-                                rankedRow(
-                                    label: group.label,
-                                    count: group.count,
-                                    total: insights.totalCards,
-                                    unit: "人",
-                                    color: AppTheme.companyBlueGray
-                                )
-                            }
-                            if insights.companyGroups.count > 15 {
-                                Text("他 \(insights.companyGroups.count - 15)社")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .id("companies")
+                        companySection(insights)
+                            .id("companies")
                     }
 
                     if !insights.areaGroups.isEmpty {
-                        insightCard(title: "エリア別") {
-                            ForEach(Array(insights.areaGroups.prefix(10))) { group in
-                                metricRow(label: group.label, value: "\(group.count)人")
-                            }
-                        }
-                        .id("areas")
+                        areaSection(insights)
+                            .id("areas")
                     }
 
                     if !insights.roleCategoryGroups.isEmpty {
-                        insightCard(title: "職種カテゴリ別") {
-                            ForEach(Array(insights.roleCategoryGroups.enumerated()), id: \.element.id) { index, group in
-                                rankedRow(
-                                    label: group.label,
-                                    count: group.count,
-                                    total: insights.totalCards,
-                                    unit: "人",
-                                    color: AppTheme.categoryColors[index % AppTheme.categoryColors.count]
-                                )
-                            }
-                        }
-                        .id("role-categories")
-                    }
-
-                    if !insights.monthlyTrend.isEmpty {
-                        insightCard(title: "月別推移") {
-                            let maximum = insights.monthlyTrend.map(\.count).max() ?? 1
-                            ForEach(Array(insights.monthlyTrend.prefix(12))) { month in
-                                rankedRow(
-                                    label: month.label,
-                                    count: month.count,
-                                    total: maximum,
-                                    unit: "枚",
-                                    color: AppTheme.monthlyBlue
-                                )
-                            }
-                        }
-                        .id("monthly-trend")
+                        roleSection(insights)
+                            .id("role-categories")
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .frame(maxWidth: AppTheme.contentMaximumWidth)
+                .padding(.horizontal, AppTheme.Spacing.large)
+                .padding(.vertical, AppTheme.Spacing.xLarge)
+                .frame(maxWidth: .infinity)
             } else {
                 ProgressView("集計中...")
                     .frame(maxWidth: .infinity)
                     .padding(.top, 80)
             }
         }
-        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+        .background(AppTheme.background.ignoresSafeArea())
         .accessibilityIdentifier("insightsScrollView")
         .navigationTitle("インサイト")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .task {
             guard insights == nil else { return }
             insights = InsightsService.shared.generateInsights(context: managedObjectContext)
+        }
+        .onChange(of: selectedMonth) { _, value in
+            guard let value else { return }
+            navigationState.showCards(filteredBy: .month(value))
+            selectedMonth = nil
+        }
+        .onChange(of: selectedCompany) { _, value in
+            guard let value else { return }
+            navigationState.showCards(filteredBy: .company(value))
+            selectedCompany = nil
+        }
+        .onChange(of: selectedRole) { _, value in
+            guard let value else { return }
+            navigationState.showCards(filteredBy: .role(value))
+            selectedRole = nil
         }
         .sheet(isPresented: $isShowingPaywall) {
             PaywallView(context: .insightsNarrative)
@@ -104,9 +85,119 @@ struct InsightsView: View {
         }
     }
 
+    private func summarySection(_ insights: InsightsService.Insights) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: AppTheme.Spacing.medium)], spacing: AppTheme.Spacing.medium) {
+            MetricBlock(title: "総名刺数", value: "\(insights.totalCards)", detail: "枚")
+            MetricBlock(title: "今月", value: "\(insights.currentMonthCount)", detail: "枚")
+            MetricBlock(
+                title: "前月差",
+                value: insights.previousMonthDelta == 0
+                    ? "±0"
+                    : String(format: "%+d", insights.previousMonthDelta),
+                detail: "前月 \(insights.previousMonthCount)枚"
+            )
+        }
+    }
+
+    private func monthlySection(_ insights: InsightsService.Insights) -> some View {
+        insightCard(title: "月別推移") {
+            Chart(Array(insights.monthlyTrend.prefix(12).reversed())) { month in
+                LineMark(
+                    x: .value("年月", month.yearMonth),
+                    y: .value("名刺数", month.count)
+                )
+                .foregroundStyle(AppTheme.monthlyBlue)
+                .interpolationMethod(.catmullRom)
+                PointMark(
+                    x: .value("年月", month.yearMonth),
+                    y: .value("名刺数", month.count)
+                )
+                .foregroundStyle(AppTheme.monthlyBlue)
+            }
+            .chartXSelection(value: $selectedMonth)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 6)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let key = value.as(String.self) {
+                            Text(key.dropFirst(5))
+                        }
+                    }
+                }
+            }
+            .frame(height: 220)
+            Text("グラフ上の月を選ぶと、その月の名刺へ移動します")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func companySection(_ insights: InsightsService.Insights) -> some View {
+        let groups = Array(insights.companyGroups.prefix(8))
+        return insightCard(title: "会社別") {
+            Chart(groups) { group in
+                BarMark(
+                    x: .value("人数", group.count),
+                    y: .value("会社", group.label)
+                )
+                .foregroundStyle(AppTheme.companyBlueGray)
+                .cornerRadius(4)
+            }
+            .chartYSelection(value: $selectedCompany)
+            .frame(height: CGFloat(max(180, groups.count * 34)))
+            Text("会社名を選ぶと該当する名刺へ移動します")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func areaSection(_ insights: InsightsService.Insights) -> some View {
+        insightCard(title: "エリア別") {
+            ForEach(Array(insights.areaGroups.prefix(10))) { group in
+                Button {
+                    navigationState.showCards(filteredBy: .area(group.label))
+                } label: {
+                    HStack {
+                        Text(group.label)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(group.count)人")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, AppTheme.Spacing.xSmall)
+            }
+        }
+    }
+
+    private func roleSection(_ insights: InsightsService.Insights) -> some View {
+        let groups = Array(insights.roleCategoryGroups.prefix(8))
+        let domain = groups.map(\.label)
+        let range = groups.indices.map { AppTheme.categoryColors[$0 % AppTheme.categoryColors.count] }
+        return insightCard(title: "職種カテゴリ別") {
+            Chart(groups) { group in
+                BarMark(
+                    x: .value("人数", group.count),
+                    y: .value("職種", group.label)
+                )
+                .foregroundStyle(by: .value("職種", group.label))
+                .cornerRadius(4)
+            }
+            .chartForegroundStyleScale(domain: domain, range: range)
+            .chartLegend(.hidden)
+            .chartYSelection(value: $selectedRole)
+            .frame(height: CGFloat(max(180, groups.count * 34)))
+            Text("職種を選ぶと該当する名刺へ移動します")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder
     private func aiNarrativeCard(insights: InsightsService.Insights) -> some View {
-        insightCard(title: "AIで読み解く") {
+        insightCard(title: "AIで読み解く", accent: true) {
             if let narrative {
                 Text(narrative)
                     .font(.subheadline)
@@ -118,18 +209,16 @@ struct InsightsView: View {
                 }
                 .disabled(isGeneratingNarrative)
             } else if isGeneratingNarrative {
-                HStack(spacing: 8) {
+                HStack(spacing: AppTheme.Spacing.small) {
                     ProgressView()
                     Text("AIが読み解いています...")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             } else if let narrativeError {
                 Text(narrativeError)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     Task { await generateNarrative(insights: insights) }
                 } label: {
@@ -139,10 +228,10 @@ struct InsightsView: View {
                 Button {
                     Task { await generateNarrative(insights: insights) }
                 } label: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: AppTheme.Spacing.medium) {
                         Image(systemName: "sparkles")
                             .foregroundStyle(AppTheme.brandOrange)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
                             Text("AIに集計を読み解いてもらう")
                                 .font(.subheadline.bold())
                                 .foregroundStyle(.primary)
@@ -153,9 +242,6 @@ struct InsightsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -164,7 +250,6 @@ struct InsightsView: View {
     }
 
     private func generateNarrative(insights: InsightsService.Insights) async {
-        // 生成・再生成・失敗後の再試行のすべてで、直前のPro権限を再確認する。
         guard entitlementStore.hasAccess else {
             isShowingPaywall = true
             return
@@ -185,51 +270,19 @@ struct InsightsView: View {
 
     private func insightCard<Content: View>(
         title: String,
+        accent: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.medium) {
             Text(title)
                 .font(.headline)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(AppTheme.Spacing.large)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
-            in: .rect(cornerRadius: 18, style: .continuous)
+            accent ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
+            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
         )
-    }
-
-    private func metricRow(label: String, value: String) -> some View {
-        HStack {
-            Text(label).lineLimit(1)
-            Spacer()
-            Text(value)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func rankedRow(
-        label: String,
-        count: Int,
-        total: Int,
-        unit: String,
-        color: Color
-    ) -> some View {
-        let ratio = total > 0 ? min(1, Double(count) / Double(total)) : 0
-        return HStack(spacing: 10) {
-            Text(label)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.secondary.opacity(0.12))
-                Capsule().fill(color.opacity(0.72)).frame(width: max(4, 72 * ratio))
-            }
-            .frame(width: 72, height: 8)
-            Text("\(count)\(unit)")
-                .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .trailing)
-        }
     }
 }

@@ -177,6 +177,10 @@ struct AISearchChatView: View {
                 return message.matchedCardIDs.contains(id)
             }
 
+            Text("\(matchedCards.count)件見つかりました")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
             ForEach(matchedCards.prefix(10)) { card in
                 NavigationLink {
                     CardDetailView(card: card)

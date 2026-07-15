@@ -5,11 +5,12 @@ import UIKit
 // 名刺一覧画面
 struct CardListView: View {
 
-    @StateObject private var viewModel = CardListViewModel()
+    @EnvironmentObject private var viewModel: CardListViewModel
+    @EnvironmentObject private var navigationState: AppNavigationState
     @State private var isShowingForm = false
     @State private var batchImages: [UIImage] = []
     @State private var isReviewingBatch = false
-    @State private var isShowingSettings = false
+    @State private var isShowingAddSheet = false
     @State private var isShowingImportConfirm = false
     @State private var isShowingTagManager = false
     @State private var isShowingPhotoPicker = false
@@ -54,30 +55,32 @@ struct CardListView: View {
     }
 
     private var screenBackground: Color {
-        Color(uiColor: .systemGroupedBackground)
+        AppTheme.background
     }
 
     var body: some View {
         interactionPresentations
-            .environmentObject(viewModel)
     }
 
     private var baseView: AnyView {
         AnyView(
-        NavigationStack {
-            Group {
-                if viewModel.cards.isEmpty {
-                    emptyState
-                } else if shouldShowAISearchPrompt {
-                    // テキスト検索で0件 → AI チャット検索を提案
-                    aiSearchPrompt
-                } else {
-                    cardList
-                }
+        Group {
+            if viewModel.cards.isEmpty {
+                emptyState
+            } else if shouldShowAISearchPrompt {
+                // テキスト検索で0件 → AI チャット検索を提案
+                aiSearchPrompt
+            } else {
+                cardList
             }
-            .navigationTitle(selectionTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $viewModel.searchText, prompt: "検索")
+        }
+            .navigationTitle(editMode == .active ? selectionTitle : "名刺")
+            .navigationBarTitleDisplayMode(editMode == .active ? .inline : .automatic)
+            .searchable(
+                text: $viewModel.searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "名前・会社・連絡先を検索"
+            )
             .background {
                 SearchBarSparklesInjector(searchText: viewModel.searchText) {
                     openAISearch()
@@ -97,13 +100,10 @@ struct CardListView: View {
                     normalToolbarContent
                 }
             }
-            .toolbarBackground(screenBackground, for: .navigationBar, .bottomBar)
-            .toolbarBackgroundVisibility(.visible, for: .navigationBar, .bottomBar)
             .environment(\.editMode, $editMode)
             .navigationDestination(item: $cardForDetail) { card in
                 CardDetailView(card: card)
             }
-        }
         .background(screenBackground.ignoresSafeArea())
         )
     }
@@ -113,6 +113,32 @@ struct CardListView: View {
             baseView
             .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
                 CardFormView(onSave: { isShowingForm = false })
+            }
+            .sheet(isPresented: $isShowingAddSheet) {
+                AddCardSheet(
+                    pendingCount: pendingOCRImages.count,
+                    isImporting: isImportingPhotos,
+                    onCamera: {
+                        isShowingAddSheet = false
+                        startCameraCapture()
+                    },
+                    onPhotos: {
+                        isShowingAddSheet = false
+                        selectedPhotoItems = []
+                        isShowingPhotoPicker = true
+                    },
+                    onManual: {
+                        isShowingAddSheet = false
+                        isShowingForm = true
+                    },
+                    onResume: pendingOCRImages.isEmpty ? nil : {
+                        isShowingAddSheet = false
+                        batchImages = pendingOCRImages
+                        isReviewingBatch = !batchImages.isEmpty
+                    }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
             }
             // カメラは CameraBatchCapture（UIKit直接管理）で表示。fullScreenCover 不使用。
             .sheet(isPresented: $isReviewingBatch, onDismiss: {
@@ -171,10 +197,6 @@ struct CardListView: View {
                 Button("OK", role: .cancel) { viewModel.errorMessage = nil }
             } message: {
                 Text(viewModel.errorMessage ?? "")
-            }
-            .sheet(isPresented: $isShowingSettings) {
-                SettingsView()
-                    .environmentObject(viewModel)
             }
             .sheet(isPresented: $isShowingTagManager) {
                 TagManagementView()
@@ -250,7 +272,11 @@ struct CardListView: View {
             }
             .onAppear {
                 viewModel.fetchCards()
+                viewModel.externalFilter = navigationState.externalFilter
                 handleScreenshotMode()
+            }
+            .onChange(of: navigationState.externalFilter) { _, filter in
+                viewModel.externalFilter = filter
             }
             .task {
                 await loadPendingOCR()
@@ -314,7 +340,18 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var normalToolbarContent: some ToolbarContent {
-        // 右上: 選択ボタン（HIG: テキストラベルとシンボルは別グループに分離）
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                isShowingAddSheet = true
+            } label: {
+                Label("名刺を追加", systemImage: "plus")
+            }
+            .disabled(isImportingPhotos)
+            .accessibilityIdentifier("addButton")
+        }
+
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+
         ToolbarItem(placement: .topBarTrailing) {
             if !viewModel.cards.isEmpty {
                 Button("選択") {
@@ -325,7 +362,6 @@ struct CardListView: View {
             }
         }
 
-        // 選択ボタンと 3点メニューを独立したガラス容器に分ける（純正メール準拠）
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
 
         // 右上: 3点メニュー
@@ -366,50 +402,12 @@ struct CardListView: View {
                     Label("タグ管理", systemImage: "tag")
                 }
                 .accessibilityIdentifier("tagManager")
-                if !viewModel.cards.isEmpty {
-                    NavigationLink {
-                        InsightsView()
-                    } label: {
-                        Label("インサイト", systemImage: "chart.bar")
-                    }
-                }
-                Divider()
-                Button { isShowingSettings = true } label: {
-                    Label("設定", systemImage: "gearshape")
-                }
-                .accessibilityIdentifier("settingsMenu")
             } label: {
                 Label("メニュー", systemImage: "ellipsis")
             }
             .accessibilityIdentifier("ellipsisMenu")
         }
 
-        // 左: 検索バー（システム提供・Liquid Glass自動適用）
-        DefaultToolbarItem(kind: .search, placement: .bottomBar)
-
-        // 中央: スペーサー
-        ToolbarSpacer(.flexible, placement: .bottomBar)
-
-        // 右: 追加ボタン
-        ToolbarItem(placement: .bottomBar) {
-            Menu {
-                Button {
-                    startCameraCapture()
-                } label: {
-                    Label("カメラで撮影", systemImage: "camera")
-                }
-                Button {
-                    selectedPhotoItems = []
-                    isShowingPhotoPicker = true
-                } label: {
-                    Label("写真から読み込む", systemImage: "photo.on.rectangle.angled")
-                }
-            } label: {
-                Label("追加", systemImage: "plus")
-            }
-            .disabled(isImportingPhotos)
-            .accessibilityIdentifier("addButton")
-        }
     }
 
     // MARK: - 選択モードのツールバー
@@ -564,6 +562,8 @@ struct CardListView: View {
                     .padding(.trailing, 0)
                 }
             }
+            .frame(maxWidth: AppTheme.cardListMaximumWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -644,8 +644,7 @@ struct CardListView: View {
     // MARK: - フィルター・ソート統合バー
 
     private var filterSortBar: some View {
-        GlassEffectContainer(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                 // ── 並び替え ──
                 Button {
@@ -660,10 +659,7 @@ struct CardListView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 32)
-                    .glassEffect(
-                        .regular.tint(AppTheme.brandOrange.opacity(0.16)).interactive(),
-                        in: .capsule
-                    )
+                    .background(AppTheme.brandOrange.opacity(0.14), in: .capsule)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sortButton")
@@ -730,10 +726,10 @@ struct CardListView: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 32)
-                    .glassEffect(
+                    .background(
                         viewModel.showFavoritesOnly
-                            ? .regular.tint(Color.yellow.opacity(0.20)).interactive()
-                            : .clear.interactive(),
+                            ? AppTheme.brandOrange.opacity(0.14)
+                            : AppTheme.auxiliarySurface,
                         in: .capsule
                     )
                 }
@@ -757,16 +753,36 @@ struct CardListView: View {
                         }
                         .padding(.horizontal, 12)
                         .frame(minHeight: 32)
-                        .glassEffect(
+                        .background(
                             isSelected
-                                ? .regular.tint(tag.color.opacity(0.18)).interactive()
-                                : .clear.interactive(),
+                                ? tag.color.opacity(0.16)
+                                : AppTheme.auxiliarySurface,
                             in: .capsule
                         )
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("タグフィルタ: \(tag.tagName)")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+
+                if let externalFilter = viewModel.externalFilter {
+                    Button {
+                        haptic.impactOccurred()
+                        navigationState.externalFilter = nil
+                        viewModel.clearExternalFilter()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(externalFilter.displayTitle)
+                                .font(.footnote)
+                            Image(systemName: "xmark")
+                                .font(.caption2.weight(.semibold))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 32)
+                        .background(AppTheme.brandOrange.opacity(0.14), in: .capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("外部フィルターを解除: \(externalFilter.displayTitle)")
                 }
                 }
                 .padding(.horizontal)
@@ -779,7 +795,6 @@ struct CardListView: View {
                     reduceMotion ? nil : .snappy(duration: 0.22),
                     value: viewModel.selectedTagIDs
                 )
-            }
         }
     }
 
@@ -908,14 +923,11 @@ struct CardListView: View {
     // MARK: - 空状態
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "tray")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("名刺がありません")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        ContentUnavailableView(
+            "名刺がありません",
+            systemImage: "person.crop.rectangle.stack",
+            description: Text("右上の追加ボタンから、名刺を撮影または読み込めます。")
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("名刺がありません")
@@ -925,6 +937,82 @@ struct CardListView: View {
 
 // CardRowView, SectionIndexView は Views/Components/ に定義
 // ShareSheet, ExportItem は Utilities/ に定義
+
+private struct AddCardSheet: View {
+    let pendingCount: Int
+    let isImporting: Bool
+    let onCamera: () -> Void
+    let onPhotos: () -> Void
+    let onManual: () -> Void
+    let onResume: (() -> Void)?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: AppTheme.Spacing.medium) {
+                addAction(
+                    title: "カメラで撮影",
+                    detail: "名刺を撮影して文字を読み取ります",
+                    systemImage: "camera",
+                    action: onCamera
+                )
+                addAction(
+                    title: "写真から読み込む",
+                    detail: "写真ライブラリから最大10枚選べます",
+                    systemImage: "photo.on.rectangle.angled",
+                    action: onPhotos
+                )
+                addAction(
+                    title: "手動で入力",
+                    detail: "画像を使わずに名刺を登録します",
+                    systemImage: "square.and.pencil",
+                    action: onManual
+                )
+                if let onResume {
+                    addAction(
+                        title: "未完了の読み取りを再開",
+                        detail: "\(pendingCount)枚の確認を続けます",
+                        systemImage: "arrow.clockwise",
+                        action: onResume
+                    )
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(AppTheme.Spacing.large)
+            .background(AppTheme.background.ignoresSafeArea())
+            .navigationTitle("名刺を追加")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .disabled(isImporting)
+    }
+
+    private func addAction(
+        title: String,
+        detail: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            ContentSurface {
+                HStack(spacing: AppTheme.Spacing.medium) {
+                    Image(systemName: systemImage)
+                        .font(.title3)
+                        .foregroundStyle(AppTheme.brandOrange)
+                        .frame(width: 32)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
 
 // MARK: - 検索バー内 sparkles ボタン
 

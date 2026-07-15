@@ -72,13 +72,14 @@ meishi-app/
 │   │   ├── eMeishiApp.swift
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
+│   │   ├── AppNavigationState.swift              # 3タブのNavigationPath・外部フィルター遷移状態
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
 │   │   ├── Tag+CoreDataClass.swift
 │   │   ├── Tag+CoreDataProperties.swift
 │   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
 │   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
-│   ├── ContentView.swift                        # ルートレベルに配置
+│   ├── ContentView.swift                        # 名刺・インサイト・設定の3タブルートと共有ViewModel
 │   ├── Views/
 │   │   ├── CardListView.swift
 │   │   ├── CardDetailView.swift
@@ -101,6 +102,7 @@ meishi-app/
 │   │   └── Components/
 │   │       ├── CardRowView.swift               # 一覧行セル
 │   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
+│   │       ├── DesignSystemComponents.swift    # 共通サーフェス・情報行・画像・OCR進捗・メトリクス
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -121,7 +123,7 @@ meishi-app/
 │   │   ├── OCRProcessingCoordinator.swift       # OCR進捗・実測ETA・中断画像管理
 │   │   ├── OCRBackgroundTaskManager.swift       # BGContinuedProcessingTask連携
 │   │   ├── PendingOCRStore.swift                 # OCR再開キューの原子的な保存・復元
-│   │   ├── CardThumbnailService.swift           # 58pt長辺基準の表示寸法計算
+│   │   ├── CardThumbnailService.swift           # 64pt長辺基準の表示寸法計算
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合

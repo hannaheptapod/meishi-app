@@ -8,7 +8,7 @@ struct CardRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            CardThumbnailView(card: card)
+            CardThumbnailView(card: card, size: 64)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
@@ -19,8 +19,7 @@ struct CardRowView: View {
                     if card.isFavorite {
                         Image(systemName: "star.fill")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.yellow.gradient)
-                            .symbolEffect(.bounce, value: card.isFavorite)
+                            .foregroundStyle(.yellow)
                     }
                 }
                 if let company = card.company, !company.isEmpty {
@@ -40,7 +39,7 @@ struct CardRowView: View {
                 }
                 if !cardTags.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(cardTags) { tag in
+                        if let tag = cardTags.first {
                             HStack(spacing: 3) {
                                 Circle()
                                     .fill(tag.color)
@@ -50,6 +49,11 @@ struct CardRowView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         }
+                        if cardTags.count > 1 {
+                            Text("+\(cardTags.count - 1)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .lineLimit(1)
                 }
@@ -58,13 +62,13 @@ struct CardRowView: View {
             Spacer(minLength: 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, AppTheme.Spacing.large)
+        .padding(.vertical, AppTheme.Spacing.medium)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
-            in: .rect(cornerRadius: 18, style: .continuous)
+            AppTheme.contentSurface,
+            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: AppTheme.contentCornerRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(cardAccessibilityLabel)
     }

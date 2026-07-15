@@ -48,6 +48,9 @@ class CardListViewModel: ObservableObject {
     @Published var allTags: [Tag] = []
     @Published var selectedTagIDs: Set<UUID> = []
     @Published var showFavoritesOnly: Bool = false
+    @Published var externalFilter: CardListExternalFilter? {
+        didSet { updateFilteredCards() }
+    }
     @Published var sortKey: CardSortKey {
         didSet { SettingsStore.shared.sortKey = sortKey.rawValue }
     }
@@ -59,7 +62,9 @@ class CardListViewModel: ObservableObject {
     var isSearchActive: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
     // フィルタが適用されているか
-    var isFilterActive: Bool { showFavoritesOnly || !selectedTagIDs.isEmpty }
+    var isFilterActive: Bool {
+        showFavoritesOnly || !selectedTagIDs.isEmpty || externalFilter != nil
+    }
 
     // タップでキー選択 or 昇降順トグル
     func toggleSort(key: CardSortKey) {
@@ -296,6 +301,10 @@ class CardListViewModel: ObservableObject {
             }
         }
 
+        if let externalFilter {
+            result = result.filter { InsightsService.shared.matches($0, filter: externalFilter) }
+        }
+
         // テキスト検索
         let q = searchText.trimmingCharacters(in: .whitespaces)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
@@ -317,6 +326,10 @@ class CardListViewModel: ObservableObject {
         }
         filteredCards = result
         updateGroupedCards()
+    }
+
+    func clearExternalFilter() {
+        externalFilter = nil
     }
 
     // MARK: - セクション分けグループ化（CardGroupingService に委譲）

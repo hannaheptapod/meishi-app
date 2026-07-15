@@ -21,19 +21,25 @@ class InsightsService {
         var roleCategoryGroups: [GroupCount] = []
         var monthlyTrend: [MonthCount] = []
         var totalCards: Int = 0
+        var currentMonthCount: Int = 0
+        var previousMonthCount: Int = 0
+
+        var previousMonthDelta: Int {
+            currentMonthCount - previousMonthCount
+        }
     }
 
     struct GroupCount: Identifiable {
-        let id = UUID()
         let label: String
         let count: Int
+        var id: String { label }
     }
 
     struct MonthCount: Identifiable {
-        let id = UUID()
         let label: String
         let yearMonth: String
         let count: Int
+        var id: String { yearMonth }
     }
 
     // MARK: - 公開API
@@ -50,9 +56,38 @@ class InsightsService {
         insights.areaGroups = groupByArea(cards)
         insights.roleCategoryGroups = groupByRoleCategory(cards)
         insights.monthlyTrend = groupByMonth(cards)
+        let calendar = Calendar.current
+        let now = Date()
+        let currentMonth = Self.yearMonthFormatter.string(from: now)
+        let previousDate = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        let previousMonth = Self.yearMonthFormatter.string(from: previousDate)
+        insights.currentMonthCount = insights.monthlyTrend.first { $0.yearMonth == currentMonth }?.count ?? 0
+        insights.previousMonthCount = insights.monthlyTrend.first { $0.yearMonth == previousMonth }?.count ?? 0
 
         return insights
     }
+
+    func matches(_ card: BusinessCard, filter: CardListExternalFilter) -> Bool {
+        switch filter {
+        case .company(let company):
+            return card.company?.localizedCaseInsensitiveCompare(company) == .orderedSame
+        case .area(let area):
+            return card.address.map(extractPrefectureCity) == area
+        case .role(let role):
+            return categorizeRole(title: card.title, department: card.department) == role
+        case .month(let yearMonth):
+            guard let createdAt = card.createdAt else { return false }
+            return Self.yearMonthFormatter.string(from: createdAt) == yearMonth
+        }
+    }
+
+    private static let yearMonthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM"
+        return formatter
+    }()
 
     // MARK: - 会社別集計
 

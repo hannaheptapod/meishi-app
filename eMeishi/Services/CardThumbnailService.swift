@@ -4,7 +4,7 @@ import CoreGraphics
 enum CardThumbnailService {
     nonisolated static func displaySize(
         for imageSize: CGSize,
-        containerSide: CGFloat = 58
+        containerSide: CGFloat = 64
     ) -> CGSize {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGSize(width: containerSide, height: containerSide)

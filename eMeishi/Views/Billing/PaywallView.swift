@@ -16,11 +16,12 @@ struct PaywallView: View {
     @State private var isRestoring = false
     @State private var errorMessage: String? = nil
     @State private var alertTitle = "エラー"
-    @State private var selectedProductID: String? = nil
+    @State private var selectedProductID: String = ProductIdentifier.proYearly.rawValue
     @State private var loadFailed = false
 
     private var yearlyProduct: Product? { products.first { $0.id == ProductIdentifier.proYearly.rawValue } }
     private var monthlyProduct: Product? { products.first { $0.id == ProductIdentifier.proMonthly.rawValue } }
+    private var selectedProduct: Product? { products.first { $0.id == selectedProductID } }
 
     var body: some View {
         NavigationStack {
@@ -34,12 +35,16 @@ struct PaywallView: View {
                 }
                 .padding()
             }
+            .background(AppTheme.background.ignoresSafeArea())
             .navigationTitle("eMeishi Pro")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") { dismiss() }
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                purchaseBar
             }
         }
         .task { await loadProducts() }
@@ -99,26 +104,28 @@ struct PaywallView: View {
     private var productSection: some View {
         VStack(spacing: 12) {
             if !products.isEmpty {
+                if let yearly = yearlyProduct {
+                    productButton(yearly, badge: "7日間無料")
+                }
                 if let monthly = monthlyProduct {
                     productButton(monthly, badge: nil)
-                }
-                if let yearly = yearlyProduct {
-                    productButton(yearly, badge: "7日間無料トライアル付き")
                 }
             } else if ScreenshotMode.isActive {
                 // UI テストでは StoreKit Configuration が app.launch 先に届かないため、
                 // App Store 提出用スクリーンショットでは表示用のモック商品ボタンを描画する
                 mockProductButton(
+                    id: ProductIdentifier.proYearly.rawValue,
+                    title: "eMeishi Pro 年額",
+                    description: "AI 自然言語検索など Pro 機能が使えます。7日間の無料トライアル付き。",
+                    price: "¥3,200",
+                    badge: "7日間無料"
+                )
+                mockProductButton(
+                    id: ProductIdentifier.proMonthly.rawValue,
                     title: "eMeishi Pro 月額",
                     description: "AI 自然言語検索など Pro 機能が使えます。",
                     price: "¥500",
                     badge: nil
-                )
-                mockProductButton(
-                    title: "eMeishi Pro 年額",
-                    description: "AI 自然言語検索など Pro 機能が使えます。7日間の無料トライアル付き。",
-                    price: "¥3,200",
-                    badge: "7日間無料トライアル付き"
                 )
             } else if loadFailed {
                 VStack(spacing: 8) {
@@ -140,7 +147,10 @@ struct PaywallView: View {
         }
     }
 
-    private func mockProductButton(title: String, description: String, price: String, badge: String?) -> some View {
+    private func mockProductButton(id: String, title: String, description: String, price: String, badge: String?) -> some View {
+        Button {
+            selectedProductID = id
+        } label: {
         VStack(alignment: .leading, spacing: 8) {
             if let badge {
                 Text(badge)
@@ -148,7 +158,7 @@ struct PaywallView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 3)
-                    .background(.accent, in: Capsule())
+                    .background(AppTheme.brandOrange, in: Capsule())
             }
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -157,15 +167,23 @@ struct PaywallView: View {
                 }
                 Spacer()
                 Text(price).font(.title3.bold())
+                Image(systemName: selectedProductID == id ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selectedProductID == id ? AppTheme.brandOrange : .secondary)
             }
         }
         .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+        .background(
+            selectedProductID == id ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
+            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
+        )
+        }
+        .buttonStyle(.plain)
     }
 
     private func productButton(_ product: Product, badge: String?) -> some View {
         Button {
-            Task { await purchase(product) }
+            selectedProductID = product.id
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 if let badge {
@@ -174,7 +192,7 @@ struct PaywallView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
-                        .background(.accent, in: Capsule())
+                        .background(AppTheme.brandOrange, in: Capsule())
                 }
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -187,18 +205,46 @@ struct PaywallView: View {
                     Spacer()
                     Text(product.displayPrice)
                         .font(.title3.bold())
+                    Image(systemName: selectedProductID == product.id ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selectedProductID == product.id ? AppTheme.brandOrange : .secondary)
                 }
             }
             .padding()
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(selectedProductID == product.id ? .accent : .clear, lineWidth: 2)
+            .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+            .background(
+                selectedProductID == product.id ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
+                in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
             )
         }
         .buttonStyle(.plain)
         .disabled(isPurchasing || isRestoring)
-        .opacity((isPurchasing && selectedProductID != product.id) ? 0.5 : 1)
+    }
+
+    private var purchaseBar: some View {
+        VStack(spacing: 6) {
+            Button {
+                guard let selectedProduct else { return }
+                Task { await purchase(selectedProduct) }
+            } label: {
+                HStack {
+                    if isPurchasing {
+                        ProgressView().tint(.white)
+                    }
+                    Text(selectedProductID == ProductIdentifier.proYearly.rawValue
+                         ? "7日間無料で試す"
+                         : "月額プランを開始")
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 48)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.brandOrange)
+            .disabled((selectedProduct == nil && !ScreenshotMode.isActive) || isPurchasing || isRestoring)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private var footerSection: some View {
@@ -234,15 +280,18 @@ struct PaywallView: View {
         loadFailed = false
         products = await StoreService.shared.fetchProducts()
             .sorted { $0.price > $1.price }
+        if products.contains(where: { $0.id == ProductIdentifier.proYearly.rawValue }) {
+            selectedProductID = ProductIdentifier.proYearly.rawValue
+        } else if let first = products.first {
+            selectedProductID = first.id
+        }
         if products.isEmpty { loadFailed = true }
     }
 
     private func purchase(_ product: Product) async {
         isPurchasing = true
-        selectedProductID = product.id
         defer {
             isPurchasing = false
-            selectedProductID = nil
         }
         do {
             let success = try await StoreService.shared.purchase(product)

@@ -4,7 +4,7 @@ import UIKit
 /// 不可視の正方形領域へ、名刺画像を長辺基準・中央揃えで表示する。
 struct CardThumbnailView: View {
     @ObservedObject var card: BusinessCard
-    var size: CGFloat = 58
+    var size: CGFloat = 64
 
     var body: some View {
         Group {

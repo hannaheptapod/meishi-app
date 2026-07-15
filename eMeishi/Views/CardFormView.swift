@@ -1,6 +1,17 @@
 import SwiftUI
 import UIKit
 
+nonisolated struct CardFormBatchProgress: Equatable, Sendable {
+    let current: Int
+    let total: Int
+}
+
+nonisolated enum CardFormMode: Equatable, Sendable {
+    case create
+    case edit
+    case ocrReview(batchProgress: CardFormBatchProgress?)
+}
+
 // 名刺の新規作成・編集フォーム画面
 struct CardFormView: View {
 
@@ -8,17 +19,16 @@ struct CardFormView: View {
     let onSave: () -> Void
     let onSkip: (() -> Void)?
     let batchProgress: BatchProgress?
+    let mode: CardFormMode
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var listViewModel: CardListViewModel
     @FocusState private var focusedField: FormField?
     @State private var isSkipping = false
+    @State private var isShowingAdditionalFields = false
 
     // 連続撮影時のバッチ進捗
-    struct BatchProgress {
-        let current: Int
-        let total: Int
-    }
+    typealias BatchProgress = CardFormBatchProgress
 
     private enum FormField: Hashable {
         case lastName, lastNameReading, firstName, firstNameReading
@@ -32,6 +42,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = nil
         self.batchProgress = nil
+        self.mode = .create
     }
 
     // MARK: - 初期化（カメラ撮影画像からOCR）
@@ -42,6 +53,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = onSkip
         self.batchProgress = batchProgress
+        self.mode = .ocrReview(batchProgress: batchProgress)
     }
 
     // MARK: - 初期化（クロップ済み画像からOCR・矩形検出スキップ）
@@ -52,6 +64,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = onSkip
         self.batchProgress = batchProgress
+        self.mode = .ocrReview(batchProgress: batchProgress)
     }
 
     // MARK: - 初期化（外部から ViewModel を注入）
@@ -62,6 +75,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = nil
         self.batchProgress = nil
+        self.mode = .ocrReview(batchProgress: nil)
     }
 
     // MARK: - 初期化（既存カードの編集）
@@ -71,6 +85,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = nil
         self.batchProgress = nil
+        self.mode = .edit
     }
 
     var body: some View {
@@ -91,38 +106,13 @@ struct CardFormView: View {
                 // OCR処理中インジケーター
                 if viewModel.isProcessingOCR {
                     Section {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ProgressView(value: viewModel.ocrProcessingState.progress)
-                                .tint(AppTheme.brandOrange)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(viewModel.ocrStage)
-                                    .font(.subheadline.weight(.medium))
-                                HStack(spacing: 8) {
-                                    if let remaining = viewModel.ocrProcessingState.remainingTimeText {
-                                        Text(remaining)
-                                    }
-                                    if viewModel.ocrProcessingState.phase == .aiAssistance {
-                                        Text("初回はモデル準備に時間がかかる場合があります")
-                                    }
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
-                            if viewModel.canContinueOCRInBackground {
-                                HStack(alignment: .top, spacing: 7) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(AppTheme.brandOrange)
-                                    Text("読み取り中はアプリを閉じても処理を続けられます。進捗はDynamic Islandまたはロック画面で確認できます。")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .font(.caption)
-                                .accessibilityElement(children: .combine)
-                            }
-                            Button("読み取りを中止", role: .cancel) {
+                        OCRStatusStepper(
+                            state: viewModel.ocrProcessingState,
+                            canContinueInBackground: viewModel.canContinueOCRInBackground,
+                            onCancel: {
                                 viewModel.cancelOCR()
                             }
-                            .font(.caption)
-                        }
+                        )
                         .padding(.vertical, 4)
                     }
                 }
@@ -136,31 +126,36 @@ struct CardFormView: View {
                     }
                 }
 
+                if !viewModel.isProcessingOCR {
                 Section("氏名") {
                     TextField("姓", text: $viewModel.lastName)
                         .textContentType(.familyName)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .lastName)
                         .submitLabel(.next)
-                        .onSubmit { focusedField = .lastNameReading }
-                    TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .lastNameReading)
-                        .submitLabel(.next)
                         .onSubmit { focusedField = .firstName }
+                    if !isOCRReview {
+                        TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .lastNameReading)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .firstName }
+                    }
                     TextField("名", text: $viewModel.firstName)
                         .textContentType(.givenName)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .firstName)
                         .submitLabel(.next)
-                        .onSubmit { focusedField = .firstNameReading }
-                    TextField("名（ふりがな）", text: $viewModel.firstNameReading)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .firstNameReading)
-                        .submitLabel(.next)
                         .onSubmit { focusedField = .company }
+                    if !isOCRReview {
+                        TextField("名（ふりがな）", text: $viewModel.firstNameReading)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .firstNameReading)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .company }
+                    }
                 }
 
                 Section("所属") {
@@ -169,24 +164,20 @@ struct CardFormView: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .company)
                         .submitLabel(.next)
-                        .onSubmit { focusedField = .companyReading }
-                    TextField("会社名（ふりがな）", text: $viewModel.companyReading)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .companyReading)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .department }
-                    TextField("部署", text: $viewModel.department)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .department)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .title }
-                    TextField("役職", text: $viewModel.title)
-                        .textContentType(.jobTitle)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .title)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = nil }
+                        .onSubmit { focusedField = isOCRReview ? .email : .companyReading }
+                    if !isOCRReview {
+                        TextField("会社名（ふりがな）", text: $viewModel.companyReading)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .companyReading)
+                        TextField("部署", text: $viewModel.department)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .department)
+                        TextField("役職", text: $viewModel.title)
+                            .textContentType(.jobTitle)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .title)
+                    }
                 }
 
                 Section("連絡先") {
@@ -222,7 +213,66 @@ struct CardFormView: View {
                         .onSubmit { focusedField = .address }
                 }
 
+                if isOCRReview {
+                    Section {
+                        DisclosureGroup("その他の項目", isExpanded: $isShowingAdditionalFields) {
+                            TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            TextField("名（ふりがな）", text: $viewModel.firstNameReading)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            TextField("会社名（ふりがな）", text: $viewModel.companyReading)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            TextField("部署", text: $viewModel.department)
+                            TextField("役職", text: $viewModel.title)
+                            TextField("住所", text: $viewModel.address)
+                                .textContentType(.fullStreetAddress)
+                            TextField("Webサイト", text: $viewModel.website)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            TextField("メモ", text: $viewModel.notes)
+                            if !listViewModel.allTags.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("タグ")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    FlowLayout(spacing: 6) {
+                                        ForEach(listViewModel.allTags) { tag in
+                                            let selected = viewModel.selectedTags.contains(tag.id ?? UUID())
+                                            Button {
+                                                guard let id = tag.id else { return }
+                                                if selected {
+                                                    viewModel.selectedTags.remove(id)
+                                                } else {
+                                                    viewModel.selectedTags.insert(id)
+                                                }
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    if selected { Image(systemName: "checkmark").font(.caption2) }
+                                                    Circle().fill(tag.color).frame(width: 8, height: 8)
+                                                    Text(tag.tagName).font(.caption)
+                                                }
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(
+                                                    selected ? tag.color.opacity(0.18) : AppTheme.auxiliarySurface,
+                                                    in: .capsule
+                                                )
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // タグ選択セクション
+                if !isOCRReview {
                 Section("タグ") {
                     // AI提案タグ
                     if !viewModel.suggestedTagIDs.isEmpty {
@@ -348,6 +398,8 @@ struct CardFormView: View {
                         .submitLabel(.done)
                         .onSubmit { focusedField = nil }
                 }
+                }
+                }
             }
             .navigationTitle(batchNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -430,7 +482,7 @@ struct CardFormView: View {
 
     private var batchNavigationTitle: String {
         if let bp = batchProgress {
-            return "\(bp.current)/\(bp.total) 名刺を追加"
+            return "\(bp.current) / \(bp.total)"
         }
         return viewModel.isEditing ? "名刺を編集" : "名刺を追加"
     }
@@ -438,5 +490,10 @@ struct CardFormView: View {
     private var saveButtonTitle: String {
         guard let bp = batchProgress else { return "保存" }
         return bp.current < bp.total ? "保存して次へ" : "保存"
+    }
+
+    private var isOCRReview: Bool {
+        if case .ocrReview = mode { return true }
+        return false
     }
 }

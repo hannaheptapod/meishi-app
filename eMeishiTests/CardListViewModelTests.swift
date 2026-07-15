@@ -230,6 +230,43 @@ struct CardListViewModelFilterTests {
         vm.toggleTagFilter(tag)
         #expect(vm.isFilterActive == true)
     }
+
+    @Test func externalCompanyFilterCombinesWithFavorites() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田", company: "アルファ", isFavorite: true)
+        _ = makeCard(context: context, lastName: "佐藤", company: "アルファ", isFavorite: false)
+        _ = makeCard(context: context, lastName: "鈴木", company: "ベータ", isFavorite: true)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.externalFilter = .company("アルファ")
+        vm.toggleFavoritesFilter()
+
+        #expect(vm.filteredCards.map(\.lastName) == ["山田"])
+        #expect(vm.isFilterActive)
+
+        vm.clearExternalFilter()
+        #expect(vm.filteredCards.count == 2)
+    }
+
+    @Test func externalRoleAndAreaFiltersMatchInsightsDimensions() throws {
+        let context = makeTestContext()
+        _ = makeCard(
+            context: context,
+            lastName: "山田",
+            title: "エンジニア",
+            address: "東京都渋谷区道玄坂1-1"
+        )
+        _ = makeCard(context: context, lastName: "佐藤", title: "営業", address: "大阪府大阪市北区1-1")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.externalFilter = .role("エンジニア・技術")
+        #expect(vm.filteredCards.map(\.lastName) == ["山田"])
+
+        vm.externalFilter = .area("東京都渋谷区")
+        #expect(vm.filteredCards.map(\.lastName) == ["山田"])
+    }
 }
 
 // MARK: - ソート

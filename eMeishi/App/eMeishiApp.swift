@@ -92,13 +92,13 @@ struct EMeishiApp: App {
         }
     }
 
-    /// スクリーンショット撮影モード：Insights / Duplicate は通常 NavigationLink で push される画面のため、
-    /// ScreenshotHostView 経由で単独ルートとして表示する。それ以外は通常 ContentView。
+    /// スクリーンショット撮影モード：重複確認だけは通常NavigationLinkで遷移するため、
+    /// ScreenshotHostView経由で単独表示する。タブ画面はContentViewが直接選択する。
     @ViewBuilder
     private var rootView: some View {
         if isUITest,
            let screen = ScreenshotMode.startScreen,
-           screen == "Insights" || screen == "Duplicate" {
+           screen == "Duplicate" {
             ScreenshotHostView(screen: screen)
         } else {
             ContentView()

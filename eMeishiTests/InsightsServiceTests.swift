@@ -246,4 +246,34 @@ struct InsightsServiceMonthlyTrendTests {
         let totalMonthly = insights.monthlyTrend.reduce(0) { $0 + $1.count }
         #expect(totalMonthly == 1)
     }
+
+    @Test func identifiersAreStableForSameDimensions() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, company: "アルファ", createdAt: Date())
+        try context.save()
+
+        let first = InsightsService.shared.generateInsights(context: context)
+        let second = InsightsService.shared.generateInsights(context: context)
+
+        #expect(first.companyGroups.first?.id == second.companyGroups.first?.id)
+        #expect(first.monthlyTrend.first?.id == second.monthlyTrend.first?.id)
+        #expect(first.monthlyTrend.first?.id == first.monthlyTrend.first?.yearMonth)
+    }
+
+    @Test func currentMonthAndPreviousMonthDeltaAreCalculated() throws {
+        let context = makeTestContext()
+        let calendar = Calendar.current
+        let now = Date()
+        let previous = try #require(calendar.date(byAdding: .month, value: -1, to: now))
+
+        _ = makeCard(context: context, createdAt: now)
+        _ = makeCard(context: context, createdAt: now)
+        _ = makeCard(context: context, createdAt: previous)
+        try context.save()
+
+        let insights = InsightsService.shared.generateInsights(context: context)
+        #expect(insights.currentMonthCount == 2)
+        #expect(insights.previousMonthCount == 1)
+        #expect(insights.previousMonthDelta == 1)
+    }
 }

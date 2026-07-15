@@ -119,6 +119,27 @@ final class EMeishiUITests: XCTestCase {
         // 3点メニュー
         let ellipsisMenu = app.buttons["ellipsisMenu"]
         XCTAssertTrue(ellipsisMenu.exists)
+
+        XCTAssertTrue(app.tabBars.buttons["名刺"].exists)
+        XCTAssertTrue(app.tabBars.buttons["インサイト"].exists)
+        XCTAssertTrue(app.tabBars.buttons["設定"].exists)
+    }
+
+    @MainActor
+    func testTabSwitchPreservesCardNavigationStack() throws {
+        let card = cardRow("山田 太郎")
+        XCTAssertTrue(card.waitForExistence(timeout: Self.defaultTimeout))
+        card.tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+
+        app.tabBars.buttons["インサイト"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
+
+        app.tabBars.buttons["名刺"].tap()
+        XCTAssertTrue(
+            app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout),
+            "名刺タブへ戻ったときに詳細階層を維持する"
+        )
     }
 
     // MARK: - 選択モード
@@ -340,9 +361,7 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(
             waitForMenuItem(identifier: "tagManager", label: "タグ管理")
         )
-        XCTAssertTrue(
-            waitForMenuItem(identifier: "settingsMenu", label: "設定")
-        )
+        XCTAssertFalse(app.buttons["settingsMenu"].exists, "設定はタブにのみ表示する")
     }
 
     // MARK: - フィルタ時のカウント表示
@@ -421,10 +440,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testInsightsSurvivesContinuousScrolling() throws {
-        let ellipsisMenu = app.buttons["ellipsisMenu"]
-        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
-        ellipsisMenu.tap()
-        let insights = app.buttons["インサイト"]
+        let insights = app.tabBars.buttons["インサイト"]
         XCTAssertTrue(insights.waitForExistence(timeout: Self.shortTimeout))
         insights.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
