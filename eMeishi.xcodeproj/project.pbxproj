@@ -38,6 +38,8 @@
 		39FA5EFC2F74C2B800FBA44D /* Exceptions for "eMeishi" folder in "eMeishi" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Config/Debug.xcconfig,
+				Config/Release.xcconfig,
 				Info.plist,
 			);
 			target = 3979F89E2F7275F200BC90DC /* eMeishi */;
@@ -199,7 +201,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
-				LastUpgradeCheck = 2640;
+				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					3979F89E2F7275F200BC90DC = {
 						CreatedOnToolsVersion = 26.3;
