@@ -73,6 +73,7 @@ meishi-app/
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
 │   │   ├── AppNavigationState.swift              # 一覧・めくる・インサイト・設定のNavigationPathと中央追加要求
+│   │   ├── CardFieldResolution.swift              # OCR span・フィールド候補・読み候補の共通DTO
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
 │   │   ├── Tag+CoreDataClass.swift
@@ -105,6 +106,7 @@ meishi-app/
 │   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
 │   │       ├── DesignSystemComponents.swift    # 共通サーフェス・情報行・画像・OCR進捗・メトリクス
 │   │       ├── CardPeekView.swift              # コンテキストメニュー専用の読み取り専用プレビュー
+│   │       ├── ReadingCandidatePicker.swift     # OCR確認で根拠付き読み候補を選択する部品
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -142,6 +144,7 @@ meishi-app/
 │   │   ├── AppLogger.swift                     # os.Logger ラッパー
 │   │   ├── AppTheme.swift                      # ブランド色と非オレンジのグラフ配色
 │   │   ├── CardFieldClassifier.swift           # 正規表現ベースのフィールド分類（ハイブリッド前段処理）
+│   │   ├── CardFieldResolver.swift             # 名刺全体の制約による候補解決とAI応答検証
 │   │   ├── CardGroupingService.swift           # 50音セクション分割
 │   │   ├── ContactPatternExtractor.swift       # email/phone/URL/住所の正規表現抽出
 │   │   ├── DuplicateChecker.swift              # Levenshtein 距離による重複判定
