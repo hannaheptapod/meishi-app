@@ -215,16 +215,31 @@ struct CardFormView: View {
 
                 if isOCRReview {
                     Section {
-                        DisclosureGroup("その他の項目", isExpanded: $isShowingAdditionalFields) {
+                        DisclosureGroup(isExpanded: $isShowingAdditionalFields) {
                             TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                            ReadingCandidatePicker(
+                                candidates: viewModel.readingCandidates(for: .lastName),
+                                selectedReading: viewModel.lastNameReading,
+                                onSelect: viewModel.selectReadingCandidate
+                            )
                             TextField("名（ふりがな）", text: $viewModel.firstNameReading)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                            ReadingCandidatePicker(
+                                candidates: viewModel.readingCandidates(for: .firstName),
+                                selectedReading: viewModel.firstNameReading,
+                                onSelect: viewModel.selectReadingCandidate
+                            )
                             TextField("会社名（ふりがな）", text: $viewModel.companyReading)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                            ReadingCandidatePicker(
+                                candidates: viewModel.readingCandidates(for: .company),
+                                selectedReading: viewModel.companyReading,
+                                onSelect: viewModel.selectReadingCandidate
+                            )
                             TextField("部署", text: $viewModel.department)
                             TextField("役職", text: $viewModel.title)
                             TextField("住所", text: $viewModel.address)
@@ -265,6 +280,15 @@ struct CardFormView: View {
                                             .buttonStyle(.plain)
                                         }
                                     }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text("その他の項目")
+                                if !viewModel.readingCandidates.isEmpty {
+                                    Text("読み候補 \(viewModel.readingCandidates.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
