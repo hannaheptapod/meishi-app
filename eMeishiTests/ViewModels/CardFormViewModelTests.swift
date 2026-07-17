@@ -29,9 +29,10 @@ private final class MockOCRService: OCRServiceProtocol {
 private struct MockClassifier: CardFieldClassifierProtocol {
     var result: CardFieldClassifier.ParsedCard
     var unclassifiedLines: [String] = []
+    var structuredResult: CardFieldClassifier.StructuredFieldsResult?
 
     func classifyStructuredFields(lines: [RecognizedLine]) -> CardFieldClassifier.StructuredFieldsResult {
-        CardFieldClassifier.StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedLines)
+        structuredResult ?? CardFieldClassifier.StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedLines)
     }
 }
 
@@ -39,6 +40,7 @@ private struct MockClassifier: CardFieldClassifierProtocol {
 private final class MockLLMService: LocalLLMServiceProtocol {
     var isModelAvailable: Bool
     var classifyResult: CardFieldClassifier.ParsedCard?
+    var decisions: [CardFieldDecision] = []
 
     init(modelAvailable: Bool = false, classifyResult: CardFieldClassifier.ParsedCard? = nil) {
         self.isModelAvailable = modelAvailable
@@ -47,6 +49,10 @@ private final class MockLLMService: LocalLLMServiceProtocol {
 
     func classifyUnclassifiedLines(_ lines: [String]) async -> CardFieldClassifier.ParsedCard? {
         classifyResult
+    }
+
+    func resolveFields(request: CardFieldResolutionRequest) async -> [CardFieldDecision] {
+        decisions
     }
 }
 
@@ -269,6 +275,18 @@ struct CardFormViewModelSaveTests {
 
         #expect(card.lastName == "佐藤")
         #expect(card.imageData == originalImageData)
+    }
+
+    @Test func saveKeepsUncertainCompanyReadingBlank() throws {
+        let ctx = makeContext()
+        let vm = CardFormViewModel(context: ctx)
+        vm.company = "SONY"
+        vm.companyReading = ""
+
+        try vm.save()
+
+        let saved = try #require(ctx.fetch(BusinessCard.fetchRequest()).first)
+        #expect(saved.companyReading?.isEmpty == true)
     }
 }
 
@@ -494,19 +512,37 @@ struct CardFormViewModelOCRTests {
         let mockOCR = MockOCRService()
         mockOCR.linesToReturn = [makeLine("山田"), makeLine("テック営業部")]
 
-        // ルールベースは名前のみ解決、部署は未分類
+        // ルールベースは名前のみ解決し、曖昧な span を候補付きで残す。
         var ruleParsed = CardFieldClassifier.ParsedCard()
         ruleParsed.lastName = "山田"
-
-        // LLM は部署を返す（OCR テキストに存在する文字列）
-        var llmParsed = CardFieldClassifier.ParsedCard()
-        llmParsed.department = "テック営業部"
+        let spans = [
+            CardTextSpan(sourceLineIndex: 0, text: "山田", boundingBox: .zero, ocrConfidence: 0.99, textDirection: .leftToRight, readingOrder: 0),
+            CardTextSpan(sourceLineIndex: 1, text: "テック営業部", boundingBox: .zero, ocrConfidence: 0.99, textDirection: .leftToRight, readingOrder: 1),
+        ]
+        let nameAssignment = FieldAssignment(
+            spanIDs: [spans[0].id], field: .personName, value: "山田",
+            confidence: .medium, source: .resolver
+        )
+        let departmentCandidate = FieldCandidate(
+            spanIDs: [spans[1].id], field: .department, value: "テック営業部",
+            score: 0.5, evidence: [.organizationKeyword]
+        )
+        let structured = CardFieldClassifier.StructuredFieldsResult(
+            parsed: ruleParsed,
+            unclassifiedLines: ["テック営業部"],
+            spans: spans,
+            candidates: [departmentCandidate],
+            assignments: [nameAssignment],
+            ambiguousSpanIDs: [spans[1].id]
+        )
+        let llm = MockLLMService(modelAvailable: true)
+        llm.decisions = [CardFieldDecision(spanID: spans[1].id, field: .department)]
 
         let vm = CardFormViewModel(
             context: ctx,
             ocrService: mockOCR,
-            classifier: MockClassifier(result: ruleParsed, unclassifiedLines: ["テック営業部"]),
-            llmService: MockLLMService(modelAvailable: true, classifyResult: llmParsed),
+            classifier: MockClassifier(result: ruleParsed, structuredResult: structured),
+            llmService: llm,
             settings: MockSettings(readingMethod: .localLLM)
         )
 
@@ -523,20 +559,60 @@ struct CardFormViewModelOCRTests {
         var ruleParsed = CardFieldClassifier.ParsedCard()
         ruleParsed.lastName = "山田"
 
-        // LLM が OCR テキストに存在しない部署を返す → ハルシネーション除去
-        var llmParsed = CardFieldClassifier.ParsedCard()
-        llmParsed.department = "存在しない部署名XYZ"
+        let span = CardTextSpan(
+            sourceLineIndex: 1, text: "テック", boundingBox: .zero,
+            ocrConfidence: 0.99, textDirection: .leftToRight, readingOrder: 1
+        )
+        let candidate = FieldCandidate(
+            spanIDs: [span.id], field: .department, value: "テック",
+            score: 0.4, evidence: [.organizationKeyword]
+        )
+        let structured = CardFieldClassifier.StructuredFieldsResult(
+            parsed: ruleParsed,
+            unclassifiedLines: ["テック"],
+            spans: [span],
+            candidates: [candidate],
+            assignments: [],
+            ambiguousSpanIDs: [span.id]
+        )
+        let llm = MockLLMService(modelAvailable: true)
+        // 会社は許可候補にないため、OCR文字列を使っていても採用しない。
+        llm.decisions = [CardFieldDecision(spanID: span.id, field: .company)]
 
         let vm = CardFormViewModel(
             context: ctx,
             ocrService: mockOCR,
-            classifier: MockClassifier(result: ruleParsed, unclassifiedLines: ["テック"]),
-            llmService: MockLLMService(modelAvailable: true, classifyResult: llmParsed),
+            classifier: MockClassifier(result: ruleParsed, structuredResult: structured),
+            llmService: llm,
             settings: MockSettings(readingMethod: .localLLM)
         )
 
         await vm.populateFromOCR(image: UIImage())
         // ハルシネーション除去により department は空のまま
         #expect(vm.department.isEmpty)
+    }
+
+    @Test func ocrReviewExposesEmailReadingAsCandidateWithoutAutoFill() async throws {
+        let ctx = makeContext()
+        let mockOCR = MockOCRService()
+        mockOCR.linesToReturn = [
+            makeLine("山田 太郎"),
+            makeLine("yamada.taro@example.com"),
+        ]
+
+        let vm = CardFormViewModel(
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: CardFieldClassifier(),
+            llmService: MockLLMService(modelAvailable: false),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await vm.populateFromOCR(image: UIImage())
+
+        #expect(vm.lastNameReading.isEmpty)
+        let candidate = try #require(vm.readingCandidates(for: .lastName).first(where: { $0.source == .email }))
+        vm.selectReadingCandidate(candidate)
+        #expect(vm.lastNameReading == candidate.reading)
     }
 }

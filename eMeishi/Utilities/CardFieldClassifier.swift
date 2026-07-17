@@ -26,193 +26,180 @@ struct CardFieldClassifier {
     struct StructuredFieldsResult {
         var parsed: ParsedCard
         var unclassifiedLines: [String]
+        var spans: [CardTextSpan]
+        var candidates: [FieldCandidate]
+        var assignments: [FieldAssignment]
+        var ambiguousSpanIDs: [String]
+
+        init(
+            parsed: ParsedCard,
+            unclassifiedLines: [String],
+            spans: [CardTextSpan] = [],
+            candidates: [FieldCandidate] = [],
+            assignments: [FieldAssignment] = [],
+            ambiguousSpanIDs: [String] = []
+        ) {
+            self.parsed = parsed
+            self.unclassifiedLines = unclassifiedLines
+            self.spans = spans
+            self.candidates = candidates
+            self.assignments = assignments
+            self.ambiguousSpanIDs = ambiguousSpanIDs
+        }
     }
 
     func classifyStructuredFields(lines: [RecognizedLine]) -> StructuredFieldsResult {
-        let lines = expandCombinedNameCompanyLines(lines)
-        var result = ParsedCard()
-        var unclassified: [RecognizedLine] = []
+        let spans = makeSpans(from: lines)
+        let candidates = makeCandidates(spans: spans)
+        let resolver = CardFieldResolver()
+        let assignments = resolver.resolve(spans: spans, candidates: candidates)
+        let ambiguous = resolver.ambiguousSpanIDs(candidates: candidates, assignments: assignments)
+        var parsed = makeParsedCard(assignments: assignments)
+        let readings = NameReadingGenerator.resolveReadings(
+            parsed: parsed,
+            spans: spans,
+            assignments: assignments
+        )
+        parsed.lastNameReading = readings.automaticValues[.lastName] ?? ""
+        parsed.firstNameReading = readings.automaticValues[.firstName] ?? ""
+        parsed.companyReading = readings.automaticValues[.company] ?? ""
+        let spanByID = Dictionary(uniqueKeysWithValues: spans.map { ($0.id, $0) })
+        let unresolved = ambiguous.compactMap { spanByID[$0]?.text }
 
-        AppLogger.classifier.debug("=== Pass1 開始 (\(lines.count, privacy: .public)行) ===")
-
-        // --- Pass1: パターン・キーワードで確実に判定できるフィールドを抽出 ---
-        for line in lines {
-            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-
-            if result.email.isEmpty, let email = ContactPatternExtractor.extractEmail(from: trimmed) {
-                result.email = email
-                AppLogger.classifier.debug("email: \(trimmed, privacy: .private)")
-            } else if let phone = ContactPatternExtractor.extractPhone(from: trimmed) {
-                result.phones.append(phone)
-                AppLogger.classifier.debug("phone: \(trimmed, privacy: .private)")
-            } else if result.website.isEmpty, let url = ContactPatternExtractor.extractURL(from: trimmed) {
-                result.website = url
-                AppLogger.classifier.debug("website: \(trimmed, privacy: .private)")
-            } else if result.address.isEmpty, FieldDetector.isAddress(trimmed) {
-                result.address = trimmed
-                AppLogger.classifier.debug("address: \(trimmed, privacy: .private)")
-            } else if FieldDetector.isAddress(trimmed) {
-                result.address += " " + trimmed
-                AppLogger.classifier.debug("address(追加): \(trimmed, privacy: .private)")
-            } else if result.company.isEmpty, FieldDetector.isCompany(trimmed) {
-                result.company = trimmed.trimmingCharacters(in: .whitespaces)
-                AppLogger.classifier.debug("company: \(trimmed, privacy: .private)")
-            } else if FieldDetector.isDepartment(trimmed) {
-                result.department = result.department.isEmpty
-                    ? trimmed
-                    : result.department + " " + trimmed
-                AppLogger.classifier.debug("department: \(trimmed, privacy: .private)")
-            } else if result.title.isEmpty, FieldDetector.isJobTitle(trimmed) {
-                result.title = trimmed
-                AppLogger.classifier.debug("title: \(trimmed, privacy: .private)")
-            } else {
-                unclassified.append(line)
-                AppLogger.classifier.debug("未分類: \(trimmed, privacy: .private)")
-            }
-        }
-
-        AppLogger.classifier.debug("Pass1結果: email=\(result.email.isEmpty ? "×" : "○", privacy: .public) phone=\(result.phones.count, privacy: .public)件 web=\(result.website.isEmpty ? "×" : "○", privacy: .public) addr=\(result.address.isEmpty ? "×" : "○", privacy: .public) co=\(result.company.isEmpty ? "×" : "○", privacy: .public) dept=\(result.department.isEmpty ? "×" : "○", privacy: .public) title=\(result.title.isEmpty ? "×" : "○", privacy: .public)")
-
-        // --- Pass1.5: 建物名を住所に追加 ---
-        if !result.address.isEmpty {
-            unclassified.removeAll { line in
-                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if FieldDetector.isBuildingName(t) {
-                    result.address += " " + t
-                    AppLogger.classifier.debug("address(建物名): \(t, privacy: .private)")
-                    return true
-                }
-                return false
-            }
-        }
-
-        // --- Pass2: 空間情報を使った名前スコアリング ---
-        if !unclassified.isEmpty {
-            let scores = unclassified.map { NameProcessor.personNameScore(for: $0, candidates: unclassified) }
-            for (idx, line) in unclassified.enumerated() {
-                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                AppLogger.classifier.debug("Pass2スコア: \(t, privacy: .private) = \(String(format: "%.3f", scores[idx]), privacy: .public)")
-            }
-            if let bestIdx = scores.indices.max(by: { scores[$0] < scores[$1] }),
-               scores[bestIdx] > 0.35 {
-                let bestText = unclassified[bestIdx].text.trimmingCharacters(in: .whitespacesAndNewlines)
-                AppLogger.classifier.debug("名前確定(>0.35): \(bestText, privacy: .private) (score=\(String(format: "%.3f", scores[bestIdx]), privacy: .public))")
-                unclassified = NameProcessor.resolveNameFromUnclassified(&result, unclassified: unclassified)
-                AppLogger.classifier.debug("名前解決後: lastName=\(result.lastName, privacy: .private) firstName=\(result.firstName, privacy: .private)")
-                // フリガナ行を氏名読み仮名として取得
-                if let furiganaLine = unclassified.first(where: { NameProcessor.isFuriganaLine($0) }) {
-                    let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let (lastR, firstR) = NameProcessor.splitName(rawReading)
-                    result.lastNameReading = NameProcessor.normalizeToHiragana(lastR)
-                    result.firstNameReading = NameProcessor.normalizeToHiragana(firstR)
-                    AppLogger.classifier.debug("フリガナ: lastR=\(result.lastNameReading, privacy: .private) firstR=\(result.firstNameReading, privacy: .private)")
-                } else if let romajiLine = unclassified.first(where: { NameProcessor.isRomajiNameLine($0) }),
-                          let romajiReading = NameProcessor.resolveRomajiReading(
-                              romajiLine: romajiLine,
-                              lastName: result.lastName,
-                              firstName: result.firstName
-                          ) {
-                    result.lastNameReading = romajiReading.lastNameReading
-                    result.firstNameReading = romajiReading.firstNameReading
-                    AppLogger.classifier.debug("ローマ字読み: lastR=\(result.lastNameReading, privacy: .private) firstR=\(result.firstNameReading, privacy: .private)")
-                }
-                unclassified.removeAll { NameProcessor.isFuriganaLine($0) }
-                unclassified.removeAll { NameProcessor.isRomajiNameLine($0) }
-            } else {
-                AppLogger.classifier.debug("名前スコア不足 → LLMに委譲")
-            }
-        }
-
-        let unclassifiedTexts = unclassified.map {
-            $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        AppLogger.classifier.debug("最終未分類: \(unclassifiedTexts, privacy: .private)")
-        return StructuredFieldsResult(parsed: result, unclassifiedLines: unclassifiedTexts)
+        return StructuredFieldsResult(
+            parsed: parsed,
+            unclassifiedLines: unresolved,
+            spans: spans,
+            candidates: candidates,
+            assignments: assignments,
+            ambiguousSpanIDs: ambiguous
+        )
     }
 
     // MARK: - 分類エントリポイント（従来API: 全フィールド分類）
 
     func classify(lines: [RecognizedLine]) -> ParsedCard {
-        let lines = expandCombinedNameCompanyLines(lines)
-        var result = ParsedCard()
-        var unclassified: [RecognizedLine] = []
+        classifyStructuredFields(lines: lines).parsed
+    }
 
-        for line in lines {
-            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-
-            if result.email.isEmpty, let email = ContactPatternExtractor.extractEmail(from: trimmed) {
-                result.email = email
-            } else if let phone = ContactPatternExtractor.extractPhone(from: trimmed) {
-                result.phones.append(phone)
-            } else if result.website.isEmpty, let url = ContactPatternExtractor.extractURL(from: trimmed) {
-                result.website = url
-            } else if result.address.isEmpty, FieldDetector.isAddress(trimmed) {
-                result.address = trimmed
-            } else if result.company.isEmpty, FieldDetector.isCompany(trimmed) {
-                result.company = trimmed.trimmingCharacters(in: .whitespaces)
-            } else if FieldDetector.isDepartment(trimmed) {
-                result.department = result.department.isEmpty
-                    ? trimmed
-                    : result.department + " " + trimmed
-            } else if result.title.isEmpty, FieldDetector.isJobTitle(trimmed) {
-                result.title = trimmed
-            } else {
-                unclassified.append(line)
+    private func makeSpans(from lines: [RecognizedLine]) -> [CardTextSpan] {
+        lines.enumerated().flatMap { sourceIndex, line in
+            splitCombinedNameCompanyLine(line).enumerated().compactMap { fragmentIndex, fragment in
+                let text = fragment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return CardTextSpan(
+                    sourceLineIndex: sourceIndex,
+                    fragmentIndex: fragmentIndex,
+                    text: text,
+                    boundingBox: fragment.boundingBox,
+                    ocrConfidence: fragment.confidence,
+                    textDirection: fragment.textDirection,
+                    readingOrder: sourceIndex
+                )
             }
         }
+    }
 
-        // --- Pass1.5：建物名を住所に追加 ---
-        if !result.address.isEmpty {
-            unclassified.removeAll { line in
-                let t = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if FieldDetector.isBuildingName(t) {
-                    result.address += " " + t
-                    return true
+    private func makeCandidates(spans: [CardTextSpan]) -> [FieldCandidate] {
+        let lines = spans.map {
+            RecognizedLine(text: $0.text, boundingBox: $0.boundingBox, confidence: $0.ocrConfidence, textDirection: $0.textDirection)
+        }
+        var result: [FieldCandidate] = []
+
+        for (index, span) in spans.enumerated() {
+            let text = span.text
+            if let email = ContactPatternExtractor.extractEmail(from: text) {
+                result.append(candidate(span, field: .email, value: email, score: 0.99, evidence: [.contactPattern]))
+            }
+            if let phone = ContactPatternExtractor.extractPhone(from: text) {
+                result.append(candidate(span, field: .phone, value: phone, score: 0.99, evidence: [.contactPattern]))
+            }
+            if let url = ContactPatternExtractor.extractURL(from: text) {
+                result.append(candidate(span, field: .website, value: url, score: 0.98, evidence: [.contactPattern]))
+            }
+            if FieldDetector.isAddress(text) {
+                result.append(candidate(span, field: .address, value: text, score: 0.92, evidence: [.contactPattern]))
+            }
+            let isCompany = FieldDetector.isCompany(text)
+            let isDepartment = FieldDetector.isDepartment(text)
+            let isTitle = FieldDetector.isJobTitle(text)
+
+            if isCompany {
+                result.append(candidate(span, field: .company, value: text, score: 0.96, evidence: [.legalEntity]))
+            } else if FieldDetector.companySuffixes.contains(where: { text.contains($0) }) {
+                result.append(candidate(span, field: .company, value: text, score: 0.72, evidence: [.organizationKeyword]))
+            }
+            if isDepartment {
+                result.append(candidate(span, field: .department, value: text, score: 0.88, evidence: [.organizationKeyword]))
+            }
+            if isTitle {
+                result.append(candidate(span, field: .title, value: text, score: 0.90, evidence: [.titleKeyword]))
+            }
+
+            let nameScore = NameProcessor.personNameScore(for: lines[index], candidates: lines)
+            // 組織・役職の明示語を氏名候補へ重複登録すると、単独行で氏名が先に
+            // span を消費する。意味が確定する語は氏名候補から除外する。
+            if !isCompany && !isDepartment && !isTitle && nameScore >= 0.15 {
+                var evidence: Set<FieldEvidence> = [.nameShape]
+                if lines.contains(where: { other in
+                    other.boundingBox != lines[index].boundingBox
+                        && (NameProcessor.isFuriganaLine(other) || NameProcessor.isRomajiNameLine(other))
+                        && spatiallyRelated(lines[index], other)
+                }) {
+                    evidence.insert(.nearbyReading)
                 }
-                return false
+                if span.boundingBox.height > medianHeight(spans) * 1.15 {
+                    evidence.insert(.relativeTypography)
+                }
+                result.append(candidate(span, field: .personName, value: text, score: nameScore, evidence: evidence))
             }
         }
-
-        // --- Pass2：未分類の行から氏名を推定 ---
-        unclassified = NameProcessor.resolveNameFromUnclassified(&result, unclassified: unclassified)
-
-        // フリガナ行を氏名読み仮名として取得
-        if let furiganaLine = unclassified.first(where: { NameProcessor.isFuriganaLine($0) }) {
-            let rawReading = furiganaLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let (lastR, firstR) = NameProcessor.splitName(rawReading)
-            result.lastNameReading  = NameProcessor.normalizeToHiragana(lastR)
-            result.firstNameReading = NameProcessor.normalizeToHiragana(firstR)
-        } else if let romajiLine = unclassified.first(where: { NameProcessor.isRomajiNameLine($0) }),
-                  let romajiReading = NameProcessor.resolveRomajiReading(
-                      romajiLine: romajiLine,
-                      lastName: result.lastName,
-                      firstName: result.firstName
-                  ) {
-            result.lastNameReading = romajiReading.lastNameReading
-            result.firstNameReading = romajiReading.firstNameReading
-        }
-        unclassified.removeAll { NameProcessor.isFuriganaLine($0) }
-        unclassified.removeAll { NameProcessor.isRomajiNameLine($0) }
-
-        // 会社名フォールバック
-        if result.company.isEmpty, let companyLine = unclassified.first {
-            let candidate = companyLine.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let candidateStripped = candidate
-                .replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "　", with: "")
-            let hasCJK = candidate.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
-            let hasDigit = candidate.unicodeScalars.contains { $0.value >= 0x30 && $0.value <= 0x39 }
-            let hasURLFragment = candidate.lowercased().contains("www") || candidate.lowercased().contains("http") || candidate.contains("@")
-            let isDistinctFromName = candidate != result.lastName && candidate != (result.lastName + result.firstName)
-            if hasCJK && (2...20).contains(candidateStripped.count) && !hasDigit && !hasURLFragment && isDistinctFromName {
-                result.company = candidate
-                unclassified.removeFirst()
-            }
-        }
-
         return result
+    }
+
+    private func makeParsedCard(assignments: [FieldAssignment]) -> ParsedCard {
+        var result = ParsedCard()
+        for assignment in assignments {
+            switch assignment.field {
+            case .personName:
+                let split = NameProcessor.splitName(assignment.value)
+                result.lastName = split.lastName
+                result.firstName = split.firstName
+            case .company: result.company = assignment.value
+            case .department: result.department = assignment.value
+            case .title: result.title = assignment.value
+            case .address:
+                result.address = result.address.isEmpty ? assignment.value : result.address + " " + assignment.value
+            case .phone: result.phones.append(assignment.value)
+            case .email: if result.email.isEmpty { result.email = assignment.value }
+            case .website: if result.website.isEmpty { result.website = assignment.value }
+            default: break
+            }
+        }
+        return result
+    }
+
+    private func candidate(
+        _ span: CardTextSpan,
+        field: CardFieldKind,
+        value: String,
+        score: Double,
+        evidence: Set<FieldEvidence>
+    ) -> FieldCandidate {
+        FieldCandidate(spanIDs: [span.id], field: field, value: value, score: score, evidence: evidence)
+    }
+
+    private func medianHeight(_ spans: [CardTextSpan]) -> CGFloat {
+        let values = spans.map(\.boundingBox.height).sorted()
+        guard !values.isEmpty else { return 0.05 }
+        return values[values.count / 2]
+    }
+
+    private func spatiallyRelated(_ lhs: RecognizedLine, _ rhs: RecognizedLine) -> Bool {
+        let verticalDistance = abs(lhs.boundingBox.midY - rhs.boundingBox.midY)
+        let horizontalDistance = abs(lhs.boundingBox.midX - rhs.boundingBox.midX)
+        return verticalDistance <= max(lhs.boundingBox.height, rhs.boundingBox.height) * 2.5
+            && horizontalDistance <= max(lhs.boundingBox.width, rhs.boundingBox.width) * 0.8 + 0.08
     }
 
     private func expandCombinedNameCompanyLines(_ lines: [RecognizedLine]) -> [RecognizedLine] {

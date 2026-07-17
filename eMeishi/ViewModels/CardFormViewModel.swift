@@ -12,11 +12,17 @@ import FoundationModels
 class CardFormViewModel: ObservableObject {
 
     @Published var lastName: String = ""
-    @Published var lastNameReading: String = ""
+    @Published var lastNameReading: String = "" {
+        didSet { markReadingEdited(.lastName) }
+    }
     @Published var firstName: String = ""
-    @Published var firstNameReading: String = ""
+    @Published var firstNameReading: String = "" {
+        didSet { markReadingEdited(.firstName) }
+    }
     @Published var company: String = ""
-    @Published var companyReading: String = ""
+    @Published var companyReading: String = "" {
+        didSet { markReadingEdited(.company) }
+    }
     @Published var department: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
@@ -27,6 +33,7 @@ class CardFormViewModel: ObservableObject {
     @Published var selectedTags: Set<UUID> = []
     @Published var suggestedTagIDs: Set<UUID> = []
     @Published var isLoadingTagSuggestions: Bool = false
+    @Published private(set) var readingCandidates: [ReadingCandidate] = []
 
     // OCR処理中フラグ・エラーメッセージ
     @Published var isProcessingOCR: Bool = false
@@ -54,6 +61,8 @@ class CardFormViewModel: ObservableObject {
     private let settings: SettingsProviding
     private(set) var ocrJobID = OCRJobID()
     private var ocrTask: Task<Void, Never>?
+    private var isApplyingReadingResolution = false
+    private var editedReadingTargets = Set<ReadingTarget>()
 
     deinit {
         ocrTask?.cancel()
@@ -394,21 +403,24 @@ class CardFormViewModel: ObservableObject {
 
     /// 全 Tier 共通の分類パイプライン。
     ///
-    /// 1. ルールベース前段処理（classifyStructuredFields）— 全 Tier 共通・1回だけ実行
-    /// 2. 未分類行を LLM バックエンドに送信（Foundation Models / Qwen / なし）
-    /// 3. LLM 結果を OCR テキストで照合バリデーション — 全 Tier 共通
-    /// 4. ルールベース結果と LLM 結果をマージ — 全 Tier 共通
+    /// 1. 全 OCR span から候補と初期割り当てを生成
+    /// 2. 曖昧な span だけを、名刺全体の文脈付きで LLM に照会
+    /// 3. span ID と候補集合で応答を検証し、OCR 原文から値を再構成
     private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async throws {
         try Task.checkCancellation()
-        // --- Step 1: ルールベース前段処理（全 Tier 共通） ---
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
         var result = ruleResult.parsed
-        let ocrTexts = lines.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var assignments = ruleResult.assignments
+        let request = CardFieldResolutionRequest(
+            spans: ruleResult.spans,
+            candidates: ruleResult.candidates,
+            assignments: ruleResult.assignments,
+            ambiguousSpanIDs: ruleResult.ambiguousSpanIDs
+        )
 
-        // 未分類行が空ならルールベース結果のみで完了
-        guard !ruleResult.unclassifiedLines.isEmpty else {
+        guard !request.ambiguousSpanIDs.isEmpty else {
             AppLogger.pipeline.info("全フィールドがルールベースで解決済み")
-            apply(result)
+            applyResolved(result, spans: ruleResult.spans, assignments: assignments)
             return
         }
 
@@ -416,44 +428,15 @@ class CardFormViewModel: ObservableObject {
             try await setOCRPhase(.aiAssistance)
         }
 
-        // --- Step 2: LLM バックエンドで未分類行を分類 ---
-        let llmResult: CardFieldClassifier.ParsedCard? = await runLLMBackend(
-            llmBackend,
-            unclassifiedLines: ruleResult.unclassifiedLines,
-            baseParsed: result
-        )
+        let decisions = await runLLMBackend(llmBackend, request: request)
         try Task.checkCancellation()
 
-        // --- Step 3: LLM 結果の OCR テキスト照合バリデーション + マージ（全 Tier 共通） ---
-        if let llm = llmResult {
-            if !llm.lastName.isEmpty && result.lastName.isEmpty { result.lastName = llm.lastName }
-            if !llm.firstName.isEmpty && result.firstName.isEmpty { result.firstName = llm.firstName }
-
-            // department/title/company は OCR テキストに存在するか照合（ハルシネーション防止）
-            if !llm.department.isEmpty && result.department.isEmpty {
-                if existsInOCR(llm.department, ocrTexts: ocrTexts) {
-                    result.department = llm.department
-                } else {
-                    AppLogger.pipeline.info("部署ハルシネーション除去: \(llm.department, privacy: .private)")
-                }
-            }
-            if !llm.title.isEmpty && result.title.isEmpty {
-                if existsInOCR(llm.title, ocrTexts: ocrTexts) {
-                    result.title = llm.title
-                } else {
-                    AppLogger.pipeline.info("役職ハルシネーション除去: \(llm.title, privacy: .private)")
-                }
-            }
-            if !llm.company.isEmpty && result.company.isEmpty {
-                if existsInOCR(llm.company, ocrTexts: ocrTexts) {
-                    result.company = llm.company
-                } else {
-                    AppLogger.pipeline.info("会社名ハルシネーション除去: \(llm.company, privacy: .private)")
-                }
-            }
+        let validated = CardFieldResolver().validate(decisions: decisions, request: request)
+        if !validated.isEmpty {
+            assignments.append(contentsOf: validated)
+            merge(validated, into: &result)
         }
-
-        apply(result)
+        applyResolved(result, spans: ruleResult.spans, assignments: assignments)
     }
 
     /// LLM バックエンドの種別
@@ -466,77 +449,77 @@ class CardFormViewModel: ObservableObject {
     /// LLM バックエンド固有の推論を実行。ルールベース処理は呼び出し元で完了済み。
     private func runLLMBackend(
         _ backend: LLMBackend,
-        unclassifiedLines: [String],
-        baseParsed: CardFieldClassifier.ParsedCard
-    ) async -> CardFieldClassifier.ParsedCard? {
+        request: CardFieldResolutionRequest
+    ) async -> [CardFieldDecision] {
         switch backend {
         case .foundationModels:
             #if canImport(FoundationModels)
             if #available(iOS 26.0, *) {
-                return await runFoundationModelsLLM(
-                    unclassifiedLines: unclassifiedLines,
-                    baseParsed: baseParsed
-                )
+                return await runFoundationModelsLLM(request: request)
             }
             #endif
-            return nil
+            return []
 
         case .qwen:
-            return await llmService.classifyUnclassifiedLines(unclassifiedLines)
+            return await llmService.resolveFields(request: request)
 
         case .none:
-            return nil
+            return []
         }
     }
 
     #if canImport(FoundationModels)
-    /// Foundation Models 固有の推論（未分類行のみ処理）
+    /// Foundation Models 固有の推論。出力は span ID とフィールドだけに限定する。
     @available(iOS 26.0, *)
     private func runFoundationModelsLLM(
-        unclassifiedLines: [String],
-        baseParsed: CardFieldClassifier.ParsedCard
-    ) async -> CardFieldClassifier.ParsedCard? {
-        let unclassifiedText = unclassifiedLines.joined(separator: "\n")
-        var contextHints: [String] = []
-        if !baseParsed.company.isEmpty { contextHints.append("会社名: \(baseParsed.company)") }
-        if !baseParsed.department.isEmpty { contextHints.append("部署: \(baseParsed.department)") }
-        if !baseParsed.title.isEmpty { contextHints.append("役職: \(baseParsed.title)") }
-        let contextBlock = contextHints.isEmpty ? "" : "\n既に判明している情報:\n\(contextHints.joined(separator: "\n"))\n"
-
+        request: CardFieldResolutionRequest
+    ) async -> [CardFieldDecision] {
+        let spanText = request.spans.sorted { $0.readingOrder < $1.readingOrder }
+            .map { "[\($0.id)] \($0.text)" }
+            .joined(separator: "\n")
+        let candidatesBySpan = Dictionary(grouping: request.candidates) { $0.spanIDs.first ?? "" }
+        let targetText = request.ambiguousSpanIDs.prefix(4).map { id in
+            let allowed = Set(candidatesBySpan[id, default: []].map(\.field.rawValue)).sorted().joined(separator: ",")
+            return "[\(id)] allowed=\(allowed)"
+        }.joined(separator: "\n")
         let session = LanguageModelSession()
         let prompt = """
-            以下は名刺から読み取ったテキストのうち、まだ分類できていない行です。各フィールドに分類してください。
-            姓と名は必ず分けてください。
-            重要: テキストに明記されていない情報は絶対に推測せず、空文字列にしてください。
-            特に部署名・役職はテキストに明記されている場合のみ設定し、推測は禁止です。
-            \(contextBlock)
-            未分類テキスト:
-            \(unclassifiedText)
+            名刺全体を見て、対象 span を許可されたフィールドへ分類してください。
+            span の文字列を生成・修正せず、spanID と field だけを返してください。
+            field は personName, company, department, title のいずれかです。
+
+            名刺全体:
+            \(spanText)
+
+            対象と許可フィールド:
+            \(targetText)
             """
         do {
-            let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-            let p = response.content
-            // Foundation Models の出力を CardFieldClassifier.ParsedCard に変換
-            var llm = CardFieldClassifier.ParsedCard()
-            llm.lastName = p.lastName
-            llm.firstName = p.firstName
-            llm.company = p.company
-            llm.department = p.department
-            llm.title = p.title
-            return llm
+            let response = try await session.respond(to: prompt, generating: GeneratedFieldDecisions.self)
+            return response.content.decisions.compactMap { item in
+                guard let field = CardFieldKind(rawValue: item.field) else { return nil }
+                return CardFieldDecision(spanID: item.spanID, field: field)
+            }
         } catch {
             AppLogger.pipeline.error("Foundation Models 推論エラー: \(error)")
-            return nil
+            return []
         }
     }
     #endif
 
-    /// LLM出力値がOCRテキストに存在するか照合する
-    private func existsInOCR(_ value: String, ocrTexts: [String]) -> Bool {
-        guard !value.isEmpty else { return true }
-        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let joined = ocrTexts.joined(separator: "\n")
-        return joined.contains(v) || ocrTexts.contains { $0.contains(v) || v.contains($0) }
+    private func merge(_ assignments: [FieldAssignment], into result: inout CardFieldClassifier.ParsedCard) {
+        for assignment in assignments {
+            switch assignment.field {
+            case .personName where result.lastName.isEmpty && result.firstName.isEmpty:
+                let split = NameProcessor.splitName(assignment.value)
+                result.lastName = split.lastName
+                result.firstName = split.firstName
+            case .company where result.company.isEmpty: result.company = assignment.value
+            case .department where result.department.isEmpty: result.department = assignment.value
+            case .title where result.title.isEmpty: result.title = assignment.value
+            default: break
+            }
+        }
     }
 
     // MARK: - Tier 別エントリポイント（統一パイプラインへのディスパッチ）
@@ -587,43 +570,63 @@ class CardFormViewModel: ObservableObject {
     }
 
     private func populateWithClassifier(lines: [RecognizedLine]) {
-        // Tier 3: ルールベースのみ（統一パイプラインの llmBackend: .none と同等だが同期版）
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
-        apply(ruleResult.parsed)
+        applyResolved(ruleResult.parsed, spans: ruleResult.spans, assignments: ruleResult.assignments)
     }
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
     private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
-        let lastR: String
-        let firstR: String
-        if !parsed.lastNameReading.isEmpty {
-            // 優先1: フリガナ行（Classifier由来）
-            lastR = parsed.lastNameReading
-            firstR = parsed.firstNameReading.isEmpty
-                ? NameReadingGenerator.generateReading(from: parsed.firstName) : parsed.firstNameReading
-        } else if let emailReading = NameReadingGenerator.inferReadingFromEmail(
-            email: parsed.email, lastName: parsed.lastName, firstName: parsed.firstName
-        ) {
-            // 優先2: メールアドレス由来
-            lastR = emailReading.lastNameReading
-            firstR = emailReading.firstNameReading
-        } else {
-            // 優先3: CFStringTokenizer
-            lastR = NameReadingGenerator.generateReading(from: parsed.lastName)
-            firstR = NameReadingGenerator.generateReading(from: parsed.firstName)
-        }
-        // 会社名読みは法人格を除いた読みで保存する（OCR/LLM由来でも除去する）
-        let companyR: String = {
-            let raw = parsed.companyReading.isEmpty
-                ? NameReadingGenerator.generateCompanyReading(from: parsed.company)
-                : parsed.companyReading
-            return BusinessCard.stripLegalEntityReading(from: raw)
-        }()
-        apply(lastName: parsed.lastName, lastNameReading: Self.sanitizeReading(lastR),
-              firstName: parsed.firstName, firstNameReading: Self.sanitizeReading(firstR),
-              company: parsed.company, companyReading: companyR,
+        apply(lastName: parsed.lastName, lastNameReading: Self.sanitizeReading(parsed.lastNameReading),
+              firstName: parsed.firstName, firstNameReading: Self.sanitizeReading(parsed.firstNameReading),
+              company: parsed.company, companyReading: BusinessCard.stripLegalEntityReading(from: parsed.companyReading),
               department: parsed.department, title: parsed.title, phones: parsed.phones,
               email: parsed.email, address: parsed.address, website: parsed.website)
+    }
+
+    private func applyResolved(
+        _ parsed: CardFieldClassifier.ParsedCard,
+        spans: [CardTextSpan],
+        assignments: [FieldAssignment]
+    ) {
+        let resolution = NameReadingGenerator.resolveReadings(
+            parsed: parsed,
+            spans: spans,
+            assignments: assignments
+        )
+        readingCandidates = resolution.candidates
+        var resolved = parsed
+        resolved.lastNameReading = editedReadingTargets.contains(.lastName)
+            ? lastNameReading
+            : resolution.automaticValues[.lastName] ?? ""
+        resolved.firstNameReading = editedReadingTargets.contains(.firstName)
+            ? firstNameReading
+            : resolution.automaticValues[.firstName] ?? ""
+        resolved.companyReading = editedReadingTargets.contains(.company)
+            ? companyReading
+            : resolution.automaticValues[.company] ?? ""
+        isApplyingReadingResolution = true
+        apply(resolved)
+        isApplyingReadingResolution = false
+    }
+
+    func readingCandidates(for target: ReadingTarget) -> [ReadingCandidate] {
+        Array(readingCandidates.filter { $0.target == target }.prefix(3))
+    }
+
+    func selectReadingCandidate(_ candidate: ReadingCandidate) {
+        isApplyingReadingResolution = true
+        switch candidate.target {
+        case .lastName: lastNameReading = candidate.reading
+        case .firstName: firstNameReading = candidate.reading
+        case .company: companyReading = candidate.reading
+        }
+        isApplyingReadingResolution = false
+        editedReadingTargets.insert(candidate.target)
+    }
+
+    private func markReadingEdited(_ target: ReadingTarget) {
+        guard !isApplyingReadingResolution else { return }
+        editedReadingTargets.insert(target)
     }
 
     private static func sanitizeReading(_ reading: String) -> String {
@@ -670,15 +673,10 @@ class CardFormViewModel: ObservableObject {
         target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
         target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
         target.company        = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 会社名読み：空なら自動生成、いずれの場合も法人格を除去して保存
-        let companyReadingRaw = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        let companyReadingFinal: String = {
-            let raw = companyReadingRaw.isEmpty
-                ? NameReadingGenerator.generateCompanyReading(from: company.trimmingCharacters(in: .whitespacesAndNewlines))
-                : companyReadingRaw
-            return BusinessCard.stripLegalEntityReading(from: raw)
-        }()
-        target.companyReading = companyReadingFinal
+        // 空欄は「読みを確定できない」という有効な状態。保存直前には再生成しない。
+        target.companyReading = BusinessCard.stripLegalEntityReading(
+            from: companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
         target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
         target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -716,19 +714,18 @@ class CardFormViewModel: ObservableObject {
     }
 }
 
-// MARK: - ParsedCard（Foundation Models @Generable 定義）
+// MARK: - Foundation Models 構造化出力
 #if canImport(FoundationModels)
 @available(iOS 26.0, *)
 @Generable
-struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）。該当なしなら空文字列「」を返す")      var lastName: String
-    @Guide(description: "名（ファーストネーム）。該当なしなら空文字列「」を返す")      var firstName: String
-    @Guide(description: "会社名。該当なしなら空文字列「」を返す")                      var company: String
-    @Guide(description: "部署名。該当なしなら空文字列「」を返す")                      var department: String
-    @Guide(description: "役職。該当なしなら空文字列「」を返す")                        var title: String
-    @Guide(description: "電話番号。該当なしなら空文字列「」を返す")                    var phone: String
-    @Guide(description: "メールアドレス。該当なしなら空文字列「」を返す")              var email: String
-    @Guide(description: "住所。該当なしなら空文字列「」を返す")                        var address: String
-    @Guide(description: "WebサイトURL。該当なしなら空文字列「」を返す")               var website: String
+struct GeneratedFieldDecision {
+    @Guide(description: "入力にある span ID") var spanID: String
+    @Guide(description: "personName, company, department, title のいずれか") var field: String
+}
+
+@available(iOS 26.0, *)
+@Generable
+struct GeneratedFieldDecisions {
+    @Guide(description: "曖昧な span の分類結果") var decisions: [GeneratedFieldDecision]
 }
 #endif

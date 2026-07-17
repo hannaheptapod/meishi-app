@@ -93,6 +93,39 @@ final class LocalLLMService: ObservableObject {
         return hasContent ? result : nil
     }
 
+    /// 曖昧な span を名刺全体の文脈付きで分類する。
+    func resolveFields(request: CardFieldResolutionRequest) async -> [CardFieldDecision] {
+        guard isModelAvailable || checkModelFiles() else { return [] }
+        isModelAvailable = true
+        beginInference()
+        defer { endInference() }
+
+        let deadline = Date().addingTimeInterval(10)
+        let fullContext = request.spans
+            .sorted { $0.readingOrder < $1.readingOrder }
+            .map { "[\($0.id)] \($0.text)" }
+            .joined(separator: "\n")
+        let candidatesBySpan = Dictionary(grouping: request.candidates) { $0.spanIDs.first ?? "" }
+        var decisions: [CardFieldDecision] = []
+
+        for spanID in request.ambiguousSpanIDs.prefix(4) {
+            guard Date() <= deadline, !Task.isCancelled,
+                  let span = request.spans.first(where: { $0.id == spanID }) else { break }
+            let allowed = Set(candidatesBySpan[spanID, default: []].map(\.field))
+            guard !allowed.isEmpty else { continue }
+            let prompt = contextualClassificationPrompt(
+                target: span,
+                fullContext: fullContext,
+                allowed: allowed
+            )
+            guard let decoded = try? await worker.responseToken(for: prompt, paths: activePaths),
+                  let field = fieldKind(from: decoded),
+                  allowed.contains(field) else { continue }
+            decisions.append(CardFieldDecision(spanID: spanID, field: field))
+        }
+        return decisions
+    }
+
     /// タグ・AI検索・重複検出のyes/no判定を同じ推論キューへ直列化する。
     func yesNo(prompt: String) async -> Bool {
         guard isModelAvailable || checkModelFiles() else { return false }
@@ -174,6 +207,43 @@ final class LocalLLMService: ObservableObject {
 
     private func classificationPrompt(line: String) -> String {
         "<|im_start|>system\nClassify the business card field. Reply with exactly one word. A person's name is typically 2-6 kanji characters, often with a space between family and given name.<|im_end|>\n<|im_start|>user\nWhat type of field is this on a Japanese business card?\n\"\(line)\"\nOptions: name, title, department, company, address, other<|im_end|>\n<|im_start|>assistant\n/no_think\n"
+    }
+
+    private func contextualClassificationPrompt(
+        target: CardTextSpan,
+        fullContext: String,
+        allowed: Set<CardFieldKind>
+    ) -> String {
+        let optionTokens = allowed.compactMap { field -> String? in
+            switch field {
+            case .personName: "N=name"
+            case .company: "C=company"
+            case .department: "D=department"
+            case .title: "T=title"
+            default: nil
+            }
+        }.sorted().joined(separator: ", ")
+        return """
+        <|im_start|>system
+        Classify one target line on a Japanese business card using the entire card context. Reply with exactly one allowed letter.<|im_end|>
+        <|im_start|>user
+        Full card in reading order:
+        \(fullContext)
+
+        Target: [\(target.id)] \(target.text)
+        Allowed: \(optionTokens)<|im_end|>
+        <|im_start|>assistant
+        /no_think
+        """
+    }
+
+    private func fieldKind(from token: String) -> CardFieldKind? {
+        let value = token.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("n") || value.hasPrefix("名") { return .personName }
+        if value.hasPrefix("c") || value.hasPrefix("会") { return .company }
+        if value.hasPrefix("d") || value.hasPrefix("部") { return .department }
+        if value.hasPrefix("t") || value.hasPrefix("役") { return .title }
+        return nil
     }
 
     private func splitJapaneseName(_ text: String) -> (lastName: String, firstName: String) {

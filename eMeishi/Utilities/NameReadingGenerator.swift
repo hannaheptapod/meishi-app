@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // CFStringTransform に渡す前のローマ字正規化を一元管理する。
 enum RomajiReadingNormalizer {
@@ -158,7 +159,8 @@ enum NameReadingGenerator {
 
     private static func isLatinInitialism(_ text: String) -> Bool {
         guard !text.isEmpty, text.allSatisfy(isASCIILetter) else { return false }
-        return text.count == 1 || text == text.uppercased()
+        // SONY のような発音語を文字読みしない。連続略称として扱うのは最大3文字まで。
+        return text.count == 1 || (text.count <= 3 && text == text.uppercased())
     }
 
     private static func spellInitialism(_ text: String) -> String {
@@ -170,6 +172,192 @@ enum NameReadingGenerator {
             return false
         }
         return (0x41...0x5A).contains(scalar.value) || (0x61...0x7A).contains(scalar.value)
+    }
+
+    /// フィールド解決後の氏名・会社 span から、根拠付きの読み候補を生成する。
+    static func resolveReadings(
+        parsed: CardFieldClassifier.ParsedCard,
+        spans: [CardTextSpan],
+        assignments: [FieldAssignment]
+    ) -> ReadingResolution {
+        var resolution = ReadingResolution()
+        let assignedIDs = Set(assignments.flatMap(\.spanIDs))
+        let available = spans.filter { !assignedIDs.contains($0.id) }
+
+        if let nameAssignment = assignments.first(where: { $0.field == .personName }),
+           let nameSpan = spans.first(where: { nameAssignment.spanIDs.contains($0.id) }) {
+            appendPrintedNameCandidates(
+                parsed: parsed,
+                nameSpan: nameSpan,
+                available: available,
+                resolution: &resolution
+            )
+        }
+
+        appendEmailAndTokenizerNameCandidates(parsed: parsed, resolution: &resolution)
+
+        if let companyAssignment = assignments.first(where: { $0.field == .company }),
+           let companySpan = spans.first(where: { companyAssignment.spanIDs.contains($0.id) }) {
+            appendCompanyCandidates(
+                company: parsed.company,
+                companySpan: companySpan,
+                available: available,
+                resolution: &resolution
+            )
+        }
+
+        resolution.candidates = deduplicated(resolution.candidates)
+        return resolution
+    }
+
+    private static func appendPrintedNameCandidates(
+        parsed: CardFieldClassifier.ParsedCard,
+        nameSpan: CardTextSpan,
+        available: [CardTextSpan],
+        resolution: inout ReadingResolution
+    ) {
+        let nearby = available
+            .filter { spatiallyRelated($0.boundingBox, nameSpan.boundingBox) }
+            .sorted { distance($0.boundingBox, nameSpan.boundingBox) < distance($1.boundingBox, nameSpan.boundingBox) }
+
+        if let kana = nearby.first(where: { isKanaReading($0.text) }) {
+            let split = NameProcessor.splitName(katakanaToHiragana(kana.text))
+            if !split.lastName.isEmpty {
+                appendAutomatic(.lastName, reading: split.lastName, source: .printedKana, spanID: kana.id, resolution: &resolution)
+            }
+            if !split.firstName.isEmpty {
+                appendAutomatic(.firstName, reading: split.firstName, source: .printedKana, spanID: kana.id, resolution: &resolution)
+            }
+            return
+        }
+
+        if let romaji = nearby.first(where: { isRomajiName($0.text) }),
+           let readings = NameProcessor.resolveRomajiReading(
+                romajiLine: RecognizedLine(
+                    text: romaji.text,
+                    boundingBox: romaji.boundingBox,
+                    confidence: romaji.ocrConfidence,
+                    textDirection: romaji.textDirection
+                ),
+                lastName: parsed.lastName,
+                firstName: parsed.firstName
+           ) {
+            appendAutomatic(.lastName, reading: readings.lastNameReading, source: .printedRomaji, spanID: romaji.id, resolution: &resolution)
+            appendAutomatic(.firstName, reading: readings.firstNameReading, source: .printedRomaji, spanID: romaji.id, resolution: &resolution)
+        }
+    }
+
+    private static func appendEmailAndTokenizerNameCandidates(
+        parsed: CardFieldClassifier.ParsedCard,
+        resolution: inout ReadingResolution
+    ) {
+        if let email = inferReadingFromEmail(email: parsed.email, lastName: parsed.lastName, firstName: parsed.firstName) {
+            appendCandidate(.lastName, reading: email.lastNameReading, source: .email, confidence: .medium, spanIDs: [], resolution: &resolution)
+            appendCandidate(.firstName, reading: email.firstNameReading, source: .email, confidence: .medium, spanIDs: [], resolution: &resolution)
+        }
+        appendCandidate(.lastName, reading: generateReading(from: parsed.lastName), source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
+        appendCandidate(.firstName, reading: generateReading(from: parsed.firstName), source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
+    }
+
+    private static func appendCompanyCandidates(
+        company: String,
+        companySpan: CardTextSpan,
+        available: [CardTextSpan],
+        resolution: inout ReadingResolution
+    ) {
+        let strippedCompany = LegalEntityTerms.stripKanji(from: company)
+        if isKanaReading(strippedCompany) {
+            appendAutomatic(.company, reading: katakanaToHiragana(strippedCompany), source: .printedKana, spanID: companySpan.id, resolution: &resolution)
+            return
+        }
+        if let printed = available
+            .filter({ isKanaReading($0.text) && spatiallyRelated($0.boundingBox, companySpan.boundingBox) })
+            .min(by: { distance($0.boundingBox, companySpan.boundingBox) < distance($1.boundingBox, companySpan.boundingBox) }) {
+            appendAutomatic(.company, reading: katakanaToHiragana(printed.text), source: .printedKana, spanID: printed.id, resolution: &resolution)
+        }
+        let generated = generateCompanyReading(from: company)
+        guard !generated.isEmpty else { return }
+        let source: ReadingSource = containsLatinInitialism(company) ? .latinInitialism : .tokenizer
+        appendCandidate(.company, reading: BusinessCard.stripLegalEntityReading(from: generated), source: source, confidence: source == .latinInitialism ? .medium : .low, spanIDs: [companySpan.id], resolution: &resolution)
+    }
+
+    private static func appendAutomatic(
+        _ target: ReadingTarget,
+        reading: String,
+        source: ReadingSource,
+        spanID: String,
+        resolution: inout ReadingResolution
+    ) {
+        let normalized = sanitizedCandidate(reading)
+        guard !normalized.isEmpty else { return }
+        resolution.automaticValues[target] = normalized
+        appendCandidate(target, reading: normalized, source: source, confidence: .high, spanIDs: [spanID], resolution: &resolution)
+    }
+
+    private static func appendCandidate(
+        _ target: ReadingTarget,
+        reading: String,
+        source: ReadingSource,
+        confidence: FieldConfidence,
+        spanIDs: [String],
+        resolution: inout ReadingResolution
+    ) {
+        let normalized = sanitizedCandidate(reading)
+        guard !normalized.isEmpty else { return }
+        resolution.candidates.append(ReadingCandidate(
+            target: target,
+            reading: normalized,
+            source: source,
+            confidence: confidence,
+            sourceSpanIDs: spanIDs
+        ))
+    }
+
+    private static func deduplicated(_ candidates: [ReadingCandidate]) -> [ReadingCandidate] {
+        Dictionary(grouping: candidates, by: { "\($0.target.rawValue):\($0.reading)" })
+            .compactMap { _, values in values.max { lhs, rhs in lhs.confidence < rhs.confidence } }
+            .sorted {
+                if $0.target != $1.target { return $0.target.rawValue < $1.target.rawValue }
+                if $0.confidence != $1.confidence { return $0.confidence > $1.confidence }
+                return $0.reading < $1.reading
+            }
+    }
+
+    private static func isKanaReading(_ text: String) -> Bool {
+        let stripped = text.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "　", with: "")
+        guard (2...24).contains(stripped.count) else { return false }
+        return stripped.unicodeScalars.allSatisfy {
+            (0x3040...0x30FF).contains($0.value) || (0xFF65...0xFF9F).contains($0.value)
+        }
+    }
+
+    private static func isRomajiName(_ text: String) -> Bool {
+        let parts = text.split(separator: " ").filter { !$0.isEmpty }
+        guard (2...3).contains(parts.count) else { return false }
+        return text.unicodeScalars.allSatisfy {
+            (0x41...0x5A).contains($0.value) || (0x61...0x7A).contains($0.value)
+                || $0.value == 0x20 || $0.value == 0x2E
+        }
+    }
+
+    private static func containsLatinInitialism(_ text: String) -> Bool {
+        let runs = text.split(whereSeparator: { !isASCIILetter($0) }).map(String.init)
+        return runs.contains(where: isLatinInitialism)
+    }
+
+    private static func sanitizedCandidate(_ reading: String) -> String {
+        let trimmed = reading.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.unicodeScalars.allSatisfy(\.isASCII) else { return "" }
+        return trimmed
+    }
+
+    private static func spatiallyRelated(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        abs(lhs.midY - rhs.midY) <= max(lhs.height, rhs.height) * 3.2
+            && abs(lhs.midX - rhs.midX) <= max(lhs.width, rhs.width) * 0.9 + 0.08
+    }
+
+    private static func distance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        hypot(lhs.midX - rhs.midX, lhs.midY - rhs.midY)
     }
 
     /// カタカナをひらがなに変換する（長音符 ー を保存する）
