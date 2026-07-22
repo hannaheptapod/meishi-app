@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import SwiftUI
 
 nonisolated enum CardListRoute: Hashable, Sendable {
@@ -10,6 +11,13 @@ nonisolated enum CardListRoute: Hashable, Sendable {
 nonisolated enum AppTab: Hashable, Sendable {
     case cards
     case insights
+}
+
+/// 名刺一覧ルートでTab Barを隠す必要がある操作状態。
+/// 画面インスタンスのUUIDではなく、UI上の意味をそのまま状態として保持する。
+nonisolated enum CardListRootMode: Hashable, Sendable {
+    case browsing
+    case selecting
 }
 
 nonisolated enum CardListExternalFilter: Hashable, Sendable {
@@ -39,24 +47,58 @@ nonisolated enum CardListExternalFilter: Hashable, Sendable {
 @MainActor
 final class AppNavigationState: ObservableObject {
     @Published var selectedTab: AppTab = .cards
-    @Published var cardsPath: [CardListRoute] = []
+    @Published private(set) var activeCardsRoute: CardListRoute?
     @Published var insightsPath = NavigationPath()
     @Published var externalFilter: CardListExternalFilter?
     @Published var isCardAdditionRequested = false
-    @Published var selectedCardForSplit: BusinessCard?
-    @Published private(set) var isRootChromeSuppressed = false
+    @Published var isAISearchPaywallRequested = false
+    @Published private(set) var cardListRootMode: CardListRootMode = .browsing
+    @Published private(set) var isCardListBackgroundInteractionBlocked = false
 
-    private var rootChromeSuppressors: Set<UUID> = []
+    var selectedCardURI: URL? {
+        guard case .detail(let objectURI) = activeCardsRoute else { return nil }
+        return objectURI
+    }
 
-    func pushCardsRoute(_ route: CardListRoute) {
-        cardsPath.append(route)
+    var isRootChromeSuppressed: Bool {
+        selectedTab == .cards && cardListRootMode == .selecting
+    }
+
+    /// Tab Barの表示判断はルートだけが行う。
+    /// 詳細遷移と選択モードが別々のViewからvisibilityを上書きしないよう、
+    /// 画面状態をここで1つの判定へ集約する。
+    func shouldHideRootTabBar(isCompactWidth: Bool) -> Bool {
+        guard selectedTab == .cards else { return false }
+        if cardListRootMode == .selecting { return true }
+        return isCompactWidth && activeCardsRoute != nil
+    }
+
+    /// 現在の詳細列を指定した画面へ置き換える。
+    /// compactでもregularでも同じNavigationSplitViewを使うため、履歴を幅別に分岐させない。
+    func showCardRoute(_ route: CardListRoute) {
+        activeCardsRoute = route
+    }
+
+    func showCardDetail(_ objectURI: URL) {
+        showCardRoute(.detail(objectURI))
+    }
+
+    func clearSelectedCardRoute() {
+        guard case .detail = activeCardsRoute else { return }
+        activeCardsRoute = nil
+    }
+
+    /// compactのNavigationSplitViewで戻る操作が行われたとき、
+    /// ルート種別に関わらず名刺一覧へ戻す。
+    func returnToCardsRoot() {
+        activeCardsRoute = nil
     }
 
     func showCards(filteredBy filter: CardListExternalFilter) {
         externalFilter = filter
-        selectedCardForSplit = nil
         selectedTab = .cards
-        cardsPath = []
+        activeCardsRoute = nil
+        cardListRootMode = .browsing
     }
 
     func requestCardAddition() {
@@ -67,19 +109,31 @@ final class AppNavigationState: ObservableObject {
         isCardAdditionRequested = false
     }
 
-    func showSettings() {
-        selectedCardForSplit = nil
-        selectedTab = .cards
-        cardsPath = [.settings]
+    func requestAISearchPaywall() {
+        isAISearchPaywallRequested = true
     }
 
-    /// ルート画面上の選択モードなどが、Tab Barと追加ボタンを隠す状態を所有者単位で管理する。
-    func setRootChromeSuppressed(_ suppressed: Bool, owner: UUID) {
-        if suppressed {
-            rootChromeSuppressors.insert(owner)
-        } else {
-            rootChromeSuppressors.remove(owner)
-        }
-        isRootChromeSuppressed = !rootChromeSuppressors.isEmpty
+    func consumeAISearchPaywallRequest() {
+        isAISearchPaywallRequested = false
+    }
+
+    func showSettings() {
+        selectedTab = .cards
+        showCardRoute(.settings)
+        cardListRootMode = .browsing
+    }
+
+    func setCardListSelectionActive(_ isActive: Bool) {
+        let newMode: CardListRootMode = isActive ? .selecting : .browsing
+        guard cardListRootMode != newMode else { return }
+        cardListRootMode = newMode
+    }
+
+
+    /// コンテキストメニューのdismiss完了までは、Tab Bar・検索・toolbarを含む
+    /// ルート全域への背面入力を遮断する。
+    func setCardListBackgroundInteractionBlocked(_ isBlocked: Bool) {
+        guard isCardListBackgroundInteractionBlocked != isBlocked else { return }
+        isCardListBackgroundInteractionBlocked = isBlocked
     }
 }

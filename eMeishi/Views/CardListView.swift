@@ -1,42 +1,46 @@
-import CoreData
 import SwiftUI
 import UIKit
 
+nonisolated private enum CardListContextMenuAction: Equatable, Sendable {
+    case toggleFavorite(objectURI: URL)
+    case edit(objectURI: URL)
+    case shareVCard(objectURI: URL)
+    case saveToContacts(objectURI: URL)
+    case delete(objectURI: URL)
+}
+
+nonisolated private enum CardListConfirmationCommit: Equatable, Sendable {
+    case importContacts
+    case deleteCard(objectURI: URL)
+    case bulkDelete(cardURIs: Set<URL>)
+}
+
 // 名刺一覧画面
 struct CardListView: View {
-    var usesSplitView = false
+    /// regular幅のSplit Viewでだけ、一覧行とツールバーを狭いsidebar向けに調整する。
+    /// 遷移方式とは分離し、幅変更時にCardListView自体を作り直さない。
+    var usesSidebarLayout = false
 
     @EnvironmentObject private var viewModel: CardListViewModel
     @EnvironmentObject private var navigationState: AppNavigationState
-    @Environment(\.managedObjectContext) private var viewContext
-    @State private var isShowingImportConfirm = false
-    @State private var isShowingTagManager = false
-    @State private var isContextMenuPresented = false
-    @State private var suppressCardTapUntil = Date.distantPast
-    @State private var selectionChromeOwner = UUID()
-
-    // コンテキストメニュー用
-    @State private var cardToEdit: BusinessCard? = nil
-    @State private var cardToDelete: BusinessCard? = nil
-    @State private var isShowingDeleteConfirm = false
+    @State private var presentationState = CardListPresentationState()
+    @State private var confirmationCommitState = DismissalCommitState<CardListConfirmationCommit>()
+    @StateObject private var contextMenuInteractionGate = ContextMenuInteractionGate<CardListContextMenuAction>()
+    @State private var didPrepareInitialAppearance = false
+    @State private var refreshAfterSheetDismissal = false
+    @State private var confirmationCommitTask: Task<Void, Never>?
+    @State private var viewLifetimeID = UUID()
 
     // 選択モード用
     @State private var editMode: EditMode = .inactive
-    @State private var selectedCardIDs: Set<BusinessCard.ID> = []
-    @State private var isShowingBulkDeleteConfirm = false
-    @State private var isShowingBulkTagSheet = false
-    @State private var isShowingPaywall = false
-    // スクリーンショット撮影モード用：CardFormView を OCR 完了状態のモックで開く
-    @State private var isShowingMockOCRForm = false
+    @State private var selectedCardIDs: Set<URL> = []
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
     /// 選択モード時のみ選択を受け付けるバインディング
-    private var selectionBinding: Binding<Set<BusinessCard.ID>> {
+    private var selectionBinding: Binding<Set<URL>> {
         Binding(
             get: { editMode == .active ? selectedCardIDs : [] },
             set: { if editMode == .active { selectedCardIDs = $0 } }
@@ -49,11 +53,14 @@ struct CardListView: View {
 
     private var baseView: some View {
         Group {
-            if viewModel.cards.isEmpty {
+            if !viewModel.isListDisplayReady {
+                ProgressView("名刺を読み込んでいます")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !viewModel.hasDisplayedCards {
                 emptyState
-            } else if viewModel.filteredCards.isEmpty && viewModel.isSearchActive {
+            } else if viewModel.filteredCardItems.isEmpty && viewModel.isDisplayedSearchActive {
                 searchEmptyState
-            } else if viewModel.filteredCards.isEmpty && viewModel.isFilterActive {
+            } else if viewModel.filteredCardItems.isEmpty && viewModel.isDisplayedFilterActive {
                 filterEmptyState
             } else {
                 cardList
@@ -62,7 +69,7 @@ struct CardListView: View {
             .navigationTitle(editMode == .active ? selectionTitle : "名刺")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaBar(edge: .top, spacing: 0) {
-                if let externalFilter = viewModel.externalFilter,
+                if let externalFilter = viewModel.displayedExternalFilter,
                    editMode == .inactive {
                     activeExternalFilterBar(externalFilter)
                         .frame(maxWidth: AppTheme.cardListMaximumWidth)
@@ -71,170 +78,477 @@ struct CardListView: View {
                         .padding(.bottom, AppTheme.Spacing.xSmall)
                 }
             }
-            .scrollEdgeEffectStyle(.soft, for: .top)
             .toolbar {
-                if editMode == .active {
-                    selectionToolbarContent
-                } else {
-                    normalToolbarContent
-                }
+                normalToolbarContent
+                selectionToolbarContent
             }
             .onChange(of: editMode) { _, mode in
-                navigationState.setRootChromeSuppressed(
-                    mode == .active,
-                    owner: selectionChromeOwner
-                )
+                navigationState.setCardListSelectionActive(mode == .active)
             }
             .environment(\.editMode, $editMode)
-            .navigationDestination(for: CardListRoute.self) { route in
-                destination(for: route)
-            }
             .background(AppTheme.background.ignoresSafeArea())
     }
 
-    @ViewBuilder
-    private func destination(for route: CardListRoute) -> some View {
-        switch route {
-        case .detail(let objectURI):
-            if let objectID = viewContext.persistentStoreCoordinator?
-                .managedObjectID(forURIRepresentation: objectURI),
-               let object = try? viewContext.existingObject(with: objectID),
-               let card = object as? BusinessCard {
-                CardDetailView(card: card)
-            } else {
-                ContentUnavailableView("名刺を表示できません", systemImage: "exclamationmark.triangle")
-            }
-        case .settings:
-            SettingsView()
-        case .duplicates:
-            DuplicateListView(pairs: $viewModel.duplicatePairs, onMerge: {
-                viewModel.fetchCards()
-                viewModel.detectDuplicates()
-            })
-        }
-    }
-
-    private var importPresentations: some View {
-        baseView
-    }
-
-    private var managementPresentations: some View {
-        importPresentations
-            .sheet(item: $viewModel.exportItem) { item in
-                ShareSheet(activityItems: [item.url])
-            }
-            .alert("エラー", isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { viewModel.errorMessage = nil }
-            } message: {
-                Text(viewModel.errorMessage ?? "")
-            }
-            .sheet(isPresented: $isShowingTagManager) {
-                TagManagementView()
-                    .environmentObject(viewModel)
-            }
-            .alert("連絡先からインポート", isPresented: $isShowingImportConfirm) {
-                Button("インポート") { viewModel.importFromContacts() }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                Text("iPhoneの連絡先をすべて名刺としてインポートします。")
-            }
-            .alert("インポート完了", isPresented: Binding(
-                get: { viewModel.importResultMessage != nil },
-                set: { if !$0 { viewModel.importResultMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { viewModel.importResultMessage = nil }
-            } message: {
-                Text(viewModel.importResultMessage ?? "")
-            }
-    }
-
     private var interactionPresentations: some View {
-        managementPresentations
-            // コンテキストメニューからの編集シート
-            .sheet(item: $cardToEdit) { card in
-                CardFormView(card: card, onSave: {
+        baseView
+            // 検索UIは一覧のnavigation item自身が所有する。外側のNavigationStackへ
+            // 注入すると、詳細からpopする途中でUISearchControllerが付け替わり、
+            // 枠だけが消える中間フレームが発生する。
+            .searchable(
+                text: $viewModel.searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "キーワード・自然な言葉で検索"
+            )
+            .searchSuggestions {
+                cardSearchSuggestions
+            }
+            .onSubmit(of: .search) {
+                submitCardSearch()
+            }
+            // sheet / confirmationDialog / alert は同じ状態機械を共有し、同時表示を禁止する。
+            .sheet(item: sheetPresentationBinding, onDismiss: {
+                completeCurrentPresentationDismissal()
+                if refreshAfterSheetDismissal {
+                    refreshAfterSheetDismissal = false
                     viewModel.fetchCards()
-                    cardToEdit = nil
-                })
+                }
+            }) { request in
+                sheetContent(for: request)
             }
-            // コンテキストメニューからの削除確認
             .confirmationDialog(
-                "名刺を削除",
-                isPresented: $isShowingDeleteConfirm,
+                confirmationTitle,
+                isPresented: confirmationPresentationBinding,
                 titleVisibility: .visible
             ) {
-                Button("削除", role: .destructive) {
-                    if let card = cardToDelete {
-                        viewModel.deleteCards([card])
-                    }
-                    cardToDelete = nil
-                }
-                Button("キャンセル", role: .cancel) {
-                    cardToDelete = nil
-                }
+                confirmationActions
             } message: {
-                Text("「\(cardToDelete?.fullName ?? "")」を削除します。この操作は取り消せません。")
+                Text(confirmationMessage)
             }
-            // 一括削除確認
-            .confirmationDialog(
-                "名刺を削除",
-                isPresented: $isShowingBulkDeleteConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("削除（\(selectedCardIDs.count)件）", role: .destructive) {
-                    viewModel.deleteCards(viewModel.selectedCards(from: selectedCardIDs))
-                    selectedCardIDs = []
-                    editMode = .inactive
-                }
-                Button("キャンセル", role: .cancel) {}
+            .alert(alertTitle, isPresented: alertPresentationBinding) {
+                Button("OK", role: .cancel) {}
             } message: {
-                Text("\(selectedCardIDs.count)件の名刺を削除します。この操作は取り消せません。")
+                Text(alertMessage)
             }
-            // 一括タグ付けシート
-            .sheet(isPresented: $isShowingBulkTagSheet) {
-                BulkTagAssignView(
-                    selectedCardIDs: selectedCardIDs,
-                    onDismiss: {
-                        isShowingBulkTagSheet = false
-                    }
-                )
-                .environmentObject(viewModel)
-                .environmentObject(entitlementStore)
+            .background {
+                ZStack {
+                    PresentationDismissalObserver(
+                        activeID: activeNonSheetRequestID,
+                        dismissingID: dismissingNonSheetRequestID,
+                        onDismissalCompleted: completeNonSheetPresentationDismissal
+                    )
+                }
+                .frame(width: 0, height: 0)
             }
             .onAppear {
-                viewModel.externalFilter = navigationState.externalFilter
+                if viewModel.externalFilter != navigationState.externalFilter {
+                    viewModel.externalFilter = navigationState.externalFilter
+                }
+                navigationState.setCardListBackgroundInteractionBlocked(
+                    contextMenuInteractionGate.blocksCardInteraction
+                )
+                // 非表示中に完了した共有・連絡先処理の結果も、復帰時に必ず取り込む。
+                consumeViewModelPresentationSignals()
+                guard !didPrepareInitialAppearance else { return }
+                didPrepareInitialAppearance = true
                 handleScreenshotMode()
             }
             .onChange(of: navigationState.externalFilter) { _, filter in
                 viewModel.externalFilter = filter
             }
-            .sheet(isPresented: $isShowingPaywall) {
+            .onChange(of: navigationState.selectedTab) { _, selectedTab in
+                guard selectedTab != .cards else { return }
+                deactivateTransientInteractionState()
+            }
+            .onChange(of: contextMenuInteractionGate.blocksCardInteraction) { _, isBlocked in
+                navigationState.setCardListBackgroundInteractionBlocked(isBlocked)
+            }
+            .onChange(of: viewModel.exportItem?.id) { _, _ in
+                consumeExportPresentation()
+            }
+            .onChange(of: viewModel.errorMessage) { _, _ in
+                consumeErrorPresentation()
+            }
+            .onChange(of: viewModel.importResultMessage) { _, _ in
+                consumeImportResultPresentation()
+            }
+    }
+
+    // MARK: - Search
+
+    @ViewBuilder
+    private var cardSearchSuggestions: some View {
+        if editMode == .inactive,
+           viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !viewModel.recentSearches.isEmpty {
+                Section("最近の検索") {
+                    ForEach(viewModel.recentSearches, id: \.self) { query in
+                        cardSearchSuggestion(query, systemImage: "clock.arrow.circlepath")
+                    }
+                    Button("検索履歴を消去", systemImage: "trash") {
+                        viewModel.clearRecentSearches()
+                    }
+                }
+            }
+
+            Section("自然な言葉で検索") {
+                cardSearchSuggestion("今月追加した名刺", systemImage: "sparkles")
+                cardSearchSuggestion("お気に入りの営業担当", systemImage: "sparkles")
+            }
+
+            if !viewModel.companySearchSuggestions.isEmpty {
+                Section("会社") {
+                    ForEach(viewModel.companySearchSuggestions, id: \.self) { company in
+                        cardSearchSuggestion(company, systemImage: "building.2")
+                    }
+                }
+            }
+
+            if !viewModel.tagSearchSuggestions.isEmpty {
+                Section("タグ") {
+                    ForEach(viewModel.tagSearchSuggestions, id: \.self) { tag in
+                        cardSearchSuggestion(tag, systemImage: "tag")
+                    }
+                }
+            }
+        }
+    }
+
+    private func cardSearchSuggestion(_ text: String, systemImage: String) -> some View {
+        Button {
+            viewModel.applySearchSuggestion(text)
+        } label: {
+            Label(text, systemImage: systemImage)
+        }
+        .searchCompletion(text)
+    }
+
+    private func submitCardSearch() {
+        guard editMode == .inactive,
+              viewModel.isSearchActive else { return }
+        if entitlementStore.hasAccess {
+            viewModel.submitUnifiedSearch()
+        } else if viewModel.filteredCardItems.isEmpty {
+            navigationState.requestAISearchPaywall()
+        }
+    }
+
+    // MARK: - Presentation state
+
+    /// 現在の sheet request の ID を Binding に閉じ込める。
+    /// 前の sheet が遅れて dismiss を通知しても、次の表示を閉じない。
+    private var sheetPresentationBinding: Binding<CardListPresentationRequest?> {
+        let requestID = activeSheetRequest?.id
+        return Binding(
+            get: { activeSheetRequest },
+            set: { request in
+                guard request == nil, let requestID else { return }
+                presentationState.clearActive(requestID: requestID)
+            }
+        )
+    }
+
+    private var confirmationPresentationBinding: Binding<Bool> {
+        let requestID = activeConfirmationRequest?.id
+        return Binding(
+            get: { activeConfirmationRequest != nil },
+            set: { isPresented in
+                guard !isPresented, let requestID else { return }
+                beginPresentationDismissal(requestID: requestID)
+            }
+        )
+    }
+
+    private var alertPresentationBinding: Binding<Bool> {
+        let requestID = activeAlertRequest?.id
+        return Binding(
+            get: { activeAlertRequest != nil },
+            set: { isPresented in
+                guard !isPresented, let requestID else { return }
+                beginPresentationDismissal(requestID: requestID)
+            }
+        )
+    }
+
+    private var activeSheetRequest: CardListPresentationRequest? {
+        guard let request = presentationState.active,
+              case .sheet = request.destination else { return nil }
+        return request
+    }
+
+    private var activeConfirmationRequest: CardListPresentationRequest? {
+        guard let request = presentationState.active,
+              case .confirmation = request.destination else { return nil }
+        return request
+    }
+
+    private var activeAlertRequest: CardListPresentationRequest? {
+        guard let request = presentationState.active,
+              case .alert = request.destination else { return nil }
+        return request
+    }
+
+    @ViewBuilder
+    private func sheetContent(for request: CardListPresentationRequest) -> some View {
+        if case .sheet(let destination) = request.destination {
+            switch destination {
+            case .tagManager:
+                TagManagementView()
+                    .environmentObject(viewModel)
+            case .editCard(let objectURI):
+                if let card = viewModel.cardForEditing(objectURI: objectURI) {
+                    CardFormView(card: card, onSave: {
+                        // Core Dataの保存通知で予約された再取得を止め、sheetの
+                        // 離脱完了後に一度だけ実行する。遷移中の全一覧更新を避ける。
+                        viewModel.cancelPendingContextRefresh()
+                        refreshAfterSheetDismissal = true
+                        presentationState.clearActive(requestID: request.id)
+                    })
+                } else {
+                    unavailableSheet(
+                        title: "名刺を編集できません",
+                        description: "この名刺は削除されたか、同期によって更新されています。",
+                        requestID: request.id
+                    )
+                }
+            case .bulkTag(let cardURIs):
+                if cardURIs.isEmpty {
+                    unavailableSheet(
+                        title: "名刺を選択できません",
+                        description: "選択した名刺は削除されたか、同期によって更新されています。",
+                        requestID: request.id
+                    )
+                } else {
+                    BulkTagAssignView(
+                        selectedCardURIs: cardURIs,
+                        onDismiss: {
+                            presentationState.clearActive(requestID: request.id)
+                        }
+                    )
+                    .environmentObject(viewModel)
+                    .environmentObject(entitlementStore)
+                }
+            case .paywall:
                 PaywallView(context: .aiSearch)
                     .environmentObject(entitlementStore)
-            }
-            // スクリーンショット撮影モード用：OCR 完了状態のモックフォームを表示
-            .sheet(isPresented: $isShowingMockOCRForm) {
+            case .mockOCRForm:
                 CardFormView(viewModelFactory: {
                     ScreenshotMockSupport.makeMockOCRFinishedViewModel()
-                }, onSave: { isShowingMockOCRForm = false })
+                }, onSave: {
+                    presentationState.clearActive(requestID: request.id)
+                })
                 .environmentObject(viewModel)
+            case .shareExport(let url):
+                ShareSheet(activityItems: [url])
             }
+        }
+    }
+
+    private func unavailableSheet(
+        title: String,
+        description: String,
+        requestID: UUID
+    ) -> some View {
+        NavigationStack {
+            ContentUnavailableView(
+                title,
+                systemImage: "exclamationmark.triangle",
+                description: Text(description)
+            )
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") {
+                        presentationState.clearActive(requestID: requestID)
+                    }
+                }
+            }
+        }
+    }
+
+    private var confirmationTitle: String {
+        switch activeConfirmation {
+        case .importContacts: "連絡先からインポート"
+        case .deleteCard, .bulkDelete: "名刺を削除"
+        case nil: ""
+        }
+    }
+
+    private var confirmationMessage: String {
+        switch activeConfirmation {
+        case .importContacts:
+            "iPhoneの連絡先をすべて名刺としてインポートします。"
+        case .deleteCard:
+            "この名刺を削除します。この操作は取り消せません。"
+        case .bulkDelete(let cardURIs):
+            "\(cardURIs.count)件の名刺を削除します。この操作は取り消せません。"
+        case nil:
+            ""
+        }
+    }
+
+    @ViewBuilder
+    private var confirmationActions: some View {
+        switch activeConfirmation {
+        case .importContacts:
+            Button("インポート") {
+                scheduleActiveConfirmationCommit(.importContacts)
+            }
+            Button("キャンセル", role: .cancel) {}
+        case .deleteCard(let objectURI):
+            Button("削除", role: .destructive) {
+                scheduleActiveConfirmationCommit(.deleteCard(objectURI: objectURI))
+            }
+            Button("キャンセル", role: .cancel) {}
+        case .bulkDelete(let cardURIs):
+            Button("削除（\(cardURIs.count)件）", role: .destructive) {
+                scheduleActiveConfirmationCommit(.bulkDelete(cardURIs: cardURIs))
+            }
+            Button("キャンセル", role: .cancel) {}
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private var activeConfirmation: CardListPresentationDestination.Confirmation? {
+        guard let request = activeConfirmationRequest,
+              case .confirmation(let confirmation) = request.destination else { return nil }
+        return confirmation
+    }
+
+    private var alertTitle: String {
+        switch activeAlert {
+        case .error: "エラー"
+        case .importResult: "インポート完了"
+        case nil: ""
+        }
+    }
+
+    private var alertMessage: String {
+        switch activeAlert {
+        case .error(let message), .importResult(let message): message
+        case nil: ""
+        }
+    }
+
+    private var activeAlert: CardListPresentationDestination.Alert? {
+        guard let request = activeAlertRequest,
+              case .alert(let alert) = request.destination else { return nil }
+        return alert
+    }
+
+    private func requestPresentation(_ destination: CardListPresentationDestination) {
+        presentationState.request(destination)
+    }
+
+    private var activeNonSheetRequestID: UUID? {
+        guard let request = presentationState.active else { return nil }
+        switch request.destination {
+        case .alert, .confirmation:
+            return request.id
+        case .sheet:
+            return nil
+        }
+    }
+
+    private var dismissingNonSheetRequestID: UUID? {
+        guard let request = presentationState.dismissing else { return nil }
+        switch request.destination {
+        case .alert, .confirmation:
+            return request.id
+        case .sheet:
+            return nil
+        }
+    }
+
+    private func beginPresentationDismissal(requestID: UUID) {
+        presentationState.clearActive(requestID: requestID)
+    }
+
+    private func completeNonSheetPresentationDismissal(requestID: UUID) {
+        let commit = confirmationCommitState.take(afterDismissing: requestID)
+        let lifetimeID = viewLifetimeID
+        confirmationCommitTask?.cancel()
+        confirmationCommitTask = Task {
+            defer {
+                if viewLifetimeID == lifetimeID {
+                    confirmationCommitTask = nil
+                }
+            }
+            if let commit {
+                await performConfirmationCommit(commit)
+            }
+            guard !Task.isCancelled,
+                  viewLifetimeID == lifetimeID,
+                  presentationState.dismissing?.id == requestID else { return }
+            presentationState.presentNext(afterDismissing: requestID)
+        }
+    }
+
+    private func completeCurrentPresentationDismissal() {
+        guard let requestID = presentationState.dismissing?.id else { return }
+        presentationState.presentNext(afterDismissing: requestID)
+    }
+
+    /// 確認ダイアログ内では、連絡先権限UI・Core Data更新・toolbar切替を開始しない。
+    /// 実際のdialog dismissal完了後にだけ副作用を実行する。
+    private func scheduleActiveConfirmationCommit(_ action: CardListConfirmationCommit) {
+        guard let active = activeConfirmationRequest,
+              confirmationCommitState.schedule(action, for: active.id) else { return }
+        beginPresentationDismissal(requestID: active.id)
+    }
+
+    private func performConfirmationCommit(_ action: CardListConfirmationCommit) async {
+        switch action {
+        case .importContacts:
+            await viewModel.importFromContacts()
+        case .deleteCard(let objectURI):
+            viewModel.deleteCards(objectURIs: [objectURI])
+        case .bulkDelete(let cardURIs):
+            viewModel.deleteCards(objectURIs: cardURIs)
+            selectedCardIDs = []
+            editMode = .inactive
+        }
+    }
+
+    private var selectedCardURIs: Set<URL> {
+        selectedCardIDs
+    }
+
+    /// ViewModel の一時的な出力を presentation state へ移し、二重の表示状態を残さない。
+    private func consumeViewModelPresentationSignals() {
+        consumeExportPresentation()
+        consumeErrorPresentation()
+        consumeImportResultPresentation()
+    }
+
+    private func consumeExportPresentation() {
+        guard let item = viewModel.exportItem else { return }
+        viewModel.exportItem = nil
+        requestPresentation(.sheet(.shareExport(url: item.url)))
+    }
+
+    private func consumeErrorPresentation() {
+        guard let message = viewModel.errorMessage else { return }
+        viewModel.errorMessage = nil
+        requestPresentation(.alert(.error(message: message)))
+    }
+
+    private func consumeImportResultPresentation() {
+        guard let message = viewModel.importResultMessage else { return }
+        viewModel.importResultMessage = nil
+        requestPresentation(.alert(.importResult(message: message)))
     }
 
     /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
     private func handleScreenshotMode() {
         guard ScreenshotMode.isActive, let screen = ScreenshotMode.startScreen else { return }
         switch screen {
-        case "Tags":     isShowingTagManager = true
-        case "AIChat":
+        case "Tags":     requestPresentation(.sheet(.tagManager))
+        case "UnifiedSearch":
             viewModel.searchText = "IT関係の人"
             viewModel.submitUnifiedSearch()
-        case "FormOCR":  isShowingMockOCRForm = true
-        case "Paywall":  isShowingPaywall = true
-        case "Settings": navigationState.pushCardsRoute(.settings)
+        case "FormOCR":  requestPresentation(.sheet(.mockOCRForm))
+        case "Paywall":  requestPresentation(.sheet(.paywall))
+        case "Settings": navigationState.showCardRoute(.settings)
         default: break
         }
     }
@@ -256,36 +570,49 @@ struct CardListView: View {
     private var normalToolbarContent: some ToolbarContent {
         // 写真アプリと同様に、並べ替え・フィルターを選択操作の左へ置く。
         ToolbarItem(placement: .topBarTrailing) {
-            if !viewModel.cards.isEmpty {
+            if editMode == .inactive {
                 sortFilterMenu
+                    .disabled(!viewModel.hasDisplayedCards)
+                    .accessibilityHidden(!viewModel.hasDisplayedCards)
             }
         }
 
-        if !usesSplitView {
+        if !usesSidebarLayout && editMode == .inactive {
             ToolbarSpacer(.fixed, placement: .topBarTrailing)
         }
 
         ToolbarItem(placement: .topBarTrailing) {
-            if !viewModel.cards.isEmpty {
+            if editMode == .active {
+                Button("完了") {
+                    editMode = .inactive
+                    selectedCardIDs = []
+                }
+                .fontWeight(.semibold)
+                .tint(Color.primary)
+                .accessibilityIdentifier("doneButton")
+            } else {
                 Button("選択") {
                     editMode = .active
                     selectedCardIDs = []
                 }
                 .tint(Color.primary)
+                .disabled(!viewModel.hasDisplayedCards)
+                .accessibilityHidden(!viewModel.hasDisplayedCards)
                 .accessibilityIdentifier("selectButton")
             }
         }
 
-        if !usesSplitView {
+        if !usesSidebarLayout && editMode == .inactive {
             ToolbarSpacer(.fixed, placement: .topBarTrailing)
         }
 
         // 右上: その他の操作
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                if !viewModel.cards.isEmpty {
+            if editMode == .inactive {
+                Menu {
+                if viewModel.hasDisplayedCards {
                     Button {
-                        navigationState.pushCardsRoute(.duplicates)
+                        navigationState.showCardRoute(.duplicates)
                     } label: {
                         Label(
                             viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
@@ -295,13 +622,13 @@ struct CardListView: View {
                     Divider()
                 }
                 Button {
-                    isShowingImportConfirm = true
+                    requestPresentation(.confirmation(.importContacts))
                 } label: {
                     Label("連絡先からインポート", systemImage: "person.crop.circle.badge.plus")
                 }
                 .disabled(viewModel.isImporting)
                 .accessibilityIdentifier("importFromContacts")
-                if !viewModel.cards.isEmpty {
+                if viewModel.hasDisplayedCards {
                     Divider()
                     Button { viewModel.exportCSV() } label: {
                         Label("CSV としてエクスポート", systemImage: "tablecells")
@@ -311,38 +638,25 @@ struct CardListView: View {
                     }
                 }
                 Divider()
-                Button { isShowingTagManager = true } label: {
+                Button { requestPresentation(.sheet(.tagManager)) } label: {
                     Label("タグ管理", systemImage: "tag")
                 }
                 .accessibilityIdentifier("tagManager")
                 Divider()
                 Button {
-                    navigationState.pushCardsRoute(.settings)
+                    navigationState.showCardRoute(.settings)
                 } label: {
                     Label("設定", systemImage: "gearshape")
                 }
                 .accessibilityIdentifier("settingsMenu")
-            } label: {
-                Label("メニュー", systemImage: "ellipsis")
+                } label: {
+                    Label("メニュー", systemImage: "ellipsis")
+                }
+                .tint(Color.primary)
+                .accessibilityIdentifier("ellipsisMenu")
             }
-            .tint(Color.primary)
-            .accessibilityIdentifier("ellipsisMenu")
         }
 
-        if usesSplitView {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    navigationState.requestCardAddition()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .tint(AppTheme.brandOrange)
-                .accessibilityLabel("名刺を追加")
-                .accessibilityIdentifier("splitCardAddButton")
-            }
-        }
     }
 
     // MARK: - 選択モードのツールバー
@@ -351,33 +665,25 @@ struct CardListView: View {
     private var selectionToolbarContent: some ToolbarContent {
         // 左上: すべて選択/全解除
         ToolbarItem(placement: .topBarLeading) {
-            Button(selectedCardIDs.count == viewModel.filteredCards.count && !viewModel.filteredCards.isEmpty ? "全解除" : "すべて選択") {
-                if selectedCardIDs.count == viewModel.filteredCards.count {
-                    selectedCardIDs = []
-                } else {
-                    selectedCardIDs = Set(viewModel.filteredCards.compactMap(\.id))
+            if editMode == .active {
+                Button(selectedCardIDs.count == viewModel.filteredCardItems.count && !viewModel.filteredCardItems.isEmpty ? "全解除" : "すべて選択") {
+                    if selectedCardIDs.count == viewModel.filteredCardItems.count {
+                        selectedCardIDs = []
+                    } else {
+                        selectedCardIDs = Set(viewModel.filteredCardItems.map(\.id))
+                    }
                 }
+                .tint(Color.primary)
+                .accessibilityIdentifier("selectAllButton")
             }
-            .tint(Color.primary)
-            .accessibilityIdentifier("selectAllButton")
-        }
-
-        // 右上: 完了ボタン（HIG: Done は trailing + .prominent）
-        ToolbarItem(placement: .topBarTrailing) {
-            Button("完了") {
-                editMode = .inactive
-                selectedCardIDs = []
-            }
-            .fontWeight(.semibold)
-            .tint(Color.primary)
-            .accessibilityIdentifier("doneButton")
         }
 
         // 下部: 一括操作（左: 削除 / 中央: タグ＋お気に入り / 右: エクスポート）
-        ToolbarItemGroup(placement: .bottomBar) {
+        if editMode == .active {
+            ToolbarItemGroup(placement: .bottomBar) {
             // 削除
             Button(role: .destructive) {
-                isShowingBulkDeleteConfirm = true
+                requestPresentation(.confirmation(.bulkDelete(cardURIs: selectedCardURIs)))
             } label: {
                 Label("削除", systemImage: "trash")
             }
@@ -389,7 +695,7 @@ struct CardListView: View {
 
             // タグ
             Button {
-                isShowingBulkTagSheet = true
+                requestPresentation(.sheet(.bulkTag(cardURIs: selectedCardURIs)))
             } label: {
                 Label("タグ", systemImage: "tag")
             }
@@ -399,7 +705,7 @@ struct CardListView: View {
             // お気に入り
             Button {
                 haptic.impactOccurred()
-                viewModel.toggleBulkFavorite(ids: selectedCardIDs)
+                viewModel.toggleBulkFavorite(objectURIs: selectedCardIDs)
             } label: {
                 Label("お気に入り", systemImage: "star")
             }
@@ -411,12 +717,12 @@ struct CardListView: View {
             // エクスポート
             Menu {
                 Button {
-                    viewModel.exportSelectedCSV(ids: selectedCardIDs)
+                    exportSelectedCards(as: .csv)
                 } label: {
                     Label("CSVエクスポート", systemImage: "tablecells")
                 }
                 Button {
-                    viewModel.exportSelectedVCard(ids: selectedCardIDs)
+                    exportSelectedCards(as: .vCard)
                 } label: {
                     Label("vCardエクスポート", systemImage: "person.crop.rectangle")
                 }
@@ -425,41 +731,44 @@ struct CardListView: View {
             }
             .tint(Color.primary)
             .disabled(selectedCardIDs.isEmpty)
+            }
         }
     }
 
     // MARK: - サブビュー
 
     private var cardList: some View {
-        let showIndex = editMode == .inactive && !viewModel.isSearchActive &&
-            (viewModel.sortKey == .name || viewModel.sortKey == .company)
+        let showIndex = editMode == .inactive && !viewModel.isDisplayedSearchActive &&
+            (viewModel.displayedSortKey == .name || viewModel.displayedSortKey == .company)
         return ScrollViewReader { proxy in
             List(selection: selectionBinding) {
-                if viewModel.isSearchActive {
+                if viewModel.isDisplayedSearchActive {
                     // 検索中はフラット表示
-                    ForEach(viewModel.filteredCards) { card in
-                        cardRow(for: card)
+                    ForEach(viewModel.filteredCardItems) { item in
+                        cardRow(for: item)
                     }
                     .onDelete { offsets in
                         // 確認ダイアログを経由してから削除（HIG: 取り消せない破壊的操作は確認が必要）
-                        if let card = offsets.map({ viewModel.filteredCards[$0] }).first {
-                            cardToDelete = card
-                            isShowingDeleteConfirm = true
+                        if let item = offsets.map({ viewModel.filteredCardItems[$0] }).first {
+                            requestPresentation(
+                                .confirmation(.deleteCard(objectURI: item.id))
+                            )
                         }
                     }
                     .deleteDisabled(editMode == .active)
                 } else {
                     // ソート順に応じたセクション表示
-                    ForEach(viewModel.groupedCards) { section in
+                    ForEach(viewModel.groupedCardItemSections) { section in
                         Section {
-                            ForEach(section.cards) { card in
-                                cardRow(for: card)
+                            ForEach(section.items) { item in
+                                cardRow(for: item)
                             }
                             .onDelete { offsets in
                                 // 確認ダイアログを経由してから削除（HIG: 取り消せない破壊的操作は確認が必要）
-                                if let card = offsets.map({ section.cards[$0] }).first {
-                                    cardToDelete = card
-                                    isShowingDeleteConfirm = true
+                                if let item = offsets.map({ section.items[$0] }).first {
+                                    requestPresentation(
+                                        .confirmation(.deleteCard(objectURI: item.id))
+                                    )
                                 }
                             }
                             .deleteDisabled(editMode == .active)
@@ -468,7 +777,7 @@ struct CardListView: View {
                                 Text(section.title)
                                     .font(.subheadline.weight(.bold))
                                     .foregroundStyle(.primary)
-                                Text("\(section.cards.count)")
+                                Text("\(section.items.count)")
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(Color.primary.opacity(0.72))
                                     .padding(.horizontal, 7)
@@ -477,7 +786,7 @@ struct CardListView: View {
                             }
                             .textCase(nil)
                             .accessibilityElement(children: .combine)
-                            .accessibilityLabel("\(section.title)、\(section.cards.count)件")
+                            .accessibilityLabel("\(section.title)、\(section.items.count)件")
                         }
                         .id(section.id)
                     }
@@ -488,12 +797,14 @@ struct CardListView: View {
             .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            // 索引の44ptタップ領域とカードのhit領域を完全に分離する。
+            .contentMargins(.trailing, showIndex ? 44 : 0, for: .scrollContent)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
             .overlay(alignment: .trailing) {
                 if showIndex {
                     SectionIndexView(
-                        sections: viewModel.groupedCards,
+                        sectionIDs: viewModel.groupedCardItemSections.map(\.id),
                         proxy: proxy
                     )
                     .padding(.trailing, 0)
@@ -501,11 +812,28 @@ struct CardListView: View {
             }
             .frame(maxWidth: AppTheme.cardListMaximumWidth)
             .frame(maxWidth: .infinity)
-            .animation(
-                reduceMotion ? nil : .snappy(duration: 0.32, extraBounce: 0.03),
-                value: visibleCardTransitionIDs
-            )
         }
+    }
+
+    /// タブを離れた時だけ、一時的な操作状態を終了する。
+    /// compact幅の詳細遷移はsidebarの`onDisappear`を発生させるため、ここには含めない。
+    private func deactivateTransientInteractionState() {
+        // 詳細列の表示ではなく、名刺タブ自体を離れた時だけ画面起点の世代を終了する。
+        // これにより別タブ表示後に古い確認処理やpresentationが戻ってこない。
+        viewLifetimeID = UUID()
+        confirmationCommitTask?.cancel()
+        confirmationCommitTask = nil
+        confirmationCommitState.removeAll()
+        presentationState.removeAll()
+        refreshAfterSheetDismissal = false
+        if editMode == .active {
+            editMode = .inactive
+            selectedCardIDs = []
+        } else {
+            navigationState.setCardListSelectionActive(false)
+        }
+        contextMenuInteractionGate.reset()
+        navigationState.setCardListBackgroundInteractionBlocked(false)
     }
 
     // MARK: - フィルター・ソート
@@ -541,9 +869,9 @@ struct CardListView: View {
             sortKey: viewModel.sortKey,
             sortAscending: viewModel.sortAscending,
             showFavoritesOnly: viewModel.showFavoritesOnly,
-            tags: viewModel.allTags.compactMap { tag in
-                guard let id = tag.id else { return nil }
-                return NativeSortFilterMenuButton.TagOption(id: id, name: tag.tagName)
+            tags: viewModel.tagDisplaySnapshots.compactMap { tag in
+                guard let id = tag.tagID else { return nil }
+                return NativeSortFilterMenuButton.TagOption(id: id, name: tag.name)
             },
             selectedTagIDs: viewModel.selectedTagIDs,
             externalFilterTitle: viewModel.externalFilter?.displayTitle,
@@ -559,9 +887,8 @@ struct CardListView: View {
                 viewModel.setFavoritesFilter(isEnabled)
             },
             onSetTag: { tagID, isEnabled in
-                guard let tag = viewModel.allTags.first(where: { $0.id == tagID }) else { return }
                 haptic.impactOccurred()
-                viewModel.setTagFilter(tag, enabled: isEnabled)
+                viewModel.setTagFilter(id: tagID, enabled: isEnabled)
             },
             onClearExternalFilter: {
                 haptic.impactOccurred()
@@ -597,26 +924,24 @@ struct CardListView: View {
     // MARK: - カード行（コンテキストメニュー付き）
 
     @ViewBuilder
-    private func cardRow(for card: BusinessCard) -> some View {
+    private func cardRow(for item: CardListItemSnapshot) -> some View {
+        let rowSnapshot = item.row
         if editMode == .inactive {
             Button {
-                guard !isContextMenuPresented, Date() >= suppressCardTapUntil else { return }
+                guard !contextMenuInteractionGate.blocksCardInteraction else { return }
                 haptic.impactOccurred(intensity: 0.55)
-                if usesSplitView {
-                    navigationState.selectedCardForSplit = card
-                } else {
-                    navigationState.pushCardsRoute(.detail(card.objectID.uriRepresentation()))
-                }
+                navigationState.showCardDetail(item.id)
             } label: {
                 CardRowView(
-                    card: card,
-                    compact: usesSplitView,
-                    isSelected: usesSplitView && navigationState.selectedCardForSplit?.objectID == card.objectID
+                    item: item,
+                    compact: usesSidebarLayout,
+                    isSelected: usesSidebarLayout &&
+                        navigationState.selectedCardURI == item.id
                 )
             }
             .buttonStyle(CardRowButtonStyle())
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .accessibilityIdentifier("cardRow_\(card.fullName)")
+            .accessibilityIdentifier("cardRow_\(rowSnapshot.displayName)")
             .accessibilityHint("詳細を表示")
             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             .listRowSeparator(.hidden)
@@ -624,82 +949,82 @@ struct CardListView: View {
             .swipeActions(edge: .leading) {
                 Button {
                     haptic.impactOccurred()
-                    viewModel.toggleFavorite(card)
+                    viewModel.toggleFavorite(objectURI: item.id)
                 } label: {
                     Label(
-                        card.isFavorite ? "解除" : "お気に入り",
-                        systemImage: card.isFavorite ? "star.slash" : "star.fill"
+                        rowSnapshot.isFavorite ? "解除" : "お気に入り",
+                        systemImage: rowSnapshot.isFavorite ? "star.slash" : "star.fill"
                     )
                 }
                 .tint(.yellow)
             }
             .contextMenu {
-                cardContextMenu(for: card)
+                cardContextMenu(for: item.id, isFavorite: rowSnapshot.isFavorite)
             } preview: {
-                CardPeekView(card: card)
-                    .onAppear {
-                        isContextMenuPresented = true
-                    }
-                    .onDisappear {
-                        isContextMenuPresented = false
-                        // dismissalに使った背面タップが次の行へ伝播する期間だけ無効化する。
-                        suppressCardTapUntil = Date().addingTimeInterval(0.35)
+                CardPeekView(item: item)
+                    .background {
+                        ContextMenuPreviewLifecycleObserver(
+                            onPreviewPresented: {
+                                contextMenuInteractionGate.previewDidAppear()
+                            },
+                            onDismissalBegan: { sessionID in
+                                contextMenuInteractionGate.previewDidDisappear(
+                                    sessionID: sessionID
+                                )
+                            },
+                            onDismissalCompleted: { sessionID in
+                                completeContextMenuDismissal(sessionID: sessionID)
+                            },
+                            onDismissalCancelled: { sessionID in
+                                contextMenuInteractionGate.dismissalWasCancelled(
+                                    sessionID: sessionID
+                                )
+                            }
+                        )
+                        .frame(width: 0, height: 0)
                     }
             }
         } else {
-            CardRowView(card: card, compact: usesSplitView)
-                .accessibilityIdentifier("cardRow_\(card.fullName)")
+            CardRowView(item: item, compact: usesSidebarLayout)
+                .accessibilityIdentifier("cardRow_\(rowSnapshot.displayName)")
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
         }
     }
 
-    /// 一覧の並び替え・絞り込み・追加削除を安定IDでアニメーションさせる。
-    private var visibleCardTransitionIDs: [String] {
-        if viewModel.isSearchActive {
-            return viewModel.filteredCards.map(transitionID(for:))
-        }
-        return viewModel.groupedCards
-            .flatMap(\.cards)
-            .map(transitionID(for:))
-    }
-
-    private func transitionID(for card: BusinessCard) -> String {
-        card.id?.uuidString ?? card.objectID.uriRepresentation().absoluteString
-    }
-
     // MARK: - コンテキストメニュー
 
     @ViewBuilder
-    private func cardContextMenu(for card: BusinessCard) -> some View {
+    private func cardContextMenu(for objectURI: URL, isFavorite: Bool) -> some View {
         Button {
-            haptic.impactOccurred()
-            viewModel.toggleFavorite(card)
+            requestContextMenuAction(
+                .toggleFavorite(objectURI: objectURI)
+            )
         } label: {
             Label(
-                card.isFavorite ? "お気に入り解除" : "お気に入りに追加",
-                systemImage: card.isFavorite ? "star.slash" : "star.fill"
+                isFavorite ? "お気に入り解除" : "お気に入りに追加",
+                systemImage: isFavorite ? "star.slash" : "star.fill"
             )
         }
         .tint(Color.primary)
 
         Button {
-            cardToEdit = card
+            requestContextMenuAction(.edit(objectURI: objectURI))
         } label: {
             Label("編集", systemImage: "pencil")
         }
         .tint(Color.primary)
 
         Button {
-            viewModel.shareVCard(card: card)
+            requestContextMenuAction(.shareVCard(objectURI: objectURI))
         } label: {
             Label("vCardとして共有", systemImage: "square.and.arrow.up")
         }
         .tint(Color.primary)
 
         Button {
-            viewModel.saveToContacts(card: card)
+            requestContextMenuAction(.saveToContacts(objectURI: objectURI))
         } label: {
             Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
         }
@@ -708,10 +1033,54 @@ struct CardListView: View {
         Divider()
 
         Button(role: .destructive) {
-            cardToDelete = card
-            isShowingDeleteConfirm = true
+            requestContextMenuAction(.delete(objectURI: objectURI))
         } label: {
             Label("削除", systemImage: "trash")
+        }
+    }
+
+    private func requestContextMenuAction(_ action: CardListContextMenuAction) {
+        guard let immediateAction = contextMenuInteractionGate.deferUntilDismissal(action) else {
+            return
+        }
+        performContextMenuAction(immediateAction)
+    }
+
+    private func completeContextMenuDismissal(sessionID: UUID) {
+        guard let deferredAction = contextMenuInteractionGate.dismissalDidComplete(
+            sessionID: sessionID
+        ) else { return }
+        performContextMenuAction(deferredAction)
+    }
+
+    private func performContextMenuAction(_ action: CardListContextMenuAction) {
+        switch action {
+        case .toggleFavorite(let objectURI):
+            haptic.impactOccurred()
+            viewModel.toggleFavorite(objectURI: objectURI)
+        case .edit(let objectURI):
+            requestPresentation(.sheet(.editCard(objectURI: objectURI)))
+        case .shareVCard(let objectURI):
+            viewModel.shareVCard(objectURI: objectURI)
+        case .saveToContacts(let objectURI):
+            viewModel.saveToContacts(objectURI: objectURI)
+        case .delete(let objectURI):
+            requestPresentation(.confirmation(.deleteCard(objectURI: objectURI)))
+        }
+    }
+
+    private enum SelectedCardExportFormat {
+        case csv
+        case vCard
+    }
+
+    private func exportSelectedCards(as format: SelectedCardExportFormat) {
+        guard !selectedCardURIs.isEmpty else { return }
+        switch format {
+        case .csv:
+            viewModel.exportSelectedCSV(objectURIs: selectedCardURIs)
+        case .vCard:
+            viewModel.exportSelectedVCard(objectURIs: selectedCardURIs)
         }
     }
 

@@ -4,12 +4,11 @@ struct PaywallFeatureListView: View {
 
     let context: PaywallContext
 
-    private struct Feature: Identifiable {
+    /// `Identifiable.id` は非隔離要件のため、MainActor既定のView型から分離する。
+    nonisolated private struct Feature {
         let context: PaywallContext
         let icon: String
         let title: String
-
-        var id: PaywallContext { context }
     }
 
     private var features: [Feature] {
@@ -28,8 +27,9 @@ struct PaywallFeatureListView: View {
     }
 
     var body: some View {
+        let items = Array(features.enumerated())
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(features) { feature in
+            ForEach(items, id: \.offset) { _, feature in
                 HStack(spacing: 10) {
                     Image(systemName: feature.icon)
                         .foregroundStyle(Color.accentColor)
@@ -39,7 +39,7 @@ struct PaywallFeatureListView: View {
                         .foregroundStyle(.primary)
                     Spacer()
                     Image(systemName: "checkmark")
-                        .foregroundStyle(.accent)
+                        .foregroundStyle(Color.accentColor)
                         .font(.caption.weight(.bold))
                 }
             }

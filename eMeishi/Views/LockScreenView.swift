@@ -5,6 +5,9 @@ struct LockScreenView: View {
 
     @Binding var isUnlocked: Bool
     @State private var isAuthenticating = false
+    @State private var authenticationTask: Task<Void, Never>?
+    @State private var viewLifetimeID = UUID()
+    @State private var biometricType: AuthenticationService.BiometricType = .none
 
     private let authService = AuthenticationService.shared
 
@@ -35,26 +38,36 @@ struct LockScreenView: View {
             }
         }
         .onAppear {
+            viewLifetimeID = UUID()
+            biometricType = authService.refreshAvailableBiometricType()
             authenticate()
+        }
+        .onDisappear {
+            viewLifetimeID = UUID()
+            authenticationTask?.cancel()
+            authenticationTask = nil
+            isAuthenticating = false
         }
     }
 
     private func authenticate() {
         guard !isAuthenticating else { return }
         isAuthenticating = true
-        Task {
+        let lifetimeID = viewLifetimeID
+        authenticationTask?.cancel()
+        authenticationTask = Task {
             let success = await authService.authenticate(reason: "アプリのロックを解除")
+            guard !Task.isCancelled, viewLifetimeID == lifetimeID else { return }
             isAuthenticating = false
             if success {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    isUnlocked = true
-                }
+                isUnlocked = true
             }
+            authenticationTask = nil
         }
     }
 
     private var unlockLabel: String {
-        switch authService.availableBiometricType() {
+        switch biometricType {
         case .faceID:  return "Face IDでロック解除"
         case .touchID: return "Touch IDでロック解除"
         case .none:    return "パスコードでロック解除"
@@ -62,7 +75,7 @@ struct LockScreenView: View {
     }
 
     private var unlockIcon: String {
-        switch authService.availableBiometricType() {
+        switch biometricType {
         case .faceID:  return "faceid"
         case .touchID: return "touchid"
         case .none:    return "lock.open"

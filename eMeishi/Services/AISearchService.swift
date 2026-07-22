@@ -1,10 +1,37 @@
 import Foundation
-import CoreData
 import os
 
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
+
+/// ログへ記録してよい、associated value を含まない検索分類。
+nonisolated enum AISearchQueryCategory: String, Equatable, Sendable {
+    case location
+    case name
+    case company
+    case conceptual
+}
+
+/// AI検索に必要な値だけを保持する不変スナップショット。
+/// Core Data管理オブジェクトを推論中に保持せず、画面遷移や保存との競合を防ぐ。
+nonisolated struct AISearchCardSnapshot: Equatable, Sendable {
+    let id: UUID
+    let fullName: String
+    let lastName: String
+    let firstName: String
+    let lastNameReading: String
+    let firstNameReading: String
+    let company: String
+    let department: String
+    let title: String
+    let address: String
+    let notes: String
+    let tagNames: [String]
+    let hasPhone: Bool
+    let hasEmail: Bool
+    let createdAt: Date?
+}
 
 /// 対話型 AI 検索サービス
 ///
@@ -13,19 +40,19 @@ import FoundationModels
 /// 2. 概念的検索（「食品関係」「IT系」等）のみ LLM に委譲
 /// 3. LLM にはフィルタ済み候補ではなく全カードを渡すが、判定はカード単位の yes/no
 @MainActor
-class AISearchService {
+final class AISearchService {
 
     static let shared = AISearchService()
 
     // MARK: - チャットメッセージ
 
-    struct ChatMessage: Identifiable {
+    struct ChatMessage: Identifiable, Sendable {
         let id = UUID()
         let role: Role
         let text: String
         var matchedCardIDs: [UUID]
 
-        enum Role {
+        enum Role: Sendable {
             case user, assistant
         }
     }
@@ -37,19 +64,29 @@ class AISearchService {
         case name(keywords: [String])       // 人名で検索
         case company(keywords: [String])    // 会社名で検索
         case conceptual(query: String)      // 概念的・意味的検索（LLM必要）
+
+        var category: AISearchQueryCategory {
+            switch self {
+            case .location: .location
+            case .name: .name
+            case .company: .company
+            case .conceptual: .conceptual
+            }
+        }
     }
 
     // MARK: - 公開 API
 
     func search(
         query: String,
-        cards: [BusinessCard]
+        cards: [AISearchCardSnapshot]
     ) async -> ChatMessage {
         let method = SettingsStore.shared.readingMethod
         AppLogger.search.info("検索開始: query=\(query, privacy: .private) method=\(method.rawValue, privacy: .public) cards=\(cards.count, privacy: .public)件")
 
         let queryType = classifyQuery(query)
-        AppLogger.search.info("クエリ種別: \(String(describing: queryType), privacy: .public)")
+        // QueryType の associated value には検索語・地名・氏名候補が含まれるため公開しない。
+        AppLogger.search.info("クエリ種別: \(queryType.category.rawValue, privacy: .public)")
 
         // フィールド特定可能な検索はルールベースで処理（LLM不要）
         switch queryType {
@@ -147,23 +184,29 @@ class AISearchService {
         return .conceptual(query: cleaned)
     }
 
+    /// 診断・テストでは値を含まない分類だけを公開する。
+    func queryCategory(for query: String) -> AISearchQueryCategory {
+        classifyQuery(query).category
+    }
+
     // MARK: - ルールベース検索
 
     /// 特定フィールドに対するキーワード検索
     private func fieldSearch(
-        cards: [BusinessCard],
+        cards: [AISearchCardSnapshot],
         query: String,
         keywords: [String],
-        field: KeyPath<BusinessCard, String?>,
+        field: KeyPath<AISearchCardSnapshot, String>,
         label: String
     ) -> ChatMessage {
         let matched = cards.filter { card in
-            guard let value = card[keyPath: field], !value.isEmpty else { return false }
+            let value = card[keyPath: field]
+            guard !value.isEmpty else { return false }
             return keywords.allSatisfy { keyword in
                 value.localizedCaseInsensitiveContains(keyword)
             }
         }
-        let matchedIDs = matched.compactMap { $0.id }
+        let matchedIDs = matched.map(\.id)
         let text = matchedIDs.isEmpty
             ? "「\(query)」に該当する\(label)の名刺は見つかりませんでした。"
             : "\(matchedIDs.count)件見つかりました。"
@@ -172,7 +215,7 @@ class AISearchService {
 
     /// 名前検索（姓・名・フルネーム・ふりがなを横断検索）
     private func nameSearch(
-        cards: [BusinessCard],
+        cards: [AISearchCardSnapshot],
         query: String,
         keywords: [String]
     ) -> ChatMessage {
@@ -183,13 +226,13 @@ class AISearchService {
                 card.firstName,
                 card.lastNameReading,
                 card.firstNameReading
-            ].compactMap { $0 }
+            ].filter { !$0.isEmpty }
 
             return keywords.allSatisfy { keyword in
                 searchTargets.contains { $0.localizedCaseInsensitiveContains(keyword) }
             }
         }
-        let matchedIDs = matched.compactMap { $0.id }
+        let matchedIDs = matched.map(\.id)
         let text = matchedIDs.isEmpty
             ? "「\(query)」に該当する名刺は見つかりませんでした。"
             : "\(matchedIDs.count)件見つかりました。"
@@ -212,7 +255,7 @@ class AISearchService {
     @available(iOS 26.0, *)
     private func searchWithFoundationModels(
         query: String,
-        cards: [BusinessCard]
+        cards: [AISearchCardSnapshot]
     ) async -> ChatMessage? {
         let maxCardsPerBatch = 100
         let batches = stride(from: 0, to: cards.count, by: maxCardsPerBatch).map {
@@ -225,12 +268,12 @@ class AISearchService {
             guard !Task.isCancelled else { return nil }
             // 番号付きリスト（0-indexed）
             let cardList = batchCards.enumerated().map { (i, card) in
-                let tagNames = card.tagArray.map(\.tagName).joined(separator: ",")
-                let contactState = "電話:\(card.phone?.isEmpty == false ? "あり" : "なし"),メール:\(card.email?.isEmpty == false ? "あり" : "なし")"
+                let tagNames = card.tagNames.joined(separator: ",")
+                let contactState = "電話:\(card.hasPhone ? "あり" : "なし"),メール:\(card.hasEmail ? "あり" : "なし")"
                 let date = card.createdAt?.formatted(date: .numeric, time: .omitted) ?? "不明"
                 let parts = [card.fullName, card.company, card.department, card.title, card.address,
                              tagNames, contactState, "登録:\(date)"]
-                    .compactMap { $0 }.filter { !$0.isEmpty }
+                    .filter { !$0.isEmpty }
                 return "\(batchIdx * maxCardsPerBatch + i): \(parts.joined(separator: "/"))"
             }.joined(separator: "\n")
 
@@ -295,7 +338,11 @@ class AISearchService {
     }
 
     /// 番号リスト（"3,7,12" or "none"）をパースしてカードIDに変換
-    private func parseIndexResponse(text: String, cards: [BusinessCard], offset: Int) -> [UUID] {
+    private func parseIndexResponse(
+        text: String,
+        cards: [AISearchCardSnapshot],
+        offset: Int
+    ) -> [UUID] {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if cleaned == "none" || cleaned == "なし" || cleaned.isEmpty { return [] }
 
@@ -308,7 +355,8 @@ class AISearchService {
         for num in numbers {
             let localIdx = num - offset
             guard localIdx >= 0 && localIdx < cards.count else { continue }
-            if let cardID = cards[localIdx].id, !seenIDs.contains(cardID) {
+            let cardID = cards[localIdx].id
+            if !seenIDs.contains(cardID) {
                 seenIDs.insert(cardID)
                 matchedIDs.append(cardID)
             }
@@ -321,7 +369,7 @@ class AISearchService {
 
     private func searchWithQwen(
         query: String,
-        cards: [BusinessCard]
+        cards: [AISearchCardSnapshot]
     ) async -> ChatMessage? {
         let llm = LocalLLMService.shared
         guard llm.isModelAvailable else { return nil }
@@ -332,9 +380,7 @@ class AISearchService {
             guard !Task.isCancelled else { return nil }
             let evidenceFields = searchEvidenceFields(card: card)
             if AISearchEvidenceMatcher.matches(query: query, fields: evidenceFields) {
-                if let cardID = card.id {
-                    matchedIDs.append(cardID)
-                }
+                matchedIDs.append(card.id)
                 continue
             }
 
@@ -343,8 +389,8 @@ class AISearchService {
                 query: query,
                 cardSummary: summary
             )
-            if isMatch, let cardID = card.id {
-                matchedIDs.append(cardID)
+            if isMatch {
+                matchedIDs.append(card.id)
             }
         }
 
@@ -363,25 +409,6 @@ class AISearchService {
         let prompt = "<|im_start|>system\n\(systemInstruction)<|im_end|>\n<|im_start|>user\n今日:\(currentDateText)\n検索:「\(query)」\n名刺:\(cardSummary)\n条件を満たす?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
         return await LocalLLMService.shared.yesNo(prompt: prompt)
-    }
-
-    /// Float16 (UInt16) → Float32 変換
-    private func float16ToFloat32(_ bits: UInt16) -> Float32 {
-        let sign     = UInt32(bits >> 15) & 1
-        let exponent = UInt32(bits >> 10) & 0x1F
-        let mantissa = UInt32(bits)       & 0x3FF
-
-        if exponent == 0 {
-            if mantissa == 0 { return sign == 1 ? -0.0 : 0.0 }
-            var f = Float32(mantissa) / 1024.0
-            f *= powf(2.0, -14.0)
-            return sign == 1 ? -f : f
-        } else if exponent == 31 {
-            return mantissa == 0 ? (sign == 1 ? -.infinity : .infinity) : .nan
-        }
-
-        let f32Bits = (sign << 31) | ((exponent + 112) << 23) | (mantissa << 13)
-        return Float32(bitPattern: f32Bits)
     }
 
     // MARK: - テキスト前処理
@@ -434,20 +461,18 @@ class AISearchService {
 
     // MARK: - カードサマリ生成
 
-    private func searchEvidenceFields(card: BusinessCard) -> [String] {
-        let tags = card.tagArray.map(\.tagName)
+    private func searchEvidenceFields(card: AISearchCardSnapshot) -> [String] {
         return [card.fullName, card.company, card.department, card.title, card.address, card.notes]
-            .compactMap { $0 }
-            + tags
+            .filter { !$0.isEmpty }
+            + card.tagNames
     }
 
-    private func compactSummary(card: BusinessCard) -> String {
-        let tags = card.tagArray.map(\.tagName).joined(separator: ",")
-        let contactState = "電話:\(card.phone?.isEmpty == false ? "あり" : "なし"),メール:\(card.email?.isEmpty == false ? "あり" : "なし")"
+    private func compactSummary(card: AISearchCardSnapshot) -> String {
+        let tags = card.tagNames.joined(separator: ",")
+        let contactState = "電話:\(card.hasPhone ? "あり" : "なし"),メール:\(card.hasEmail ? "あり" : "なし")"
         let createdAt = card.createdAt?.formatted(date: .numeric, time: .omitted)
         return [card.fullName, card.company, card.department, card.title, card.address,
-                tags, contactState, createdAt]
-            .compactMap { $0 }
+                tags, contactState, createdAt ?? ""]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
     }

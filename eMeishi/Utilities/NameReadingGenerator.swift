@@ -50,7 +50,7 @@ enum RomajiReadingNormalizer {
 // 読み仮名の自動生成・メールアドレスからの読み推定
 enum NameReadingGenerator {
 
-    private static let latinLetterReadings: [Character: String] = [
+    nonisolated private static let latinLetterReadings: [Character: String] = [
         "a": "えー", "b": "びー", "c": "しー", "d": "でぃー", "e": "いー",
         "f": "えふ", "g": "じー", "h": "えいち", "i": "あい", "j": "じぇー",
         "k": "けー", "l": "える", "m": "えむ", "n": "えぬ", "o": "おー",
@@ -60,7 +60,7 @@ enum NameReadingGenerator {
     ]
 
     /// CFStringTokenizer のラテン転写属性からひらがな読みを生成する
-    static func generateReading(from text: String) -> String {
+    nonisolated static func generateReading(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
@@ -105,7 +105,7 @@ enum NameReadingGenerator {
 
     /// 会社名用の読みを生成する。単独英字と全大文字略称はアルファベット名称として読む。
     /// 読みを確定できない英単語が含まれる場合は空文字を返し、手入力を優先する。
-    static func generateCompanyReading(from text: String) -> String {
+    nonisolated static func generateCompanyReading(from text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
@@ -150,24 +150,24 @@ enum NameReadingGenerator {
         return normalizeCompanyReading(result)
     }
 
-    private static func normalizeCompanyReading(_ reading: String) -> String {
+    nonisolated private static func normalizeCompanyReading(_ reading: String) -> String {
         let removable = CharacterSet.whitespacesAndNewlines.union(
             CharacterSet(charactersIn: "・･-‐‑‒–—―_/.,，．&＆")
         )
         return String(reading.unicodeScalars.filter { !removable.contains($0) })
     }
 
-    private static func isLatinInitialism(_ text: String) -> Bool {
+    nonisolated private static func isLatinInitialism(_ text: String) -> Bool {
         guard !text.isEmpty, text.allSatisfy(isASCIILetter) else { return false }
         // SONY のような発音語を文字読みしない。連続略称として扱うのは最大3文字まで。
         return text.count == 1 || (text.count <= 3 && text == text.uppercased())
     }
 
-    private static func spellInitialism(_ text: String) -> String {
+    nonisolated private static func spellInitialism(_ text: String) -> String {
         text.lowercased().compactMap { latinLetterReadings[$0] }.joined()
     }
 
-    private static func isASCIILetter(_ character: Character) -> Bool {
+    nonisolated private static func isASCIILetter(_ character: Character) -> Bool {
         guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else {
             return false
         }
@@ -514,7 +514,7 @@ enum NameReadingGenerator {
     }
 
     /// カタカナをひらがなに変換する（長音符 ー を保存する）
-    private static func katakanaToHiragana(_ text: String) -> String {
+    nonisolated private static func katakanaToHiragana(_ text: String) -> String {
         let placeholder: Character = "\u{FFFC}"
         let preserved = String(text.map { $0 == "ー" ? placeholder : $0 })
         let mutable = NSMutableString(string: preserved)

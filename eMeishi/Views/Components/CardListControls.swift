@@ -3,9 +3,22 @@ import UIKit
 
 /// ファイルアプリと同様に、並べ替え・フィルター・解除を1つの標準メニューへまとめる。
 struct NativeSortFilterMenuButton: UIViewRepresentable {
-    struct TagOption: Identifiable {
+    struct TagOption: Identifiable, Equatable {
         let id: UUID
         let name: String
+    }
+
+    /// SwiftUIの再評価と、メニュー内容の変更を分離するための値スナップショット。
+    /// Navigation transition中の無関係なbody更新でUIMenuを作り直さない。
+    fileprivate struct RenderState: Equatable {
+        let sortKey: CardSortKey
+        let sortAscending: Bool
+        let showFavoritesOnly: Bool
+        let tags: [TagOption]
+        let selectedTagIDs: Set<UUID>
+        let externalFilterTitle: String?
+        let isFilterActive: Bool
+        let accessibilityValue: String
     }
 
     let sortKey: CardSortKey
@@ -44,6 +57,18 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
     }
 
     private func update(_ button: UIButton, coordinator: Coordinator) {
+        let renderState = RenderState(
+            sortKey: sortKey,
+            sortAscending: sortAscending,
+            showFavoritesOnly: showFavoritesOnly,
+            tags: tags,
+            selectedTagIDs: selectedTagIDs,
+            externalFilterTitle: externalFilterTitle,
+            isFilterActive: isFilterActive,
+            accessibilityValue: accessibilityValue
+        )
+        guard coordinator.lastRenderState != renderState else { return }
+
         var configuration = UIButton.Configuration.plain()
         configuration.contentInsets = .zero
         configuration.image = UIImage(
@@ -57,11 +82,13 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
         button.configuration = configuration
         button.accessibilityValue = accessibilityValue
         button.menu = coordinator.makeMenu()
+        coordinator.lastRenderState = renderState
     }
 
     @MainActor
     final class Coordinator {
         var configuration: NativeSortFilterMenuButton
+        fileprivate var lastRenderState: RenderState?
 
         init(configuration: NativeSortFilterMenuButton) {
             self.configuration = configuration
@@ -87,8 +114,8 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                     image: nil,
                     identifier: UIAction.Identifier("sortOption_\(key.rawValue)"),
                     state: isSelected ? .on : .off
-                ) { [configuration] _ in
-                    configuration.onSelectSort(key)
+                ) { [weak self] _ in
+                    self?.configuration.onSelectSort(key)
                 }
             }
             return UIMenu(title: "並べ替え", options: .displayInline, children: actions)
@@ -101,8 +128,9 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                     image: UIImage(systemName: "rectangle.grid.1x2"),
                     identifier: UIAction.Identifier("allCardsFilterOption"),
                     state: configuration.isFilterActive ? .off : .on
-                ) { [configuration] _ in
-                    guard configuration.isFilterActive else { return }
+                ) { [weak self] _ in
+                    guard let configuration = self?.configuration,
+                          configuration.isFilterActive else { return }
                     configuration.onSelectAllCards()
                 },
                 UIAction(
@@ -110,7 +138,8 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                     image: UIImage(systemName: "star"),
                     identifier: UIAction.Identifier("favoritesFilterOption"),
                     state: configuration.showFavoritesOnly ? .on : .off
-                ) { [configuration] _ in
+                ) { [weak self] _ in
+                    guard let configuration = self?.configuration else { return }
                     configuration.onSetFavorites(!configuration.showFavoritesOnly)
                 },
             ]
@@ -123,8 +152,12 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                         image: UIImage(systemName: "tag"),
                         identifier: UIAction.Identifier("tagFilter_\(tag.name)"),
                         state: isSelected ? .on : .off
-                    ) { [configuration] _ in
-                        configuration.onSetTag(tag.id, !isSelected)
+                    ) { [weak self] _ in
+                        guard let configuration = self?.configuration else { return }
+                        configuration.onSetTag(
+                            tag.id,
+                            !configuration.selectedTagIDs.contains(tag.id)
+                        )
                     }
                 }
                 actions.append(
@@ -147,8 +180,8 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                 image: UIImage(systemName: "chart.line.uptrend.xyaxis"),
                 identifier: UIAction.Identifier("externalFilterOption"),
                 state: .on
-            ) { [configuration] _ in
-                configuration.onClearExternalFilter()
+            ) { [weak self] _ in
+                self?.configuration.onClearExternalFilter()
             }
             return UIMenu(
                 title: "Insightsからの絞り込み",
@@ -163,8 +196,8 @@ struct NativeSortFilterMenuButton: UIViewRepresentable {
                 image: UIImage(systemName: "arrow.counterclockwise"),
                 identifier: UIAction.Identifier("resetFiltersButton"),
                 attributes: configuration.isFilterActive ? [] : .disabled
-            ) { [configuration] _ in
-                configuration.onResetFilters()
+            ) { [weak self] _ in
+                self?.configuration.onResetFilters()
             }
             return UIMenu(options: .displayInline, children: [action])
         }

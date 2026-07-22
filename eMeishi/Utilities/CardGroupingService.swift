@@ -4,14 +4,16 @@ import Foundation
 enum CardGroupingService {
 
     // かな行・アルファベットのセクション順序（表示順を固定）
-    private static let kanaSectionOrder: [String] = [
+    nonisolated private static let kanaSectionOrder: [String] = [
         "あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行"
     ]
-    private static let alphabetOrder: [String] = (UInt8(ascii: "A")...UInt8(ascii: "Z")).map { String(bytes: [$0], encoding: .utf8)! }
-    static let sectionOrder: [String] = kanaSectionOrder + alphabetOrder + ["その他"]
+    nonisolated private static let alphabetOrder: [String] = (UInt8(ascii: "A")...UInt8(ascii: "Z")).map {
+        String(UnicodeScalar($0))
+    }
+    nonisolated static let sectionOrder: [String] = kanaSectionOrder + alphabetOrder + ["その他"]
 
     // 先頭文字からセクションキーを返す（日本語かな行・アルファベット・その他）
-    static func sectionKey(for text: String) -> String {
+    nonisolated static func sectionKey(for text: String) -> String {
         guard let first = text.unicodeScalars.first else { return "その他" }
         var scalar = first.value
 
@@ -39,7 +41,9 @@ enum CardGroupingService {
 
         // アルファベット
         if (scalar >= 0x41 && scalar <= 0x5A) || (scalar >= 0x61 && scalar <= 0x7A) {
-            return String(Character(UnicodeScalar(scalar < 0x61 ? scalar : scalar - 0x20)!)).uppercased()
+            let uppercaseScalar = scalar < 0x61 ? scalar : scalar - 0x20
+            guard let unicodeScalar = UnicodeScalar(uppercaseScalar) else { return "その他" }
+            return String(unicodeScalar)
         }
 
         return "その他"
@@ -56,9 +60,10 @@ enum CardGroupingService {
             buckets[key, default: []].append(card)
         }
         let order = ascending ? sectionOrder : sectionOrder.reversed()
-        var sections = order
-            .filter { buckets[$0] != nil }
-            .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
+        var sections = order.compactMap { key -> CardSection? in
+            guard let cards = buckets[key] else { return nil }
+            return CardSection(id: key, title: key, cards: cards)
+        }
         if let tk = trailingKey, let trailing = buckets[tk] {
             sections.append(CardSection(id: tk, title: tk, cards: trailing))
         }
@@ -69,9 +74,9 @@ enum CardGroupingService {
     static func groupByName(_ cards: [BusinessCard], ascending: Bool) -> [CardSection] {
         groupBySection(cards, ascending: ascending) { card in
             let reading = card.lastNameReading?.trimmingCharacters(in: .whitespaces) ?? ""
-            return reading.isEmpty
-                ? (card.lastName?.isEmpty == false ? card.lastName! : card.firstName) ?? ""
-                : reading
+            guard reading.isEmpty else { return reading }
+            let lastName = card.lastName ?? ""
+            return lastName.isEmpty ? card.firstName ?? "" : lastName
         }
     }
 
@@ -108,8 +113,9 @@ enum CardGroupingService {
             buckets[key, default: []].append(card)
         }
         let keys = ascending ? bucketDefs.map { $0.key }.reversed() : bucketDefs.map { $0.key }
-        return keys
-            .filter { buckets[$0] != nil }
-            .map { CardSection(id: $0, title: $0, cards: buckets[$0]!) }
+        return keys.compactMap { key -> CardSection? in
+            guard let cards = buckets[key] else { return nil }
+            return CardSection(id: key, title: key, cards: cards)
+        }
     }
 }

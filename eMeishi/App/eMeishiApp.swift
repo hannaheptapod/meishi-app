@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import os
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -9,27 +10,35 @@ struct EMeishiApp: App {
 
     // CoreData スタック（UIテスト時はインメモリ＋サンプルデータ）
     let persistenceController: PersistenceController
+    @StateObject private var storeLoadMonitor: PersistentStoreLoadMonitor
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var isUnlocked: Bool
     @State private var backgroundedAt: Date?
     @State private var showPrivacyOverlay = false
-    @State private var showQwenDownloadPrompt = false
-    @State private var showCoreDataError = false
-    @State private var showGrandfatheredAnnouncement = false
+    @State private var protectionRenderGeneration = UUID()
+    @State private var renderedProtectionGeneration: UUID?
+    @State private var didStartServices = false
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
-    private let settings = SettingsStore.shared
+    @StateObject private var settings = SettingsStore.shared
+    @StateObject private var rootPresentationRequests = AppRootPresentationRequests()
 
     init() {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         let uiTest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
-        if uiTest {
-            persistenceController = PersistenceController.preview
-        } else {
-            persistenceController = PersistenceController.shared
-        }
+        let controller = uiTest ? PersistenceController.preview : PersistenceController.shared
+        persistenceController = controller
+        _storeLoadMonitor = StateObject(wrappedValue: controller.storeLoadMonitor)
         // UIテスト時はロック不要、ロック無効時も解除済みで起動
         _isUnlocked = State(initialValue: uiTest || !SettingsStore.shared.isAppLockEnabled)
+
+        let elapsedMilliseconds = Int(
+            (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+        )
+        AppLogger.performance.info(
+            "ルートUI生成前のアプリ初期化が完了しました: \(elapsedMilliseconds)ms"
+        )
     }
 
     var body: some Scene {
@@ -38,26 +47,33 @@ struct EMeishiApp: App {
                 rootView
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
                     .environmentObject(EntitlementStore.shared)
+                    .environmentObject(rootPresentationRequests)
 
-                // App Switcher プライバシーオーバーレイ
-                if showPrivacyOverlay {
-                    PrivacyOverlayView()
-                        .transition(.opacity)
-                }
-
-                // ロック画面（設定有効かつ未認証時）
-                if !isUnlocked && settings.isAppLockEnabled && !isUITest {
-                    LockScreenView(isUnlocked: $isUnlocked)
-                        .transition(.opacity)
-                }
+                AppProtectionOverlay(
+                    isUnlocked: $isUnlocked,
+                    showPrivacyOverlay: showPrivacyOverlay,
+                    isLockEnabled: settings.isAppLockEnabled,
+                    isUITest: isUITest,
+                    renderGeneration: protectionRenderGeneration,
+                    onRendered: markProtectionOverlayRendered
+                )
             }
-            .animation(.easeOut(duration: 0.2), value: isUnlocked)
-            .animation(.easeOut(duration: 0.15), value: showPrivacyOverlay)
+            // SwiftUI階層のoverlayではsystem sheet / alertを覆えないため、
+            // inactive中のスナップショット保護はscene専用の高windowLevelへ委譲する。
+            .privacyShieldWindow(
+                isEnabled: settings.isAppLockEnabled && !isUITest,
+                isContentReadyToReveal: scenePhase == .active
+                    && !showPrivacyOverlay
+                    && renderedProtectionGeneration == protectionRenderGeneration
+            )
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }
-            .task {
-                guard !isUITest else { return }
+            .task(id: storeLoadMonitor.state) {
+                guard storeLoadMonitor.state == .loaded,
+                      !isUITest,
+                      !didStartServices else { return }
+                didStartServices = true
                 // 起動時に初期化して、設定画面を開く前から同期イベントを記録する
                 if PersistenceController.shared.iCloudSyncEnabled {
                     _ = CloudSyncMonitor.shared
@@ -66,42 +82,26 @@ struct EMeishiApp: App {
                 checkAndPromptQwenDownload()
                 checkAndShowGrandfatheredAnnouncement()
             }
-            .alert("データベースエラー", isPresented: $showCoreDataError) {
-                Button("OK") {}
-            } message: {
-                Text("データの読み込みに失敗しました。アプリを再起動してください。問題が続く場合は、端末のストレージ空き容量を確認してください。")
-            }
-            .onAppear {
-                if persistenceController.loadError != nil {
-                    showCoreDataError = true
-                }
-            }
-            .alert("eMeishi Pro が登場しました", isPresented: $showGrandfatheredAnnouncement) {
-                Button("OK") {}
-            } message: {
-                Text("既存ユーザーには、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。")
-            }
-            .alert("AIモデルをダウンロードしますか？", isPresented: $showQwenDownloadPrompt) {
-                Button("ダウンロード（約570MB）") {
-                    Task { try? await LocalLLMService.shared.downloadModel() }
-                }
-                Button("あとで", role: .cancel) {}
-            } message: {
-                Text("この端末はApple Intelligenceに対応していないため、名刺の読み取り精度を向上させるAIモデルをダウンロードできます。Wi-Fi環境でのダウンロードを推奨します。")
-            }
         }
     }
 
-    /// スクリーンショット撮影モード：重複確認だけは通常NavigationLinkで遷移するため、
+    /// スクリーンショット撮影モード：重複確認だけは一覧の実データ状態に依存するため、
     /// ScreenshotHostView経由で単独表示する。タブ画面はContentViewが直接選択する。
     @ViewBuilder
     private var rootView: some View {
-        if isUITest,
-           let screen = ScreenshotMode.startScreen,
-           screen == "Duplicate" {
-            ScreenshotHostView(screen: screen)
-        } else {
-            ContentView()
+        switch storeLoadMonitor.state {
+        case .loading:
+            PersistentStoreLoadingView()
+        case .failed:
+            PersistentStoreFailureView()
+        case .loaded:
+            if isUITest,
+               let screen = ScreenshotMode.startScreen,
+               screen == "Duplicate" {
+                ScreenshotHostView(screen: screen)
+            } else {
+                ContentView()
+            }
         }
     }
 
@@ -147,7 +147,7 @@ struct EMeishiApp: App {
         guard GrandfatherStore.shared.isGrandfathered,
               !settings.didShowProAnnouncement else { return }
         settings.didShowProAnnouncement = true
-        showGrandfatheredAnnouncement = true
+        rootPresentationRequests.enqueue(.grandfatheredAnnouncement)
     }
 
     /// Foundation Models 非対応端末で初回起動時に Qwen ダウンロードを促す
@@ -167,7 +167,7 @@ struct EMeishiApp: App {
 
         // 初回のみプロンプトを表示
         settings.hasPromptedInitialQwenDownload = true
-        showQwenDownloadPrompt = true
+        rootPresentationRequests.enqueue(.qwenDownloadPrompt)
     }
 
     private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
@@ -179,6 +179,7 @@ struct EMeishiApp: App {
             if settings.isAppLockEnabled {
                 showPrivacyOverlay = true
             }
+            renderedProtectionGeneration = nil
         case .background:
             backgroundedAt = Date()
         case .active:
@@ -190,8 +191,71 @@ struct EMeishiApp: App {
                 }
             }
             backgroundedAt = nil
+            renderedProtectionGeneration = nil
+            protectionRenderGeneration = UUID()
         @unknown default:
             break
+        }
+    }
+
+    private func markProtectionOverlayRendered(generation: UUID) {
+        guard generation == protectionRenderGeneration else { return }
+        renderedProtectionGeneration = generation
+    }
+}
+
+private struct PersistentStoreLoadingView: View {
+    var body: some View {
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+            ProgressView("データを読み込んでいます")
+        }
+    }
+}
+
+private struct PersistentStoreFailureView: View {
+    var body: some View {
+        ContentUnavailableView(
+            "データを開けません",
+            systemImage: "externaldrive.badge.exclamationmark",
+            description: Text("アプリを再起動してください。問題が続く場合は端末の空き容量を確認してください。")
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.background.ignoresSafeArea())
+    }
+}
+
+/// 保護UIは機密内容の露出を避けるため即時に切り替える。
+/// scene専用遮蔽ウィンドウは、このViewの更新後にだけ非表示になる。
+private struct AppProtectionOverlay: View {
+    @Binding var isUnlocked: Bool
+    let showPrivacyOverlay: Bool
+    let isLockEnabled: Bool
+    let isUITest: Bool
+    let renderGeneration: UUID
+    let onRendered: (UUID) -> Void
+
+    var body: some View {
+        ZStack {
+            if showPrivacyOverlay {
+                PrivacyOverlayView()
+            }
+
+            if !isUnlocked && isLockEnabled && !isUITest {
+                LockScreenView(isUnlocked: $isUnlocked)
+            }
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .allowsHitTesting(showPrivacyOverlay || (!isUnlocked && isLockEnabled && !isUITest))
+        .background {
+            PrivacyRevealReadinessProbe(
+                generation: renderGeneration,
+                onRendered: onRendered
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
     }
 }

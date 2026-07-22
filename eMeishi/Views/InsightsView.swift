@@ -5,14 +5,17 @@ import SwiftUI
 /// 名刺データの集計とAI解釈を、単一ScrollView内の安定したセクションで表示する。
 struct InsightsView: View {
     @State private var insights: InsightsService.Insights?
+    @State private var insightsError: String?
+    @State private var insightsReloadRequestID = UUID()
     @State private var narrative: String?
     @State private var isGeneratingNarrative = false
     @State private var narrativeError: String?
     @State private var isShowingPaywall = false
     @State private var narrativeTask: Task<Void, Never>?
     @State private var narrativeGenerationID: UUID?
+    @State private var insightsGenerationGate = InsightsGenerationGate()
     @State private var selectedMonthKey: String?
-    @State private var loadedCardRevision: [String]?
+    @State private var loadedCardRevision: Int?
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @EnvironmentObject private var navigationState: AppNavigationState
@@ -56,6 +59,14 @@ struct InsightsView: View {
                 .padding(.horizontal, AppTheme.Spacing.large)
                 .padding(.vertical, AppTheme.Spacing.xLarge)
                 .frame(maxWidth: .infinity)
+            } else if let insightsError {
+                InlineErrorView(message: insightsError) {
+                    insightsReloadRequestID = UUID()
+                }
+                .frame(maxWidth: AppTheme.contentMaximumWidth)
+                .padding(.horizontal, AppTheme.Spacing.large)
+                .padding(.top, AppTheme.Spacing.xLarge)
+                .frame(maxWidth: .infinity)
             } else {
                 ProgressView("集計中...")
                     .frame(maxWidth: .infinity)
@@ -66,19 +77,44 @@ struct InsightsView: View {
         .accessibilityIdentifier("insightsScrollView")
         .navigationTitle("インサイト")
         .navigationBarTitleDisplayMode(.large)
-        .task(id: cardRevision) {
-            let revision = cardRevision
-            guard loadedCardRevision != revision else { return }
-            cancelNarrativeGeneration()
-            insights = InsightsService.shared.generateInsights(context: managedObjectContext)
-            narrative = nil
-            narrativeError = nil
-            loadedCardRevision = revision
+        .task(id: InsightsReloadRequest(
+            cardRevision: cardListViewModel.cardsContentRevision,
+            requestID: insightsReloadRequestID
+        )) {
+            await reloadInsights(for: cardListViewModel.cardsContentRevision)
         }
-        .onDisappear(perform: cancelNarrativeGeneration)
+        .onDisappear {
+            insightsGenerationGate.cancel()
+            cancelNarrativeGeneration()
+        }
         .sheet(isPresented: $isShowingPaywall) {
             PaywallView(context: .insightsNarrative)
                 .environmentObject(entitlementStore)
+        }
+    }
+
+    private func reloadInsights(for revision: Int) async {
+        guard loadedCardRevision != revision else { return }
+        cancelNarrativeGeneration()
+        let generationID = insightsGenerationGate.begin()
+        insightsError = nil
+        do {
+            let generated = try await InsightsService.shared.generateInsights(context: managedObjectContext)
+            guard !Task.isCancelled,
+                  insightsGenerationGate.accepts(generationID),
+                  revision == cardListViewModel.cardsContentRevision else { return }
+
+            insights = generated
+            narrative = nil
+            narrativeError = nil
+            loadedCardRevision = revision
+        } catch is CancellationError {
+            return
+        } catch {
+            guard insightsGenerationGate.accepts(generationID),
+                  revision == cardListViewModel.cardsContentRevision else { return }
+            insights = nil
+            insightsError = "集計データを読み込めませんでした。"
         }
     }
 
@@ -329,23 +365,18 @@ struct InsightsView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer()
-                Text(countText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(countColor)
+                HStack(spacing: 3) {
+                    Text(countText)
+                        .foregroundStyle(countColor)
+                    Text("を見る")
+                        .foregroundStyle(.primary)
+                }
+                .font(.subheadline.weight(.medium))
             }
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(InsightDestinationButtonStyle())
-    }
-
-    /// タブが保持されていても、名刺の追加・編集・削除後は集計を更新する。
-    private var cardRevision: [String] {
-        cardListViewModel.cards.map { card in
-            let id = card.objectID.uriRepresentation().absoluteString
-            let updatedAt = card.updatedAt?.timeIntervalSinceReferenceDate ?? 0
-            return "\(id)|\(updatedAt)"
-        }.sorted()
     }
 
     @ViewBuilder
@@ -410,7 +441,7 @@ struct InsightsView: View {
 
         narrativeTask?.cancel()
         let generationID = UUID()
-        let revision = cardRevision
+        let revision = cardListViewModel.cardsContentRevision
         narrativeGenerationID = generationID
         narrativeTask = Task {
             await generateNarrative(
@@ -424,7 +455,7 @@ struct InsightsView: View {
     private func generateNarrative(
         insights: InsightsService.Insights,
         generationID: UUID,
-        revision: [String]
+        revision: Int
     ) async {
         isGeneratingNarrative = true
         narrative = nil
@@ -439,17 +470,18 @@ struct InsightsView: View {
             let generated = try await InsightsService.shared.generateNarrative(insights: insights)
             guard !Task.isCancelled,
                   narrativeGenerationID == generationID,
-                  revision == cardRevision else { return }
+                  revision == cardListViewModel.cardsContentRevision else { return }
             narrative = generated
         } catch is CancellationError {
             return
         } catch InsightsService.NarrativeError.unavailable {
-            guard narrativeGenerationID == generationID, revision == cardRevision else { return }
+            guard narrativeGenerationID == generationID,
+                  revision == cardListViewModel.cardsContentRevision else { return }
             narrativeError = "AI解釈はこの端末では利用できません。対応するAIモデルを設定してから再試行してください。"
         } catch {
             guard !Task.isCancelled,
                   narrativeGenerationID == generationID,
-                  revision == cardRevision else { return }
+                  revision == cardListViewModel.cardsContentRevision else { return }
             narrativeError = "AI解釈の生成に失敗しました。しばらくしてから再試行してください。"
         }
     }
@@ -463,17 +495,23 @@ struct InsightsView: View {
 
 }
 
+private struct InsightsReloadRequest: Hashable {
+    let cardRevision: Int
+    let requestID: UUID
+}
+
 private struct InsightDestinationButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, configuration.isPressed ? AppTheme.Spacing.small : 0)
-            .background(
-                configuration.isPressed ? AppTheme.auxiliarySurface : Color.clear,
-                in: .rect(cornerRadius: 10, style: .continuous)
-            )
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(AppTheme.auxiliarySurface)
+                    .padding(.horizontal, -AppTheme.Spacing.small)
+                    .opacity(configuration.isPressed ? 1 : 0)
+            }
+            .opacity(configuration.isPressed ? 0.82 : 1)
             .animation(
                 reduceMotion ? nil : .easeOut(duration: 0.12),
                 value: configuration.isPressed

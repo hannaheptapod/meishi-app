@@ -45,6 +45,10 @@ nonisolated enum OCRProcessingPhase: String, Codable, CaseIterable, Sendable {
         case .cancelled, .failed: 0...1
         }
     }
+
+    nonisolated var isTerminal: Bool {
+        self == .completed || self == .cancelled || self == .failed
+    }
 }
 
 nonisolated struct OCRProcessingState: Codable, Equatable, Sendable {
@@ -78,6 +82,6 @@ nonisolated struct OCRJobSession: Codable, Equatable, Sendable {
     var finishedAt: Date?
 
     var isTerminal: Bool {
-        state.phase == .completed || state.phase == .cancelled || state.phase == .failed
+        state.phase.isTerminal
     }
 }

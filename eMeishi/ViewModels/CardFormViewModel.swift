@@ -7,6 +7,16 @@ import os
 import FoundationModels
 #endif
 
+nonisolated struct CardFormPhoneField: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var value: String
+
+    init(id: UUID = UUID(), value: String) {
+        self.id = id
+        self.value = value
+    }
+}
+
 // 名刺の新規作成・編集フォームのViewModel
 @MainActor
 class CardFormViewModel: ObservableObject {
@@ -26,7 +36,7 @@ class CardFormViewModel: ObservableObject {
     @Published var department: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
-    @Published var phones: [String] = [""]
+    @Published var phoneFields: [CardFormPhoneField] = [CardFormPhoneField(value: "")]
     @Published var address: String = ""
     @Published var website: String = ""
     @Published var notes: String = ""
@@ -42,18 +52,49 @@ class CardFormViewModel: ObservableObject {
     @Published var saveErrorMessage: String? = nil
     @Published var ocrProcessingState: OCRProcessingState = .idle
     @Published var canContinueOCRInBackground = false
+    @Published private(set) var isLoadingEditSnapshot = false
+    @Published private(set) var editLoadErrorMessage: String?
+    @Published private(set) var isSaving = false
 
     // モデル未取得時にダウンロード同意アラートを表示するフラグ
     @Published var shouldPromptLLMDownload: Bool = false
 
     // 撮影した名刺画像（保存用）
-    var capturedImageData: Data? = nil
+    @Published private(set) var capturedImageData: Data? = nil {
+        didSet {
+            capturedImageRevision = UUID()
+            if isEditing, !isApplyingEditSnapshot {
+                didChangeCapturedImage = true
+            }
+        }
+    }
+    @Published private(set) var capturedImageRevision = UUID()
+
+    /// 永続化形式は従来どおり文字列配列のまま維持し、フォーム上の行IDだけを分離する。
+    var phones: [String] {
+        get { phoneFields.map(\.value) }
+        set {
+            let normalized = newValue.isEmpty ? [""] : newValue
+            phoneFields = normalized.enumerated().map { index, value in
+                if phoneFields.indices.contains(index) {
+                    return CardFormPhoneField(id: phoneFields[index].id, value: value)
+                }
+                return CardFormPhoneField(value: value)
+            }
+        }
+    }
 
     // 編集中かどうかを外部から確認できるように公開
-    var isEditing: Bool { card != nil }
+    var isEditing: Bool { editReference != nil }
+    var needsEditSnapshotLoad: Bool {
+        isEditing && editGeneration == nil && editLoadErrorMessage == nil
+    }
 
     private let context: NSManagedObjectContext
-    private var card: BusinessCard?
+    private let coordinatorReference: PersistentStoreCoordinatorReference
+    private let editReference: CardFormEditReference?
+    private let persistenceWorker: CardFormPersistenceWorker
+    private var editGeneration: CardFormEditGeneration?
     private let ocrService: OCRServiceProtocol
     private let classifier: CardFieldClassifierProtocol
     private let llmService: LocalLLMServiceProtocol
@@ -62,12 +103,38 @@ class CardFormViewModel: ObservableObject {
     private(set) var ocrJobID = OCRJobID()
     private var ocrTask: Task<Void, Never>?
     private var etaTickerTask: Task<Void, Never>?
+    private var tagSuggestionTask: Task<Void, Never>?
+    private var ocrCancellationTask: Task<Void, Never>?
+    private var ocrCancellationGeneration = UUID()
+    private var tagSuggestionGeneration = UUID()
     private var isApplyingReadingResolution = false
+    private var isApplyingEditSnapshot = false
+    private var didChangeCapturedImage = false
     private var editedReadingTargets = Set<ReadingTarget>()
 
     deinit {
         ocrTask?.cancel()
         etaTickerTask?.cancel()
+        tagSuggestionTask?.cancel()
+        ocrCancellationTask?.cancel()
+    }
+
+    func appendPhoneField() {
+        phoneFields.append(CardFormPhoneField(value: ""))
+    }
+
+    func removePhoneField(id: UUID) {
+        guard phoneFields.count > 1 else { return }
+        phoneFields.removeAll { $0.id == id }
+        if phoneFields.isEmpty {
+            phoneFields = [CardFormPhoneField(value: "")]
+        }
+    }
+
+    /// OCRを開始せずに、既に正規化済みの画像をフォームへ設定する。
+    /// スクリーンショット用の合成フォームなど、準備済み入力の生成経路で使用する。
+    func setPreparedImageData(_ data: Data?) {
+        capturedImageData = data
     }
 
     // MARK: - 初期化（新規作成）
@@ -80,7 +147,11 @@ class CardFormViewModel: ObservableObject {
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = nil
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
@@ -88,69 +159,40 @@ class CardFormViewModel: ObservableObject {
         self.settings     = settings     ?? SettingsStore.shared
     }
 
-    // MARK: - 初期化（カメラ撮影画像からOCR）
+    // MARK: - 初期化（正規化済みDataからOCR）
 
-    init(image: UIImage,
+    /// 写真取込み・カメラ・未完了キューで共通利用する初期化経路。
+    /// 保存用Dataは既に向き補正・外周補正・圧縮済みのため、そのまま保持する。
+    /// OCR用UIImageの展開だけを画像処理actorへ委譲し、MainActorでは再圧縮しない。
+    init(normalizedImageData: Data,
          context: NSManagedObjectContext? = nil,
          ocrService: OCRServiceProtocol? = nil,
          classifier: CardFieldClassifierProtocol? = nil,
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = nil
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
         self.autoTagService = autoTagService ?? AutoTagService.shared
         self.settings     = settings     ?? SettingsStore.shared
-        // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
-        self.capturedImageData = image.jpegData(compressionQuality: 0.8)
-        // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
+        self.capturedImageData = normalizedImageData
         self.isProcessingOCR = true
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             do {
-                try await self.beginOCRProcessing(image: image)
-                // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
-                let cardImage = await self.ocrService.detectAndCropCard(from: image)
+                let decoded = try await CardImageProcessingService.shared
+                    .decodeNormalizedImage(from: normalizedImageData)
                 try Task.checkCancellation()
-                // 補正済み画像で保存データを上書き
-                self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
-                await self.updateImageWorkload(cardImage)
+                let image = decoded.image
+                try await self.beginOCRProcessing(image: image)
                 try await self.setOCRPhase(.textRecognition)
-                await self.populateFromOCR(image: cardImage)
-            } catch is CancellationError {
-                await self.finishCancelledOCR()
-                self.isProcessingOCR = false
-            } catch {
-                await self.finishOCRFailure(message: error.localizedDescription)
-            }
-        }
-    }
-
-    // MARK: - 初期化（切り抜き済み画像からOCR・矩形検出スキップ）
-
-    init(croppedImage: UIImage,
-         context: NSManagedObjectContext? = nil,
-         ocrService: OCRServiceProtocol? = nil,
-         classifier: CardFieldClassifierProtocol? = nil,
-         llmService: LocalLLMServiceProtocol? = nil,
-         autoTagService: AutoTagServiceProtocol? = nil,
-         settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
-        self.ocrService   = ocrService   ?? OCRService()
-        self.classifier   = classifier   ?? CardFieldClassifier()
-        self.llmService   = llmService   ?? LocalLLMService.shared
-        self.autoTagService = autoTagService ?? AutoTagService.shared
-        self.settings     = settings     ?? SettingsStore.shared
-        self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
-        self.isProcessingOCR = true
-        ocrTask = Task { [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            do {
-                try await self.beginOCRProcessing(image: croppedImage)
-                try await self.setOCRPhase(.textRecognition)
-                await self.populateFromOCR(image: croppedImage)
+                await self.populateFromOCR(image: image)
             } catch is CancellationError {
                 await self.finishCancelledOCR()
                 self.isProcessingOCR = false
@@ -169,29 +211,93 @@ class CardFormViewModel: ObservableObject {
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.card = card
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? card.managedObjectContext
+            ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = CardFormEditReference(
+            objectURI: card.objectID.uriRepresentation()
+        )
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
         self.autoTagService = autoTagService ?? AutoTagService.shared
         self.settings     = settings     ?? SettingsStore.shared
-        lastName        = card.lastName        ?? ""
-        lastNameReading = card.lastNameReading ?? ""
-        firstName       = card.firstName       ?? ""
-        firstNameReading = card.firstNameReading ?? ""
-        company        = card.company        ?? ""
-        companyReading = card.companyReading ?? ""
-        department = card.department ?? ""
-        title      = card.title      ?? ""
-        email     = card.email     ?? ""
-        let stored = card.phoneList
-        phones    = stored.isEmpty ? [""] : stored
-        address   = card.address   ?? ""
-        website   = card.website   ?? ""
-        notes     = card.notes     ?? ""
-        capturedImageData = card.imageData
-        selectedTags = Set(card.tagArray.compactMap { $0.id })
+        isLoadingEditSnapshot = true
+    }
+
+    private static func makeCoordinatorReference(
+        for context: NSManagedObjectContext
+    ) -> PersistentStoreCoordinatorReference {
+        if let coordinator = context.persistentStoreCoordinator
+            ?? context.parent?.persistentStoreCoordinator {
+            return PersistentStoreCoordinatorReference(coordinator: coordinator)
+        }
+        preconditionFailure("CardFormViewModel requires a context connected to a persistent store")
+    }
+
+    // MARK: - 編集スナップショット
+
+    /// Viewが所有するTaskから呼び出し、結果の適用前にView側で世代を照合する。
+    /// 読込み中はフォーム本体を表示せず、MainActor上で個別フィールドをfaultさせない。
+    func beginEditSnapshotLoading() {
+        guard isEditing, editGeneration == nil else { return }
+        isLoadingEditSnapshot = true
+        editLoadErrorMessage = nil
+    }
+
+    func loadEditSnapshot() async throws -> CardFormEditSnapshot {
+        guard let editReference else {
+            throw CardFormPersistenceError.invalidObjectReference
+        }
+        return try await persistenceWorker.loadEditSnapshot(
+            reference: editReference,
+            coordinatorReference: coordinatorReference
+        )
+    }
+
+    /// 全項目をloading shellの背後で設定し、最後に一度だけフォーム表示へ切り替える。
+    func applyEditSnapshot(_ snapshot: CardFormEditSnapshot) {
+        guard editReference?.objectURI == snapshot.generation.objectURI else { return }
+        isApplyingEditSnapshot = true
+        isApplyingReadingResolution = true
+
+        lastName = snapshot.lastName
+        lastNameReading = snapshot.lastNameReading
+        firstName = snapshot.firstName
+        firstNameReading = snapshot.firstNameReading
+        company = snapshot.company
+        companyReading = snapshot.companyReading
+        department = snapshot.department
+        title = snapshot.title
+        email = snapshot.email
+        phones = snapshot.phones
+        address = snapshot.address
+        website = snapshot.website
+        notes = snapshot.notes
+        selectedTags = snapshot.selectedTagIDs
+        capturedImageData = snapshot.imageData
+
+        editGeneration = snapshot.generation
+        didChangeCapturedImage = false
+        editedReadingTargets.removeAll()
+        isApplyingReadingResolution = false
+        isApplyingEditSnapshot = false
+        editLoadErrorMessage = nil
+        isLoadingEditSnapshot = false
+    }
+
+    func cancelEditSnapshotLoading() {
+        if editGeneration == nil {
+            isLoadingEditSnapshot = false
+        }
+    }
+
+    func finishEditSnapshotLoading(with error: Error) {
+        guard editGeneration == nil else { return }
+        isLoadingEditSnapshot = false
+        editLoadErrorMessage = error.localizedDescription
     }
 
     // MARK: - OCR + AI意味分析
@@ -269,43 +375,76 @@ class CardFormViewModel: ObservableObject {
             await finishCancelledOCR()
         } catch {
             didFail = true
-            ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
-            if let failed = await OCRProcessingCoordinator.shared.fail(
-                jobID: ocrJobID,
-                message: error.localizedDescription
-            ) {
-                ocrProcessingState = failed
-                OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
-            }
-            OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
-            canContinueOCRInBackground = false
-            stopETATicker()
+            await finishOCRFailure(message: "OCR処理に失敗しました: \(error.localizedDescription)")
         }
 
         if didFail { isProcessingOCR = false }
     }
 
     private func finishOCRFailure(message: String) async {
+        // Vision/Core MLなどキャンセル非協調の処理は、停止後に通常Errorを返す場合がある。
+        // Coordinatorの終端状態を正とし、キャンセル済みジョブをfailedへ戻さない。
+        if await isOCRJobCancelled() {
+            await finishCancelledOCR()
+            return
+        }
+
+        guard let failed = await OCRProcessingCoordinator.shared.fail(jobID: ocrJobID, message: message) else {
+            // 別の終端遷移が先行した場合も、遅れて届いたErrorで表示状態を上書きしない。
+            if let terminal = await OCRProcessingCoordinator.shared.currentState(jobID: ocrJobID) {
+                ocrProcessingState = terminal
+                switch terminal.phase {
+                case .failed:
+                    ocrErrorMessage = terminal.errorMessage
+                case .cancelled, .completed:
+                    ocrErrorMessage = nil
+                default:
+                    break
+                }
+            }
+            isProcessingOCR = false
+            canContinueOCRInBackground = false
+            stopETATicker()
+            return
+        }
+
         ocrErrorMessage = message
         isProcessingOCR = false
-        if let failed = await OCRProcessingCoordinator.shared.fail(jobID: ocrJobID, message: message) {
-            ocrProcessingState = failed
-            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
-        }
+        ocrProcessingState = failed
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
         OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
         canContinueOCRInBackground = false
         stopETATicker()
     }
 
     func cancelOCR() {
-        Task {
-            await cancelOCRAndWait()
-        }
+        _ = beginOCRCancellation()
     }
 
     /// バッチのスキップ時は旧OCRの終了完了後に次の名刺へ進み、
     /// 旧Live Activityの残留や新しいOCRへの終了処理の競合を防ぐ。
     func cancelOCRAndWait() async {
+        await beginOCRCancellation().value
+    }
+
+    @discardableResult
+    private func beginOCRCancellation() -> Task<Void, Never> {
+        if let ocrCancellationTask {
+            return ocrCancellationTask
+        }
+        let generation = UUID()
+        ocrCancellationGeneration = generation
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performOCRCancellation()
+            guard self.ocrCancellationGeneration == generation else { return }
+            self.ocrCancellationTask = nil
+        }
+        ocrCancellationTask = task
+        return task
+    }
+
+    private func performOCRCancellation() async {
         let task = ocrTask
         task?.cancel()
         isProcessingOCR = false
@@ -322,6 +461,8 @@ class CardFormViewModel: ObservableObject {
     }
 
     private func finishCancelledOCR() async {
+        ocrErrorMessage = nil
+        isProcessingOCR = false
         if let cancelled = await OCRProcessingCoordinator.shared.cancel(jobID: ocrJobID) {
             ocrProcessingState = cancelled
             OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: cancelled)
@@ -331,13 +472,20 @@ class CardFormViewModel: ObservableObject {
         stopETATicker()
     }
 
+    private func isOCRJobCancelled() async -> Bool {
+        if Task.isCancelled { return true }
+        return await OCRProcessingCoordinator.shared.currentState(jobID: ocrJobID)?.phase == .cancelled
+    }
+
     private func beginOCRProcessing(image: UIImage) async throws {
         try Task.checkCancellation()
-        ocrProcessingState = await OCRProcessingCoordinator.shared.start(
+        let started = await OCRProcessingCoordinator.shared.start(
             jobID: ocrJobID,
             totalItems: 1,
             workload: makeInitialWorkload(image: image)
         )
+        guard !started.phase.isTerminal else { throw CancellationError() }
+        ocrProcessingState = started
         ocrStage = ocrProcessingState.phase.title
         canContinueOCRInBackground = OCRBackgroundTaskManager.shared.begin(jobID: ocrJobID, totalItems: 1) { [weak self] in
             self?.cancelOCR()
@@ -478,26 +626,49 @@ class CardFormViewModel: ObservableObject {
         // 空の場合はスキップ
         guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty || !cardInfo.address.isEmpty else { return }
 
+        tagSuggestionTask?.cancel()
+        let generation = UUID()
+        tagSuggestionGeneration = generation
         isLoadingTagSuggestions = true
-        Task {
-            defer { isLoadingTagSuggestions = false }
+        tagSuggestionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.tagSuggestionGeneration == generation {
+                    self.isLoadingTagSuggestions = false
+                    self.tagSuggestionTask = nil
+                }
+            }
 
-            let tagInfos = fetchAllTags().compactMap { tag -> AutoTagService.TagInfo? in
-                guard let id = tag.id, let name = tag.name else { return nil }
-                return AutoTagService.TagInfo(id: id, name: name)
+            let tagSnapshots: [CardFormTagInfoSnapshot]
+            do {
+                tagSnapshots = try await self.persistenceWorker.loadTagInfos(
+                    coordinatorReference: self.coordinatorReference
+                )
+            } catch {
+                guard !(error is CancellationError) else { return }
+                AppLogger.persistence.error("タグ候補の読込みに失敗しました: \(error)")
+                return
+            }
+            let tagInfos = tagSnapshots.map {
+                AutoTagService.TagInfo(id: $0.id, name: $0.name)
             }
             guard !tagInfos.isEmpty else { return }
 
-            let suggested = await autoTagService.suggestTags(cardInfo: cardInfo, tags: tagInfos)
-            suggestedTagIDs = Set(suggested)
+            let suggested = await self.autoTagService.suggestTags(cardInfo: cardInfo, tags: tagInfos)
+            guard !Task.isCancelled,
+                  self.tagSuggestionGeneration == generation,
+                  self.ocrProcessingState.phase != .cancelled,
+                  self.ocrProcessingState.phase != .failed else { return }
+            self.suggestedTagIDs = Set(suggested)
         }
     }
 
-    /// タグ一覧を取得（CardListViewModelに依存しないよう独自フェッチ）
-    private func fetchAllTags() -> [Tag] {
-        let request = Tag.fetchRequest()
-        request.sortDescriptors = [NSSortDescriptor(keyPath: \Tag.sortOrder, ascending: true)]
-        return (try? context.fetch(request)) ?? []
+    /// フォームが閉じた後にタグ提案が状態を書き戻さないよう、View所有の処理を終了する。
+    func cancelTagSuggestions() {
+        tagSuggestionGeneration = UUID()
+        tagSuggestionTask?.cancel()
+        tagSuggestionTask = nil
+        isLoadingTagSuggestions = false
     }
 
     /// AI提案タグを適用する
@@ -837,58 +1008,75 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - 保存
 
-    func save() throws {
+    func save() async throws {
         saveErrorMessage = nil
-        let target = card ?? {
-            let newCard = BusinessCard(context: context)
-            newCard.id = UUID()
-            newCard.createdAt = Date()
-            return newCard
-        }()
+        guard !isSaving else {
+            throw CardFormPersistenceError.saveAlreadyInProgress
+        }
+        if isEditing, editGeneration == nil {
+            let error = CardFormPersistenceError.invalidObjectReference
+            saveErrorMessage = error.localizedDescription
+            throw error
+        }
 
-        target.lastName        = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.lastNameReading = lastNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.company        = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 空欄は「読みを確定できない」という有効な状態。保存直前には再生成しない。
-        target.companyReading = BusinessCard.stripLegalEntityReading(
-            from: companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSaving = true
+        defer { isSaving = false }
+
+        let trimmed: (String) -> String = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let imageUpdate: CardFormImageUpdate = isEditing && !didChangeCapturedImage
+            ? .preserveExisting
+            : .replace(capturedImageData)
+        let payload = CardFormSavePayload(
+            lastName: trimmed(lastName),
+            lastNameReading: trimmed(lastNameReading),
+            firstName: trimmed(firstName),
+            firstNameReading: trimmed(firstNameReading),
+            company: trimmed(company),
+            // 空欄は「読みを確定できない」という有効な状態。保存直前には再生成しない。
+            companyReading: BusinessCard.stripLegalEntityReading(from: trimmed(companyReading)),
+            department: trimmed(department),
+            title: trimmed(title),
+            email: trimmed(email),
+            phone: phones.map(trimmed).filter { !$0.isEmpty }.joined(separator: "\n"),
+            address: trimmed(address),
+            website: trimmed(website),
+            notes: trimmed(notes),
+            imageUpdate: imageUpdate,
+            selectedTagIDs: selectedTags
         )
-        target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.phone     = phones
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        target.address   = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.website   = website.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.notes     = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.imageData = capturedImageData
-        target.updatedAt = Date()
 
-        // タグのリレーションを更新
         do {
-            let tagRequest = Tag.fetchRequest()
-            let allTags = try context.fetch(tagRequest)
-            // 既存のタグをすべて外す
-            if let currentTags = target.tags as? Set<Tag> {
-                for tag in currentTags {
-                    target.removeFromTags(tag)
-                }
-            }
-            // 選択されたタグを紐づけ
-            for tag in allTags where selectedTags.contains(tag.id ?? UUID()) {
-                target.addToTags(tag)
-            }
-            try context.save()
+            let result = try await persistenceWorker.save(
+                payload: payload,
+                editing: editGeneration,
+                coordinatorReference: coordinatorReference
+            )
+            mergeSaveResultIntoViewContext(result)
+            editGeneration = result.generation
+            didChangeCapturedImage = false
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            context.rollback()
-            saveErrorMessage = "名刺を保存できませんでした。入力内容を確認して、もう一度お試しください。"
+            saveErrorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "名刺を保存できませんでした。入力内容を確認して、もう一度お試しください。"
             AppLogger.persistence.error("名刺の保存に失敗しました: \(error)")
             throw error
         }
+    }
+
+    private func mergeSaveResultIntoViewContext(_ result: CardFormSaveResult) {
+        guard let objectID = coordinatorReference.coordinator.managedObjectID(
+            forURIRepresentation: result.generation.objectURI
+        ) else { return }
+        let key = result.changeKind == .inserted
+            ? NSInsertedObjectIDsKey
+            : NSUpdatedObjectIDsKey
+        NSManagedObjectContext.mergeChanges(
+            fromRemoteContextSave: [key: [objectID]],
+            into: [context]
+        )
     }
 }
 

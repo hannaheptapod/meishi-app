@@ -156,6 +156,7 @@ struct CardImageHero: View {
     var onTap: (() -> Void)?
     @State private var decodedImage: UIImage?
     @State private var decodedImageIdentifier: String?
+    @State private var failedImageIdentifier: String?
 
     @ViewBuilder
     var body: some View {
@@ -173,6 +174,7 @@ struct CardImageHero: View {
         .task(id: cacheIdentifier) {
             guard let imageData else { return }
             if decodedImage != nil, decodedImageIdentifier == cacheIdentifier { return }
+            failedImageIdentifier = nil
             let decoded = await CardImageDecodingService.shared.image(
                 from: imageData,
                 maximumPixelSize: maximumHeight * 3,
@@ -181,19 +183,39 @@ struct CardImageHero: View {
             guard !Task.isCancelled else { return }
             decodedImage = decoded?.image
             decodedImageIdentifier = decoded == nil ? nil : cacheIdentifier
+            failedImageIdentifier = decoded == nil ? cacheIdentifier : nil
         }
     }
 
     private var heroContent: some View {
         Group {
             if imageData != nil,
-               decodedImageIdentifier == cacheIdentifier,
-               let image = decodedImage {
+               let image = displayImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: maximumHeight)
                     .clipShape(.rect(cornerRadius: AppTheme.imageCornerRadius, style: .continuous))
+            } else if imageData != nil,
+                      failedImageIdentifier == cacheIdentifier {
+                ContentUnavailableView(
+                    "画像を表示できません",
+                    systemImage: "photo.badge.exclamationmark"
+                )
+                .frame(maxWidth: .infinity, minHeight: 180)
+                .background(AppTheme.auxiliarySurface)
+                .clipShape(.rect(cornerRadius: AppTheme.imageCornerRadius, style: .continuous))
+            } else if imageData != nil {
+                ZStack {
+                    RoundedRectangle(
+                        cornerRadius: AppTheme.imageCornerRadius,
+                        style: .continuous
+                    )
+                    .fill(AppTheme.auxiliarySurface)
+                    ProgressView()
+                }
+                .frame(maxWidth: .infinity, minHeight: 180)
+                .accessibilityLabel("名刺画像を読み込み中")
             } else {
                 Text(initials.isEmpty ? "名刺" : initials)
                     .font(.largeTitle.weight(.semibold))
@@ -204,6 +226,16 @@ struct CardImageHero: View {
             }
         }
         .contentShape(Rectangle())
+    }
+
+    private var displayImage: UIImage? {
+        if decodedImageIdentifier == cacheIdentifier, let decodedImage {
+            return decodedImage
+        }
+        return CardImageDecodingService.shared.cachedImage(
+            maximumPixelSize: maximumHeight * 3,
+            cacheIdentifier: cacheIdentifier
+        )?.image
     }
 }
 

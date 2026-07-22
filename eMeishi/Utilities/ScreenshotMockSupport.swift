@@ -9,7 +9,7 @@ import CoreData
 //
 // 起動経路:
 //   1. XCUITest が `app.launchEnvironment["START_SCREEN"] = "FormOCR"` などをセット
-//   2. eMeishiApp が ScreenshotMode.startScreen を読み、Insights/Duplicate なら
+//   2. eMeishiApp が ScreenshotMode.startScreen を読み、Duplicate なら
 //      ScreenshotHostView へ、それ以外は通常 ContentView へルーティング
 //   3. CardListView.onAppear が START_SCREEN に応じて該当シートを開く
 /// XCUITest 起動引数・環境変数の検出
@@ -107,7 +107,7 @@ enum ScreenshotMockSupport {
     static func makeMockOCRFinishedViewModel() -> CardFormViewModel {
         let context = PersistenceController.preview.container.viewContext
         let vm = CardFormViewModel(context: context)
-        vm.capturedImageData = mockBusinessCardImage().jpegData(compressionQuality: 0.9)
+        vm.setPreparedImageData(mockBusinessCardImage().jpegData(compressionQuality: 0.9))
         vm.lastName = "山田"
         vm.lastNameReading = "やまだ"
         vm.firstName = "太郎"
@@ -124,36 +124,11 @@ enum ScreenshotMockSupport {
         return vm
     }
 
-    // MARK: - モックチャット（AISearchChatView 用）
-
-    /// 「IT 関連の担当者を探して」 → アシスタント応答 のサンプル会話
-    /// 「IT」タグが付いたカードのみを対象にすることで、
-    /// 重複検出デモ用カード（タグ無し）が結果に混ざらないようにする
-    static func mockChatMessages(cards: [BusinessCard]) -> [AISearchService.ChatMessage] {
-        let matched: [BusinessCard] = cards.filter { card in
-            let tags = (card.tags as? Set<Tag>) ?? []
-            return tags.contains(where: { $0.name == "IT" })
-        }
-        let matchedIDs: [UUID] = matched.compactMap { $0.id }
-
-        let user = AISearchService.ChatMessage(
-            role: .user,
-            text: "IT 関連の担当者を探して",
-            matchedCardIDs: []
-        )
-        let assistant = AISearchService.ChatMessage(
-            role: .assistant,
-            text: "「IT」タグが付いた名刺を \(matchedIDs.count) 件見つけました。",
-            matchedCardIDs: matchedIDs
-        )
-        return [user, assistant]
-    }
 }
 
 // MARK: - スクリーンショット用ホストビュー
 
-/// Insights / Duplicate のように NavigationLink で push される画面を
-/// 単独のルート View として表示するためのホスト
+/// 一覧の重複候補状態に依存する画面を、単独のルートViewとして表示するホスト。
 struct ScreenshotHostView: View {
 
     let screen: String
@@ -177,8 +152,6 @@ struct ScreenshotHostView: View {
     @ViewBuilder
     private var content: some View {
         switch screen {
-        case "Insights":
-            InsightsView()
         case "Duplicate":
             DuplicateListView(pairs: .constant(viewModel.duplicatePairs), onMerge: { })
         default:

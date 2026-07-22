@@ -1,40 +1,49 @@
+import CoreData
 import SwiftUI
 
 /// コンテキストメニュー用の読み取り専用プレビュー。通常詳細のtoolbarは持ち込まない。
 struct CardPeekView: View {
-    @ObservedObject var card: BusinessCard
+    @Environment(\.managedObjectContext) private var viewContext
+    private let item: CardListItemSnapshot
+
+    init(item: CardListItemSnapshot) {
+        self.item = item
+    }
 
     var body: some View {
+        let imageRequest = StoredCardImageRequest.businessCard(
+            objectURI: item.id,
+            imageIdentifier: item.imageIdentifier,
+            coordinator: viewContext.persistentStoreCoordinator
+        )
+        let displaySnapshot = item.detail
+
         VStack(alignment: .leading, spacing: AppTheme.Spacing.large) {
-            CardImageHero(
-                imageData: card.imageData,
-                cacheIdentifier: CardImageCacheKey.businessCard(
-                    card,
-                    dataCount: card.imageData?.count ?? 0
-                ),
-                initials: initials,
+            StoredCardImageHero(
+                request: imageRequest,
+                initials: displaySnapshot.initials,
                 maximumHeight: 250,
                 onTap: nil
             )
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
-                if !card.fullNameReading.isEmpty {
-                    Text(card.fullNameReading)
+                if !displaySnapshot.fullNameReading.isEmpty {
+                    Text(displaySnapshot.fullNameReading)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                Text(displaySnapshot.displayName)
                     .font(.title2.weight(.bold))
-                if let company = card.company, !company.isEmpty {
-                    Text(company)
+                if !displaySnapshot.company.isEmpty {
+                    Text(displaySnapshot.company)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if !previewContacts.isEmpty {
+            if !displaySnapshot.previewContacts.isEmpty {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
-                    ForEach(previewContacts, id: \.value) { contact in
+                    ForEach(displaySnapshot.previewContacts) { contact in
                         Label(contact.value, systemImage: contact.systemImage)
                             .font(.subheadline)
                             .lineLimit(1)
@@ -46,19 +55,5 @@ struct CardPeekView: View {
         .frame(minWidth: 280, idealWidth: 360, maxWidth: 390, alignment: .leading)
         .background(AppTheme.background)
         .accessibilityElement(children: .contain)
-    }
-
-    private var previewContacts: [(value: String, systemImage: String)] {
-        var contacts = card.phoneList.prefix(2).map { ($0, "phone") }
-        if contacts.count < 2, let email = card.email, !email.isEmpty {
-            contacts.append((email, "envelope"))
-        }
-        return Array(contacts.prefix(2))
-    }
-
-    private var initials: String {
-        let last = card.lastName?.first.map(String.init) ?? ""
-        let first = card.firstName?.first.map(String.init) ?? ""
-        return last + first
     }
 }

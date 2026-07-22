@@ -1,7 +1,91 @@
 import CoreData
 import Foundation
 
-struct DuplicateMergeSelection: Equatable {
+/// 重複統合画面が保持する不変の表示値。
+/// `NSManagedObject` を View の State に保持せず、実行直前に ID から再解決できるようにする。
+nonisolated struct DuplicateMergeCardSnapshot: Equatable, Sendable {
+    let objectURI: String
+    let lastName: String
+    let lastNameReading: String
+    let firstName: String
+    let firstNameReading: String
+    let company: String
+    let companyReading: String
+    let department: String
+    let title: String
+    let phone: String
+    let email: String
+    let address: String
+    let website: String
+    let notes: String
+    let createdAt: Date?
+    let updatedAt: Date?
+
+    @MainActor
+    init(card: BusinessCard) {
+        objectURI = card.objectID.uriRepresentation().absoluteString
+        lastName = card.lastName ?? ""
+        lastNameReading = card.lastNameReading ?? ""
+        firstName = card.firstName ?? ""
+        firstNameReading = card.firstNameReading ?? ""
+        company = card.company ?? ""
+        companyReading = card.companyReading ?? ""
+        department = card.department ?? ""
+        title = card.title ?? ""
+        phone = card.phone ?? ""
+        email = card.email ?? ""
+        address = card.address ?? ""
+        website = card.website ?? ""
+        notes = card.notes ?? ""
+        createdAt = card.createdAt
+        updatedAt = card.updatedAt
+    }
+
+    var fullName: String {
+        let last = lastName.trimmingCharacters(in: .whitespaces)
+        let first = firstName.trimmingCharacters(in: .whitespaces)
+        return [last, first].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    var phoneList: [String] {
+        phone.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// 表示後に統合対象が編集されていないことを確認する。
+    @MainActor
+    func matchesCurrentValues(of card: BusinessCard) -> Bool {
+        !card.isDeleted
+            && lastName == (card.lastName ?? "")
+            && lastNameReading == (card.lastNameReading ?? "")
+            && firstName == (card.firstName ?? "")
+            && firstNameReading == (card.firstNameReading ?? "")
+            && company == (card.company ?? "")
+            && companyReading == (card.companyReading ?? "")
+            && department == (card.department ?? "")
+            && title == (card.title ?? "")
+            && phone == (card.phone ?? "")
+            && email == (card.email ?? "")
+            && address == (card.address ?? "")
+            && website == (card.website ?? "")
+            && notes == (card.notes ?? "")
+            && updatedAt == card.updatedAt
+    }
+}
+
+/// シートを開く前に確定した重複統合画面の入力。
+/// 表示開始後の`.task`でCore Dataを解決しないため、最初のフレームから
+/// 本文とツールバーを同時に描画できる。
+nonisolated struct DuplicateMergeRequest: Identifiable, Sendable {
+    let pair: DuplicatePair
+    let cardA: DuplicateMergeCardSnapshot?
+    let cardB: DuplicateMergeCardSnapshot?
+
+    var id: String { "\(pair.cardAIDURI)-\(pair.cardBIDURI)" }
+}
+
+nonisolated struct DuplicateMergeSelection: Equatable {
     enum Source: Equatable {
         case a
         case b
@@ -19,7 +103,15 @@ struct DuplicateMergeSelection: Equatable {
 
     init() {}
 
+    @MainActor
     init(cardA: BusinessCard, cardB: BusinessCard) {
+        self.init(
+            cardA: DuplicateMergeCardSnapshot(card: cardA),
+            cardB: DuplicateMergeCardSnapshot(card: cardB)
+        )
+    }
+
+    init(cardA: DuplicateMergeCardSnapshot, cardB: DuplicateMergeCardSnapshot) {
         name = Self.preferredSource(cardA.fullName, cardB.fullName)
         company = Self.preferredSource(cardA.company, cardB.company)
         department = Self.preferredSource(cardA.department, cardB.department)

@@ -2,201 +2,734 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// 追加フローを選択中タブから独立させ、完了・キャンセル後も元のタブを維持する。
+/// 名刺追加の全入口を、排他的な状態機械から提示する。
+/// 各状態はsheet・fullScreenCover・PhotosPicker・alertのいずれか1つだけを所有する。
 struct CardAdditionFlowModifier: ViewModifier {
     @EnvironmentObject private var viewModel: CardListViewModel
     @EnvironmentObject private var navigationState: AppNavigationState
+    @EnvironmentObject private var entitlementStore: EntitlementStore
+    @EnvironmentObject private var rootPresentationRequests: AppRootPresentationRequests
 
-    @State private var isShowingForm = false
-    @State private var batchImages: [UIImage] = []
-    @State private var isReviewingBatch = false
-    @State private var isShowingAddSheet = false
-    @State private var pendingAddAction: AddCardAction?
-    @State private var isShowingPhotoPicker = false
+    @State private var flowState: CardAdditionFlowState = .idle
+    @State private var batchInputs: [CardImageInput] = []
+    @State private var pendingOCRQueue: PendingOCRStore.Queue?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var isImportingPhotos = false
-    @State private var photoImportMessage: String?
-    @State private var isShowingPendingOCRPrompt = false
-    @State private var pendingOCRImages: [UIImage] = []
+    @State private var batchWarningMessage: String?
+    @State private var deferredMessage: CardAdditionMessage?
+    @State private var batchGeneration: UUID?
+    @State private var batchProcessedCount = 0
+    @State private var batchTotalCount = 0
+    @State private var isPendingQueueAvailable = true
+    @State private var photoImportTask: Task<Void, Never>?
+    @State private var cameraPreparationTask: Task<Void, Never>?
+    @State private var batchCancellationTask: Task<Void, Never>?
+    @State private var pendingQueueMutationTask: Task<Void, Never>?
+    @State private var modelDownloadTask: Task<Void, Never>?
+    @State private var modelDownloadGeneration: UUID?
+    @State private var shouldAutoPromptPendingOCR = true
+    @State private var contextRefreshDeferralToken: UUID?
+    @State private var didSaveCardInCurrentSheet = false
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: $isShowingForm) {
-                CardFormView(onSave: {
-                    viewModel.fetchCards()
-                    isShowingForm = false
-                })
+            .sheet(item: sheetDestination, onDismiss: handleSheetDismissed) { destination in
+                sheetContent(for: destination)
             }
-            .sheet(
-                isPresented: $isShowingAddSheet,
-                onDismiss: performPendingAddAction
-            ) {
-                AddCardSheet(
-                    pendingCount: pendingOCRImages.count,
-                    isImporting: isImportingPhotos,
-                    onCamera: { dismissAddSheet(then: .camera) },
-                    onPhotos: { dismissAddSheet(then: .photos) },
-                    onManual: { dismissAddSheet(then: .manual) },
-                    onResume: pendingOCRImages.isEmpty ? nil : {
-                        dismissAddSheet(then: .resumePendingOCR)
-                    }
+            .fullScreenCover(
+                item: cameraDestination,
+                onDismiss: handleCameraDismissed
+            ) { _ in
+                CameraCaptureView(
+                    onComplete: handleCameraCompletion,
+                    onCancel: handleCameraCancellation
                 )
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $isReviewingBatch, onDismiss: {
-                batchImages = []
-                viewModel.fetchCards()
-            }) {
-                BatchReviewView(images: $batchImages, onComplete: {
-                    isReviewingBatch = false
-                })
-                .environmentObject(viewModel)
             }
             .photosPicker(
-                isPresented: $isShowingPhotoPicker,
+                isPresented: isPhotoPickerPresented,
                 selection: $selectedPhotoItems,
                 maxSelectionCount: 10,
                 selectionBehavior: .ordered,
                 matching: .images,
-                preferredItemEncoding: .compatible
+                preferredItemEncoding: .current
             )
             .onChange(of: selectedPhotoItems) { _, items in
                 handlePhotoSelection(items)
             }
-            .alert("写真の読込み", isPresented: Binding(
-                get: { photoImportMessage != nil },
-                set: { if !$0 { photoImportMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { photoImportMessage = nil }
-            } message: {
-                Text(photoImportMessage ?? "")
+            .alert(item: alertDestination) { destination in
+                alert(for: destination)
             }
-            .alert("未完了の読み取り", isPresented: $isShowingPendingOCRPrompt) {
-                Button("再開") {
-                    batchImages = pendingOCRImages
-                    isReviewingBatch = !batchImages.isEmpty
+            .background {
+                PresentationDismissalObserver(
+                    activeID: activeObservedPresentation,
+                    dismissingID: dismissingObservedPresentation,
+                    onDismissalCompleted: completeObservedPresentationDismissal
+                )
+                .frame(width: 0, height: 0)
+            }
+            .overlay {
+                if flowState == .importingPhotos
+                    || flowState == .preparingCameraBatch
+                    || flowState == .cancellingBatch {
+                    ZStack {
+                        Color.black.opacity(0.12)
+                            .ignoresSafeArea()
+                        VStack(spacing: AppTheme.Spacing.medium) {
+                            ProgressView(
+                                flowState == .cancellingBatch
+                                    ? "キャンセル中"
+                                    : (flowState == .preparingCameraBatch
+                                        ? "撮影内容を準備中"
+                                        : "写真を読み込み中")
+                            )
+                            if flowState != .cancellingBatch {
+                                Button("キャンセル", role: .cancel) {
+                                    cancelBatchPreparation()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                            .padding(AppTheme.Spacing.large)
+                            .background(.regularMaterial, in: .rect(
+                                cornerRadius: AppTheme.contentCornerRadius,
+                                style: .continuous
+                            ))
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        flowState == .preparingCameraBatch
+                            ? "撮影内容を準備中"
+                            : (flowState == .cancellingBatch ? "キャンセル中" : "写真を読み込み中")
+                    )
                 }
-                Button("破棄", role: .destructive) {
-                    pendingOCRImages = []
-                    Task { await discardPendingOCR() }
-                }
-            } message: {
-                Text("前回中断した名刺が\(pendingOCRImages.count)枚あります。")
             }
             .onChange(of: navigationState.isCardAdditionRequested) { _, requested in
-                if requested { presentRequestedAddSheetIfNeeded() }
+                if requested {
+                    presentRequestedRootSheetIfPossible()
+                }
+            }
+            .onChange(of: navigationState.isAISearchPaywallRequested) { _, requested in
+                if requested {
+                    presentRequestedRootSheetIfPossible()
+                }
+            }
+            .onChange(of: rootPresentationRequests.queue) { _, _ in
+                presentDeferredPromptOrRequest()
+            }
+            .onChange(of: flowState) { _, state in
+                guard state == .idle else { return }
+                presentDeferredPromptOrRequest()
             }
             .onAppear {
-                presentRequestedAddSheetIfNeeded()
+                presentRequestedRootSheetIfPossible()
             }
             .task {
                 await loadPendingOCR()
             }
+            .onDisappear {
+                cancelProcessingTasks()
+                batchCancellationTask?.cancel()
+                pendingQueueMutationTask?.cancel()
+                modelDownloadTask?.cancel()
+                modelDownloadTask = nil
+                modelDownloadGeneration = nil
+                finishCardMutationSession()
+            }
     }
 
-    private func presentRequestedAddSheetIfNeeded() {
-        guard navigationState.isCardAdditionRequested else { return }
-        isShowingAddSheet = true
-        navigationState.consumeCardAdditionRequest()
+    // MARK: - Presentation bindings
+
+    private var sheetDestination: Binding<CardAdditionSheetDestination?> {
+        Binding(
+            get: {
+                switch flowState {
+                case .chooser:
+                    .chooser
+                case .aiSearchPaywall:
+                    .aiSearchPaywall
+                case .manualForm:
+                    .manualForm
+                case .batchReview:
+                    .batchReview
+                default:
+                    nil
+                }
+            },
+            set: { destination in
+                guard destination == nil else { return }
+                switch flowState {
+                case .chooser, .aiSearchPaywall, .manualForm, .batchReview:
+                    flowState.send(.sheetDismissRequested)
+                default:
+                    break
+                }
+            }
+        )
     }
 
-    /// 先に追加メニューを閉じ、dismiss完了後に次のモーダルを開始する。
-    private func dismissAddSheet(then action: AddCardAction) {
-        pendingAddAction = action
-        isShowingAddSheet = false
+    private var cameraDestination: Binding<CardAdditionCameraDestination?> {
+        Binding(
+            get: { flowState == .camera ? .camera : nil },
+            set: { destination in
+                guard destination == nil, flowState == .camera else { return }
+                flowState.send(.cameraFinished(hasImages: false))
+            }
+        )
     }
 
-    private func performPendingAddAction() {
-        guard let action = pendingAddAction else { return }
-        pendingAddAction = nil
+    private var isPhotoPickerPresented: Binding<Bool> {
+        Binding(
+            get: {
+                if case .photoPicker = flowState { return true }
+                return false
+            },
+            set: { isPresented in
+                guard !isPresented else { return }
+                if case .photoPicker = flowState {
+                    flowState.send(.photoPickerDismissRequested)
+                }
+            }
+        )
+    }
 
-        switch action {
-        case .camera:
-            startCameraCapture()
-        case .photos:
-            selectedPhotoItems = []
-            isShowingPhotoPicker = true
-        case .manual:
-            isShowingForm = true
-        case .resumePendingOCR:
-            batchImages = pendingOCRImages
-            isReviewingBatch = !batchImages.isEmpty
+    private var alertDestination: Binding<CardAdditionAlertDestination?> {
+        Binding(
+            get: {
+                switch flowState {
+                case .pendingOCRPrompt:
+                    .pendingOCR(count: pendingOCRQueue?.inputs.count ?? 0)
+                case .message(let message):
+                    .message(message)
+                case .launchAlert(let alert):
+                    .launch(alert)
+                default:
+                    nil
+                }
+            },
+            set: { destination in
+                guard destination == nil else { return }
+                switch flowState {
+                case .message:
+                    flowState.send(.dismissMessage)
+                case .pendingOCRPrompt:
+                    flowState.send(.dismissAlert)
+                case .launchAlert:
+                    flowState.send(.dismissLaunchAlert)
+                default:
+                    break
+                }
+            }
+        )
+    }
+
+    // MARK: - Presented content
+
+    @ViewBuilder
+    private func sheetContent(for destination: CardAdditionSheetDestination) -> some View {
+        switch destination {
+        case .chooser:
+            AddCardSheet(
+                pendingCount: pendingOCRQueue?.inputs.count ?? 0,
+                isImporting: false,
+                onCamera: { selectAddAction(.camera) },
+                onPhotos: { selectAddAction(.photos) },
+                onManual: { selectAddAction(.manual) },
+                onResume: pendingOCRQueue == nil
+                    ? nil
+                    : { selectAddAction(.resumePendingOCR) }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+
+        case .aiSearchPaywall:
+            PaywallView(context: .aiSearch)
+                .environmentObject(entitlementStore)
+
+        case .manualForm:
+            CardFormView(onSave: {
+                recordSuccessfulCardSave()
+                flowState.send(.manualFinished)
+            })
+
+        case .batchReview:
+            BatchReviewView(
+                inputs: $batchInputs,
+                queueID: batchGeneration,
+                processedCount: $batchProcessedCount,
+                totalCount: batchTotalCount,
+                externalWarning: $batchWarningMessage,
+                isPendingQueueAvailable: $isPendingQueueAvailable,
+                onCardSaved: recordSuccessfulCardSave,
+                onComplete: {
+                    if let queueID = batchGeneration {
+                        discardCompletedQueue(queueID: queueID)
+                    }
+                    pendingOCRQueue = nil
+                    flowState.send(.batchFinished)
+                }
+            )
+            .environmentObject(viewModel)
         }
     }
 
-    private func startCameraCapture() {
-        CameraBatchCapture.shared.start { images in
-            batchImages = images
-            if !images.isEmpty {
-                Task {
-                    let inputs = images.compactMap { image in
-                        image.jpegData(compressionQuality: 0.82).map {
-                            CardImageInput(data: $0, source: .camera)
-                        }
-                    }
-                    do {
-                        try await PendingOCRStore.shared.persist(inputs)
-                    } catch {
-                        photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-                    }
-                    isReviewingBatch = true
+    private func alert(for destination: CardAdditionAlertDestination) -> Alert {
+        switch destination {
+        case .pendingOCR(let count):
+            Alert(
+                title: Text("未完了の読み取り"),
+                message: Text("前回中断した名刺が\(count)枚あります。"),
+                primaryButton: .default(Text("再開")) {
+                    activatePendingQueue()
+                    flowState.send(.resumePendingOCR)
+                },
+                secondaryButton: .destructive(Text("破棄")) {
+                    discardRestoredQueue()
+                    flowState.send(.discardPendingOCR)
                 }
+            )
+
+        case .message(let message):
+            Alert(
+                title: Text(message.title),
+                message: Text(message.message),
+                dismissButton: .cancel(Text("OK")) {
+                    flowState.send(.dismissMessage)
+                }
+            )
+
+        case .launch(let alert):
+            switch alert {
+            case .grandfatheredAnnouncement:
+                Alert(
+                    title: Text("eMeishi Pro が登場しました"),
+                    message: Text("既存ユーザーには、AI 自然言語検索を引き続き無料でご利用いただけます。新しい Pro 機能は設定画面からご確認ください。"),
+                    dismissButton: .default(Text("OK")) {
+                        flowState.send(.dismissLaunchAlert)
+                    }
+                )
+            case .qwenDownloadPrompt:
+                Alert(
+                    title: Text("AIモデルをダウンロードしますか？"),
+                    message: Text("この端末はApple Intelligenceに対応していないため、名刺の読み取り精度を向上させるAIモデルをダウンロードできます。Wi-Fi環境でのダウンロードを推奨します。"),
+                    primaryButton: .default(Text("ダウンロード（約570MB）")) {
+                        flowState.send(.dismissLaunchAlert)
+                        startModelDownload()
+                    },
+                    secondaryButton: .cancel(Text("あとで")) {
+                        flowState.send(.dismissLaunchAlert)
+                    }
+                )
             }
         }
     }
 
-    private func importSelectedPhotos(_ items: [PhotosPickerItem]) async {
-        isImportingPhotos = true
-        defer {
-            isImportingPhotos = false
+    // MARK: - State transitions
+
+    private func presentRequestedRootSheetIfPossible() {
+        guard flowState == .idle else { return }
+
+        // 同じrootのsheet所有者を1つに固定し、AI検索のPaywallと追加フローが
+        // 同時に提示されないよう、先に届いたユーザー操作を状態機械へ取り込む。
+        if navigationState.isAISearchPaywallRequested {
+            flowState.send(.requestAISearchPaywall)
+            navigationState.consumeAISearchPaywallRequest()
+        } else if navigationState.isCardAdditionRequested {
+            flowState.send(.requestAddition)
+            navigationState.consumeCardAdditionRequest()
+        }
+    }
+
+    private func presentDeferredPromptOrRequest() {
+        guard flowState == .idle else { return }
+        if let deferredMessage {
+            self.deferredMessage = nil
+            flowState.send(.showMessage(deferredMessage))
+        } else if shouldAutoPromptPendingOCR, pendingOCRQueue != nil {
+            flowState.send(.pendingOCRFound)
+        } else if let launchAlert = rootPresentationRequests.consumeNextLaunchAlert() {
+            flowState.send(.showLaunchAlert(launchAlert))
+        } else {
+            presentRequestedRootSheetIfPossible()
+        }
+    }
+
+    private func selectAddAction(_ action: CardAdditionAction) {
+        if action == .photos {
             selectedPhotoItems = []
         }
+        if action == .resumePendingOCR {
+            activatePendingQueue()
+        }
+        if action == .manual {
+            beginCardMutationSessionIfNeeded()
+        }
+        flowState.send(.selectAction(action))
+    }
+
+    private func handleSheetDismissed() {
+        guard case .dismissingSheet(let destination) = flowState else { return }
+        flowState.send(.sheetDismissed)
+
+        switch destination {
+        case .idle:
+            resetTransientBatchState()
+            finishCardMutationSession()
+        case .preservePendingOCR:
+            if let queueID = batchGeneration, isPendingQueueAvailable, !batchInputs.isEmpty {
+                pendingOCRQueue = PendingOCRStore.Queue(
+                    id: queueID,
+                    inputs: batchInputs,
+                    processedCount: batchProcessedCount,
+                    totalCount: batchTotalCount
+                )
+                // ユーザーが閉じた直後に同じ警告を再提示せず、次の追加シートから再開できるようにする。
+                shouldAutoPromptPendingOCR = false
+            }
+            resetTransientBatchState()
+            finishCardMutationSession()
+        case .action:
+            break
+        }
+    }
+
+    private func handleCameraCompletion(_ inputs: [CardImageInput]) {
+        batchInputs = inputs
+        let generation = UUID()
+        batchGeneration = inputs.isEmpty ? nil : generation
+        batchProcessedCount = 0
+        batchTotalCount = inputs.count
+        isPendingQueueAvailable = true
+        flowState.send(.cameraFinished(hasImages: !inputs.isEmpty))
+    }
+
+    private func handleCameraCancellation() {
+        batchInputs = []
+        batchGeneration = nil
+        batchProcessedCount = 0
+        batchTotalCount = 0
+        flowState.send(.cameraFinished(hasImages: false))
+    }
+
+    private func handleCameraDismissed() {
+        flowState.send(.cameraDismissed)
+        guard flowState == .preparingCameraBatch,
+              let generation = batchGeneration else { return }
+        cameraPreparationTask?.cancel()
+        cameraPreparationTask = Task {
+            await prepareCameraBatch(generation: generation)
+            guard batchGeneration == generation else { return }
+            cameraPreparationTask = nil
+        }
+    }
+
+    private func prepareCameraBatch(generation: UUID) async {
+        do {
+            try Task.checkCancellation()
+            try await PendingOCRStore.shared.persist(batchInputs, queueID: generation)
+            try Task.checkCancellation()
+            guard batchGeneration == generation,
+                  flowState == .preparingCameraBatch else { return }
+            isPendingQueueAvailable = true
+            beginCardMutationSessionIfNeeded()
+            flowState.send(.cameraPreparationSucceeded)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard batchGeneration == generation,
+                  flowState == .preparingCameraBatch else { return }
+            isPendingQueueAvailable = false
+            batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+            flowState.send(.cameraPreparationFailed)
+        }
+    }
+
+    // MARK: - Photo import and pending OCR
+
+    private func handlePhotoSelection(_ items: [PhotosPickerItem]) {
+        switch flowState {
+        case .photoPicker, .dismissingPhotoPicker:
+            flowState.send(.photoSelectionChanged(hasItems: !items.isEmpty))
+        default:
+            break
+        }
+    }
+
+    private func importSelectedPhotos(_ items: [PhotosPickerItem], generation: UUID) async {
+        defer {
+            if batchGeneration == generation {
+                selectedPhotoItems = []
+            }
+        }
+        batchWarningMessage = nil
+        isPendingQueueAvailable = true
 
         let result = await PhotoImportService.shared.importImages(from: items)
-        batchImages = result.images.compactMap { UIImage(data: $0.data) }
+        guard !Task.isCancelled else { return }
+        guard batchGeneration == generation,
+              flowState == .importingPhotos else { return }
+        batchInputs = result.images
+        batchProcessedCount = 0
+        batchTotalCount = result.images.count
 
-        if batchImages.isEmpty {
+        guard !batchInputs.isEmpty else {
             let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
-            photoImportMessage = "読込みに失敗しました。\(reason)。もう一度お試しください。"
+            flowState.send(.photoImportFailed(CardAdditionMessage(
+                title: "写真の読込み",
+                message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
+            )))
             return
         }
 
         if !result.failures.isEmpty {
-            photoImportMessage = "\(batchImages.count)枚を読み込み、\(result.failures.count)枚は読み込めませんでした。"
+            batchWarningMessage = "\(batchInputs.count)枚を読み込み、\(result.failures.count)枚は読み込めませんでした。"
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        do {
-            try await PendingOCRStore.shared.persist(result.images)
-        } catch {
-            photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-        }
-        isReviewingBatch = true
-    }
 
-    private func handlePhotoSelection(_ items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        Task { await importSelectedPhotos(items) }
+        do {
+            try Task.checkCancellation()
+            try await PendingOCRStore.shared.persist(result.images, queueID: generation)
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard batchGeneration == generation,
+                  flowState == .importingPhotos else { return }
+            isPendingQueueAvailable = false
+            batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+        }
+        guard batchGeneration == generation,
+              flowState == .importingPhotos else { return }
+        beginCardMutationSessionIfNeeded()
+        flowState.send(.photoImportSucceeded)
     }
 
     private func loadPendingOCR() async {
         guard !ScreenshotMode.isActive else { return }
         do {
             let restored = try await PendingOCRStore.shared.restore()
-            pendingOCRImages = restored.compactMap { UIImage(data: $0.data) }
-            isShowingPendingOCRPrompt = !pendingOCRImages.isEmpty
+            guard !Task.isCancelled else { return }
+            pendingOCRQueue = restored
+            if restored != nil, flowState == .idle {
+                flowState.send(.pendingOCRFound)
+            }
         } catch {
-            photoImportMessage = "前回の未完了読み取りを復元できませんでした。破損した一時データは設定を変えずに保持しています。"
+            showMessageWhenPossible(CardAdditionMessage(
+                title: "未完了の読み取り",
+                message: "前回の未完了読み取りを復元できませんでした。破損した一時データは設定を変えずに保持しています。"
+            ))
         }
     }
 
-    private func discardPendingOCR() async {
-        do {
-            try await PendingOCRStore.shared.discard()
-        } catch {
-            photoImportMessage = "未完了の読み取り情報を破棄できませんでした。"
+    private func discardRestoredQueue() {
+        guard let queue = pendingOCRQueue else { return }
+        pendingOCRQueue = nil
+        pendingQueueMutationTask?.cancel()
+        pendingQueueMutationTask = Task {
+            do {
+                try await PendingOCRStore.shared.discard(queueID: queue.id)
+            } catch {
+                guard !Task.isCancelled else { return }
+                showMessageWhenPossible(CardAdditionMessage(
+                    title: "未完了の読み取り",
+                    message: "未完了の読み取り情報を破棄できませんでした。"
+                ))
+            }
+            guard !Task.isCancelled else { return }
+            pendingQueueMutationTask = nil
         }
     }
+
+    private func discardCompletedQueue(queueID: UUID) {
+        pendingQueueMutationTask?.cancel()
+        pendingQueueMutationTask = Task {
+            do {
+                try await PendingOCRStore.shared.discard(queueID: queueID)
+            } catch {
+                guard !Task.isCancelled else { return }
+                deferredMessage = CardAdditionMessage(
+                    title: "読み取り完了",
+                    message: "完了済みの一時データを削除できませんでした。次回起動時に再確認してください。"
+                )
+            }
+            guard !Task.isCancelled else { return }
+            pendingQueueMutationTask = nil
+        }
+    }
+
+    private func showMessageWhenPossible(_ message: CardAdditionMessage) {
+        if flowState == .idle || flowState == .importingPhotos {
+            flowState.send(.showMessage(message))
+        } else {
+            deferredMessage = message
+        }
+    }
+
+    private func startModelDownload() {
+        // 同じルート上のダウンロード要求は1つだけ所有し、二重開始を防ぐ。
+        guard modelDownloadTask == nil else { return }
+        let generation = UUID()
+        modelDownloadGeneration = generation
+        modelDownloadTask = Task {
+            defer {
+                if modelDownloadGeneration == generation {
+                    modelDownloadGeneration = nil
+                    modelDownloadTask = nil
+                }
+            }
+            do {
+                try await LocalLLMService.shared.downloadModel()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, modelDownloadGeneration == generation else { return }
+                showMessageWhenPossible(CardAdditionMessage(
+                    title: "AIモデルのダウンロード",
+                    message: "ダウンロードに失敗しました。通信環境を確認して、設定からもう一度お試しください。"
+                ))
+            }
+        }
+    }
+
+    private var activeObservedPresentation: CardAdditionObservedPresentation? {
+        switch flowState {
+        case .photoPicker:
+            .photoPicker
+        case .pendingOCRPrompt, .launchAlert, .message:
+            .alert
+        default:
+            nil
+        }
+    }
+
+    private var dismissingObservedPresentation: CardAdditionObservedPresentation? {
+        switch flowState {
+        case .dismissingPhotoPicker:
+            .photoPicker
+        case .dismissingAlert:
+            .alert
+        default:
+            nil
+        }
+    }
+
+    private func completeObservedPresentationDismissal(
+        _ presentation: CardAdditionObservedPresentation
+    ) {
+        switch presentation {
+        case .photoPicker:
+            flowState.send(.photoPickerDismissed)
+            if flowState == .importingPhotos {
+                let items = selectedPhotoItems
+                guard !items.isEmpty else {
+                    flowState.send(.photoImportFailed(CardAdditionMessage(
+                        title: "写真の読込み",
+                        message: "写真が選択されませんでした。もう一度お試しください。"
+                    )))
+                    return
+                }
+                photoImportTask?.cancel()
+                let generation = UUID()
+                batchGeneration = generation
+                batchProcessedCount = 0
+                batchTotalCount = items.count
+                photoImportTask = Task {
+                    await importSelectedPhotos(items, generation: generation)
+                    guard batchGeneration == generation else { return }
+                    photoImportTask = nil
+                }
+            } else {
+                selectedPhotoItems = []
+                presentDeferredPromptOrRequest()
+            }
+        case .alert:
+            flowState.send(.alertDismissed)
+            if flowState == .idle {
+                presentDeferredPromptOrRequest()
+            }
+        }
+    }
+
+    private func resetTransientBatchState() {
+        cancelProcessingTasks()
+        batchInputs = []
+        batchWarningMessage = nil
+        batchGeneration = nil
+        batchProcessedCount = 0
+        batchTotalCount = 0
+        isPendingQueueAvailable = true
+    }
+
+    private func cancelBatchPreparation() {
+        guard flowState == .importingPhotos || flowState == .preparingCameraBatch else { return }
+        let generation = batchGeneration
+        cancelProcessingTasks()
+        flowState.send(.beginBatchCancellation)
+        batchCancellationTask?.cancel()
+        batchCancellationTask = Task {
+            if let generation {
+                do {
+                    try await PendingOCRStore.shared.discard(queueID: generation)
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    deferredMessage = CardAdditionMessage(
+                        title: "読込みのキャンセル",
+                        message: "一時データを破棄できませんでした。次回起動時に再確認できます。"
+                    )
+                }
+            }
+            guard !Task.isCancelled, batchGeneration == generation else { return }
+            batchInputs = []
+            selectedPhotoItems = []
+            batchWarningMessage = nil
+            batchGeneration = nil
+            batchProcessedCount = 0
+            batchTotalCount = 0
+            isPendingQueueAvailable = true
+            batchCancellationTask = nil
+            flowState.send(.batchCancellationCompleted)
+            presentDeferredPromptOrRequest()
+        }
+    }
+
+    private func cancelProcessingTasks() {
+        photoImportTask?.cancel()
+        photoImportTask = nil
+        cameraPreparationTask?.cancel()
+        cameraPreparationTask = nil
+    }
+
+    private func activatePendingQueue() {
+        guard let queue = pendingOCRQueue else { return }
+        beginCardMutationSessionIfNeeded()
+        batchInputs = queue.inputs
+        batchGeneration = queue.id
+        batchProcessedCount = queue.processedCount
+        batchTotalCount = queue.totalCount
+        pendingOCRQueue = nil
+        shouldAutoPromptPendingOCR = true
+        isPendingQueueAvailable = true
+    }
+
+    /// Core Data の変更通知による一覧更新を、追加シートの実 dismiss 完了まで保留する。
+    private func beginCardMutationSessionIfNeeded() {
+        guard contextRefreshDeferralToken == nil else { return }
+        contextRefreshDeferralToken = viewModel.beginContextRefreshDeferral()
+        didSaveCardInCurrentSheet = false
+    }
+
+    private func recordSuccessfulCardSave() {
+        didSaveCardInCurrentSheet = true
+        // 保存通知から既に予約された更新も、dismiss完了後の1回へまとめる。
+        viewModel.cancelPendingContextRefresh()
+    }
+
+    private func finishCardMutationSession() {
+        guard let token = contextRefreshDeferralToken else { return }
+        contextRefreshDeferralToken = nil
+        let shouldRefresh = didSaveCardInCurrentSheet
+        didSaveCardInCurrentSheet = false
+        viewModel.endContextRefreshDeferral(token, refreshCards: shouldRefresh)
+    }
+
 }
 
 extension View {
@@ -205,9 +738,39 @@ extension View {
     }
 }
 
-private enum AddCardAction {
+private enum CardAdditionSheetDestination: String, Identifiable {
+    case chooser
+    case aiSearchPaywall
+    case manualForm
+    case batchReview
+
+    var id: String { rawValue }
+}
+
+private enum CardAdditionCameraDestination: String, Identifiable {
     case camera
-    case photos
-    case manual
-    case resumePendingOCR
+
+    var id: String { rawValue }
+}
+
+private enum CardAdditionAlertDestination: Identifiable {
+    case pendingOCR(count: Int)
+    case message(CardAdditionMessage)
+    case launch(AppLaunchAlert)
+
+    var id: String {
+        switch self {
+        case .pendingOCR(let count):
+            "pending-\(count)"
+        case .message(let message):
+            "message-\(message.id)"
+        case .launch(let alert):
+            "launch-\(alert.id)"
+        }
+    }
+}
+
+private enum CardAdditionObservedPresentation: Hashable {
+    case photoPicker
+    case alert
 }

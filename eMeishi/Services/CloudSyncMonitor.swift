@@ -1,6 +1,33 @@
 import Combine
 import CoreData
 
+/// CloudKit は setup / import / export を並行して通知するため、単一 Bool ではなく
+/// event ID ごとの開始・終了を集約する。1件の終了で別イベントの同期表示を消さない。
+nonisolated struct CloudSyncActivityState: Equatable, Sendable {
+    private(set) var activeEventIDs: Set<UUID> = []
+    private(set) var lastSuccessDate: Date?
+    private(set) var lastEventFailed = false
+
+    init(lastSuccessDate: Date? = nil) {
+        self.lastSuccessDate = lastSuccessDate
+    }
+
+    var isSyncing: Bool { !activeEventIDs.isEmpty }
+
+    mutating func apply(identifier: UUID, endDate: Date?, failed: Bool) {
+        guard let endDate else {
+            activeEventIDs.insert(identifier)
+            return
+        }
+
+        activeEventIDs.remove(identifier)
+        lastEventFailed = failed
+        if !failed {
+            lastSuccessDate = endDate
+        }
+    }
+}
+
 // iCloud 同期状態を監視し、最終同期日時と進行中フラグを提供するサービス
 @MainActor
 final class CloudSyncMonitor: ObservableObject {
@@ -12,11 +39,13 @@ final class CloudSyncMonitor: ObservableObject {
     @Published private(set) var lastSyncFailed = false
 
     private static let lastSyncKey = "lastCloudKitSyncDate"
-    private var fallbackTask: Task<Void, Never>?
+    private var activityState: CloudSyncActivityState
 
     private init() {
         let ti = UserDefaults.standard.double(forKey: Self.lastSyncKey)
-        lastSyncDate = ti > 0 ? Date(timeIntervalSinceReferenceDate: ti) : nil
+        let persistedDate = ti > 0 ? Date(timeIntervalSinceReferenceDate: ti) : nil
+        lastSyncDate = persistedDate
+        activityState = CloudSyncActivityState(lastSuccessDate: persistedDate)
 
         guard PersistenceController.shared.iCloudSyncEnabled else { return }
         startObserving()
@@ -32,43 +61,33 @@ final class CloudSyncMonitor: ObservableObject {
             let event = notification.userInfo?[
                 NSPersistentCloudKitContainer.eventNotificationUserInfoKey
             ] as? NSPersistentCloudKitContainer.Event
+            let identifier: UUID? = event?.identifier
             let endDate: Date? = event?.endDate
             let failed: Bool = event?.error != nil
+            guard let identifier else { return }
             Task { @MainActor in
-                CloudSyncMonitor.shared.handleEvent(endDate: endDate, failed: failed)
+                CloudSyncMonitor.shared.handleEvent(
+                    identifier: identifier,
+                    endDate: endDate,
+                    failed: failed
+                )
             }
         }
     }
 
-    private func handleEvent(endDate: Date?, failed: Bool) {
-        if endDate == nil {
-            isSyncing = true
-        } else {
-            fallbackTask?.cancel()
-            isSyncing = false
-            if let end = endDate, !failed {
-                lastSyncDate = end
-                lastSyncFailed = false
-                UserDefaults.standard.set(end.timeIntervalSinceReferenceDate, forKey: Self.lastSyncKey)
-            } else if failed {
-                lastSyncFailed = true
-            }
+    private func handleEvent(identifier: UUID, endDate: Date?, failed: Bool) {
+        activityState.apply(identifier: identifier, endDate: endDate, failed: failed)
+        isSyncing = activityState.isSyncing
+        lastSyncFailed = activityState.lastEventFailed
+
+        if let successDate = activityState.lastSuccessDate,
+           successDate != lastSyncDate {
+            lastSyncDate = successDate
+            UserDefaults.standard.set(
+                successDate.timeIntervalSinceReferenceDate,
+                forKey: Self.lastSyncKey
+            )
         }
     }
 
-    /// ローカル変更を即時 save して CloudKit エクスポートをトリガーする。
-    /// 変更がない場合もスピナーを短時間表示して「確認した」感を与える。
-    func triggerSync() {
-        let context = PersistenceController.shared.container.viewContext
-        if context.hasChanges {
-            try? context.save()
-        }
-        isSyncing = true
-        fallbackTask?.cancel()
-        fallbackTask = Task {
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            if isSyncing { isSyncing = false }
-        }
-    }
 }

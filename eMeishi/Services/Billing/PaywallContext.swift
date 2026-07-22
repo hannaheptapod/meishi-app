@@ -1,6 +1,6 @@
 import Foundation
 
-enum PaywallContext: Hashable {
+nonisolated enum PaywallContext: Hashable, Sendable {
     case general
     case aiSearch
     case bulkRetag

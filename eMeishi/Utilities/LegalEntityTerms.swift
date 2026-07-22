@@ -2,7 +2,7 @@ import Foundation
 
 // 法人格（会社格）の一元管理。検出・除去・正規化で共通利用する。
 // CardFieldClassifier（検出）・BusinessCard（ソートキー・読み除去）・DuplicateChecker（正規化比較）で参照。
-enum LegalEntityTerms {
+nonisolated enum LegalEntityTerms {
 
     // MARK: - 日本語法人格（漢字）
 

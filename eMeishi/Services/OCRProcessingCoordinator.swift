@@ -41,9 +41,11 @@ actor OCRProcessingCoordinator {
 
     private let defaults = UserDefaults.standard
     private let calibrationKey = "ocrPhaseWorkloadCalibration.v1"
+    nonisolated static let terminalSessionRetentionLimit = 128
     private var sessions: [OCRJobID: OCRJobSession] = [:]
     private var phaseStartedAt: [OCRJobID: ContinuousClock.Instant] = [:]
     private var workloads: [OCRJobID: OCRProcessingWorkload] = [:]
+    private var terminalJobIDs: [OCRJobID] = []
     private var calibrations: [String: Double]
 
     private init() {
@@ -55,6 +57,10 @@ actor OCRProcessingCoordinator {
         totalItems: Int,
         workload: OCRProcessingWorkload = .unknown
     ) -> OCRProcessingState {
+        // デコード開始前など、セッション生成より先に届いたキャンセルを上書きしない。
+        if let existing = sessions[jobID], existing.isTerminal {
+            return existing.state
+        }
         workloads[jobID] = workload
         let state = OCRProcessingState(
             phase: .imagePreparation,
@@ -177,6 +183,7 @@ actor OCRProcessingCoordinator {
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
         workloads[jobID] = nil
+        retainTerminalSession(jobID: jobID)
         return session.state
     }
 
@@ -189,12 +196,31 @@ actor OCRProcessingCoordinator {
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
         workloads[jobID] = nil
+        retainTerminalSession(jobID: jobID)
         return session.state
     }
 
     func cancel(jobID: OCRJobID) -> OCRProcessingState? {
-        guard var session = sessions[jobID], !session.isTerminal else {
-            return sessions[jobID]?.state
+        guard var session = sessions[jobID] else {
+            let state = OCRProcessingState(
+                phase: .cancelled,
+                completedItems: 0,
+                totalItems: 1,
+                progress: 0,
+                estimatedRemainingSeconds: nil,
+                errorMessage: nil
+            )
+            sessions[jobID] = OCRJobSession(
+                id: jobID,
+                state: state,
+                startedAt: Date(),
+                finishedAt: Date()
+            )
+            retainTerminalSession(jobID: jobID)
+            return state
+        }
+        guard !session.isTerminal else {
+            return session.state
         }
         session.state.phase = .cancelled
         session.state.estimatedRemainingSeconds = nil
@@ -202,6 +228,7 @@ actor OCRProcessingCoordinator {
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
         workloads[jobID] = nil
+        retainTerminalSession(jobID: jobID)
         return session.state
     }
 
@@ -211,6 +238,10 @@ actor OCRProcessingCoordinator {
 
     func session(jobID: OCRJobID) -> OCRJobSession? {
         sessions[jobID]
+    }
+
+    func retainedTerminalSessionCount() -> Int {
+        terminalJobIDs.count
     }
 
 #if DEBUG
@@ -328,6 +359,24 @@ actor OCRProcessingCoordinator {
 #else
         0
 #endif
+    }
+
+    /// 遅延完了から終端状態を守るため一定数は保持しつつ、長時間利用時の無制限増加を防ぐ。
+    private func retainTerminalSession(jobID: OCRJobID) {
+        if let existingIndex = terminalJobIDs.firstIndex(of: jobID) {
+            terminalJobIDs.remove(at: existingIndex)
+        }
+        terminalJobIDs.append(jobID)
+
+        let overflow = terminalJobIDs.count - Self.terminalSessionRetentionLimit
+        guard overflow > 0 else { return }
+        let expiredIDs = Array(terminalJobIDs.prefix(overflow))
+        terminalJobIDs.removeFirst(overflow)
+        for expiredID in expiredIDs where sessions[expiredID]?.isTerminal == true {
+            sessions[expiredID] = nil
+            phaseStartedAt[expiredID] = nil
+            workloads[expiredID] = nil
+        }
     }
 
     private static let terminalPhases: Set<OCRProcessingPhase> = [.completed, .cancelled, .failed]

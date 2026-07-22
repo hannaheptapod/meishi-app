@@ -1,6 +1,6 @@
 import Foundation
 
-enum ExternalURLNormalizer {
+nonisolated enum ExternalURLNormalizer {
     /// スキーム省略時はhttpsを補い、Webリンクとして許可するのはhttp/httpsだけに限定する。
     static func websiteURL(from rawValue: String) -> URL? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

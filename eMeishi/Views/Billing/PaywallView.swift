@@ -4,6 +4,45 @@ import StoreKit
 import FoundationModels
 #endif
 
+nonisolated enum PaywallAlertDestination: String, Identifiable, Equatable, Sendable {
+    case purchaseFailure
+    case nothingToRestore
+    case restoreFailure
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .purchaseFailure: return "購入エラー"
+        case .nothingToRestore: return "購入の復元"
+        case .restoreFailure: return "復元エラー"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .purchaseFailure:
+            return "購入に失敗しました。しばらく経ってから再試行してください。"
+        case .nothingToRestore:
+            return "復元できる購入が見つかりませんでした。購入時と同じApple Accountでサインインしているか確認してください。"
+        case .restoreFailure:
+            return "購入情報を復元できませんでした。通信状態を確認して、もう一度お試しください。"
+        }
+    }
+}
+
+nonisolated private enum PaywallPurchaseOutcome: Sendable {
+    case purchased
+    case notCompleted
+    case failed
+}
+
+nonisolated private enum PaywallRestoreOutcome: Sendable {
+    case restored
+    case nothingToRestore
+    case failed
+}
+
 struct PaywallView: View {
 
     let context: PaywallContext
@@ -12,12 +51,18 @@ struct PaywallView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var products: [Product] = []
+    @State private var isLoadingProducts = false
     @State private var isPurchasing = false
     @State private var isRestoring = false
-    @State private var errorMessage: String? = nil
-    @State private var alertTitle = "エラー"
+    @State private var alertDestination: PaywallAlertDestination?
     @State private var selectedProductID: String = ProductIdentifier.proYearly.rawValue
     @State private var loadFailed = false
+    @State private var productLoadTask: Task<Void, Never>?
+    @State private var productLoadTaskGate = SecondaryViewTaskGate()
+    @State private var purchaseTask: Task<Void, Never>?
+    @State private var purchaseTaskGate = SecondaryViewTaskGate()
+    @State private var restoreTask: Task<Void, Never>?
+    @State private var restoreTaskGate = SecondaryViewTaskGate()
 
     private var yearlyProduct: Product? { products.first { $0.id == ProductIdentifier.proYearly.rawValue } }
     private var monthlyProduct: Product? { products.first { $0.id == ProductIdentifier.proMonthly.rawValue } }
@@ -41,20 +86,22 @@ struct PaywallView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") { dismiss() }
+                        .disabled(isPurchasing || isRestoring)
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 purchaseBar
             }
         }
-        .task { await loadProducts() }
-        .alert(alertTitle, isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
+        .interactiveDismissDisabled(isPurchasing || isRestoring)
+        .onAppear(perform: startProductLoad)
+        .onDisappear(perform: cancelViewOwnedTasks)
+        .alert(item: $alertDestination) { destination in
+            Alert(
+                title: Text(destination.title),
+                message: Text(destination.message),
+                dismissButton: .cancel(Text("OK"))
+            )
         }
     }
 
@@ -64,7 +111,7 @@ struct PaywallView: View {
         VStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 44))
-                .foregroundStyle(.accent)
+                .foregroundStyle(Color.accentColor)
             Text(context.featureTitle)
                 .font(.title2.bold())
             Text(context.featureDescription)
@@ -133,7 +180,7 @@ struct PaywallView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Button("再試行") {
-                        Task { await loadProducts() }
+                        startProductLoad()
                     }
                     .font(.subheadline)
                 }
@@ -220,7 +267,7 @@ struct PaywallView: View {
         VStack(spacing: 6) {
             Button {
                 guard let selectedProduct else { return }
-                Task { await purchase(selectedProduct) }
+                startPurchase(selectedProduct)
             } label: {
                 HStack {
                     if isPurchasing {
@@ -246,7 +293,7 @@ struct PaywallView: View {
     private var footerSection: some View {
         VStack(spacing: 12) {
             Button {
-                Task { await restore() }
+                startRestore()
             } label: {
                 if isRestoring {
                     ProgressView()
@@ -263,8 +310,16 @@ struct PaywallView: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 16) {
-                Link("利用規約（Apple 標準 EULA）", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-                Link("プライバシーポリシー", destination: URL(string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html")!)
+                if let termsURL = URL(
+                    string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
+                ) {
+                    Link("利用規約（Apple 標準 EULA）", destination: termsURL)
+                }
+                if let privacyURL = URL(
+                    string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html"
+                ) {
+                    Link("プライバシーポリシー", destination: privacyURL)
+                }
             }
             .font(.caption2)
         }
@@ -272,47 +327,113 @@ struct PaywallView: View {
 
     // MARK: - Actions
 
-    private func loadProducts() async {
+    private func startProductLoad() {
+        guard let operationID = productLoadTaskGate.begin() else { return }
+        isLoadingProducts = true
         loadFailed = false
-        products = await StoreService.shared.fetchProducts()
-            .sorted { $0.price > $1.price }
-        if products.contains(where: { $0.id == ProductIdentifier.proYearly.rawValue }) {
-            selectedProductID = ProductIdentifier.proYearly.rawValue
-        } else if let first = products.first {
-            selectedProductID = first.id
+
+        // 商品取得はStoreServiceのキャッシュを温める処理でもあるため継続させ、
+        // 画面側の待受だけをonDisappearで破棄する。
+        let serviceTask = Task { @MainActor in
+            await StoreService.shared.fetchProducts()
+                .sorted { $0.price > $1.price }
         }
-        if products.isEmpty { loadFailed = true }
+        productLoadTask = Task { @MainActor in
+            let loadedProducts = await serviceTask.value
+            guard !Task.isCancelled,
+                  productLoadTaskGate.finish(operationID) else { return }
+            productLoadTask = nil
+            isLoadingProducts = false
+            products = loadedProducts
+            if loadedProducts.contains(where: { $0.id == ProductIdentifier.proYearly.rawValue }) {
+                selectedProductID = ProductIdentifier.proYearly.rawValue
+            } else if let first = loadedProducts.first {
+                selectedProductID = first.id
+            }
+            loadFailed = loadedProducts.isEmpty
+        }
     }
 
-    private func purchase(_ product: Product) async {
+    private func startPurchase(_ product: Product) {
+        guard !isRestoring,
+              let operationID = purchaseTaskGate.begin() else { return }
         isPurchasing = true
-        defer {
-            isPurchasing = false
+
+        // StoreKitの購入確認は画面遷移を理由に中断せず、トランザクションを完結させる。
+        let serviceTask = Task { @MainActor () -> PaywallPurchaseOutcome in
+            do {
+                return try await StoreService.shared.purchase(product) ? .purchased : .notCompleted
+            } catch {
+                return .failed
+            }
         }
-        do {
-            let success = try await StoreService.shared.purchase(product)
-            if success { dismiss() }
-        } catch {
-            alertTitle = "購入エラー"
-            errorMessage = "購入に失敗しました。しばらく経ってから再試行してください。"
+        purchaseTask = Task { @MainActor in
+            let outcome = await serviceTask.value
+            guard !Task.isCancelled,
+                  purchaseTaskGate.finish(operationID) else { return }
+            purchaseTask = nil
+            isPurchasing = false
+            switch outcome {
+            case .purchased:
+                dismiss()
+            case .notCompleted:
+                break
+            case .failed:
+                alertDestination = .purchaseFailure
+            }
         }
     }
 
-    private func restore() async {
+    private func startRestore() {
+        guard !isPurchasing,
+              let operationID = restoreTaskGate.begin() else { return }
         isRestoring = true
-        defer { isRestoring = false }
-        do {
-            switch try await StoreService.shared.restorePurchases() {
+
+        let serviceTask = Task { @MainActor () -> PaywallRestoreOutcome in
+            do {
+                switch try await StoreService.shared.restorePurchases() {
+                case .restored:
+                    return .restored
+                case .nothingToRestore:
+                    return .nothingToRestore
+                }
+            } catch {
+                return .failed
+            }
+        }
+        restoreTask = Task { @MainActor in
+            let outcome = await serviceTask.value
+            guard !Task.isCancelled,
+                  restoreTaskGate.finish(operationID) else { return }
+            restoreTask = nil
+            isRestoring = false
+            switch outcome {
             case .restored:
                 dismiss()
             case .nothingToRestore:
-                alertTitle = "購入の復元"
-                errorMessage = "復元できる購入が見つかりませんでした。購入時と同じApple Accountでサインインしているか確認してください。"
+                alertDestination = .nothingToRestore
+            case .failed:
+                alertDestination = .restoreFailure
             }
-        } catch {
-            alertTitle = "復元エラー"
-            errorMessage = "購入情報を復元できませんでした。通信状態を確認して、もう一度お試しください。"
         }
+    }
+
+    private func cancelViewOwnedTasks() {
+        productLoadTaskGate.cancel()
+        productLoadTask?.cancel()
+        productLoadTask = nil
+        isLoadingProducts = false
+
+        purchaseTaskGate.cancel()
+        purchaseTask?.cancel()
+        purchaseTask = nil
+        isPurchasing = false
+
+        restoreTaskGate.cancel()
+        restoreTask?.cancel()
+        restoreTask = nil
+        isRestoring = false
+        alertDestination = nil
     }
 
     // MARK: - Device Compatibility

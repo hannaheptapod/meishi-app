@@ -5,7 +5,7 @@ import SwiftUI
 import os
 
 // ソートキー（4種）
-enum CardSortKey: String, CaseIterable, Identifiable {
+nonisolated enum CardSortKey: String, CaseIterable, Identifiable, Sendable {
     case name      = "名前"
     case company   = "会社名"
     case createdAt = "登録日時"
@@ -21,6 +21,862 @@ struct CardSection: Identifiable {
     let cards: [BusinessCard]
 }
 
+/// 一覧描画・選択・ナビゲーションで使用する完全な値型。
+/// Core Dataオブジェクトは保存操作を実行する瞬間だけURIから解決する。
+nonisolated struct CardListItemSnapshot: Identifiable, Equatable, Sendable {
+    let id: URL
+    let row: CardRowDisplaySnapshot
+    let detail: CardDetailDisplaySnapshot
+    let imageIdentifier: String
+
+    func settingFavorite(_ isFavorite: Bool) -> CardListItemSnapshot {
+        CardListItemSnapshot(
+            id: id,
+            row: CardRowDisplaySnapshot(
+                displayName: row.displayName,
+                company: row.company,
+                affiliation: row.affiliation,
+                isFavorite: isFavorite,
+                firstTag: row.firstTag,
+                additionalTagCount: row.additionalTagCount,
+                accessibilityLabel: row.accessibilityLabel
+            ),
+            detail: detail.settingFavorite(isFavorite),
+            imageIdentifier: imageIdentifier
+        )
+    }
+}
+
+nonisolated struct CardListItemSection: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let items: [CardListItemSnapshot]
+}
+
+private struct CardListDisplaySnapshot {
+    let isReady: Bool
+    let sourceCount: Int
+    let sourceObjectURIs: Set<URL>
+    let normalizedQuery: String
+    let isFilterActive: Bool
+    let externalFilter: CardListExternalFilter?
+    let sortKey: CardSortKey
+    let isSemanticSearchInProgress: Bool
+    let semanticSearchMessage: String?
+    let filteredItems: [CardListItemSnapshot]
+    let groupedItemSections: [CardListItemSection]
+
+    static let loading = CardListDisplaySnapshot(
+        isReady: false,
+        sourceCount: 0,
+        sourceObjectURIs: [],
+        normalizedQuery: "",
+        isFilterActive: false,
+        externalFilter: nil,
+        sortKey: .createdAt,
+        isSemanticSearchInProgress: false,
+        semanticSearchMessage: nil,
+        filteredItems: [],
+        groupedItemSections: []
+    )
+}
+
+/// CoreData 管理オブジェクトを並行処理へ渡さないための一覧検索用スナップショット。
+nonisolated struct CardListQuerySnapshot: Equatable, Sendable {
+    let index: Int
+    let id: UUID?
+    let row: CardRowDisplaySnapshot
+    let detail: CardDetailDisplaySnapshot
+    let searchValues: [String]
+    let tagIDs: Set<UUID>
+    let aiSearch: AISearchCardSnapshot?
+    let bulkAutoTag: BulkAutoTagCardSnapshot
+    let insights: InsightsCardSnapshot
+    let nameSectionValue: String
+    let companySectionValue: String
+    let nameSortValue: String
+    let companySortValue: String
+    let createdAt: Date?
+    let updatedAt: Date?
+}
+
+nonisolated struct CardRowTagSnapshot: Equatable, Sendable {
+    let name: String
+    let colorHex: String
+}
+
+nonisolated struct CardRowDisplaySnapshot: Equatable, Sendable {
+    let displayName: String
+    let company: String
+    let affiliation: String
+    let isFavorite: Bool
+    let firstTag: CardRowTagSnapshot?
+    let additionalTagCount: Int
+    let accessibilityLabel: String
+
+    static let unavailable = CardRowDisplaySnapshot(
+        displayName: "（名前なし）",
+        company: "",
+        affiliation: "",
+        isFavorite: false,
+        firstTag: nil,
+        additionalTagCount: 0,
+        accessibilityLabel: "名前なし"
+    )
+}
+
+nonisolated struct CardListCardRevision: Hashable, Sendable {
+    let objectURI: URL
+    let updatedAt: Date?
+}
+
+nonisolated struct CardListQuerySnapshotLoadResult: Equatable, Sendable {
+    let orderedObjectURIs: [URL]
+    let snapshots: [CardListQuerySnapshot]
+    let duplicateSnapshots: [DuplicateCardSnapshot]
+    let revisions: Set<CardListCardRevision>
+}
+
+nonisolated struct CardListQueryRequest: Sendable {
+    let snapshotGeneration: UUID
+    let snapshots: [CardListQuerySnapshot]
+    let normalizedQuery: String
+    let selectedTagIDs: Set<UUID>
+    let showFavoritesOnly: Bool
+    let externalFilter: CardListExternalFilter?
+    let semanticQuery: String?
+    let semanticMatchedCardIDs: Set<UUID>
+    let isSemanticSearchInProgress: Bool
+    let semanticSearchMessage: String?
+    let sortKey: CardSortKey
+    let sortAscending: Bool
+    let now: Date
+}
+
+nonisolated struct CardListQuerySectionResult: Equatable, Sendable {
+    let id: String
+    let title: String
+    let indices: [Int]
+}
+
+nonisolated struct CardListQueryResult: Equatable, Sendable {
+    let snapshotCount: Int
+    let filteredIndices: [Int]
+    let sections: [CardListQuerySectionResult]
+}
+
+/// タグ管理画面へ渡す描画専用の値スナップショット。
+/// View が Core Data の to-many relationship を評価するたびに展開しないよう、
+/// タグ取得時に使用件数まで確定する。
+nonisolated struct TagDisplaySnapshot: Identifiable, Equatable, Sendable {
+    let tagID: UUID?
+    let objectURI: String
+    let name: String
+    let colorHex: String
+    let usageCount: Int
+
+    var id: String { objectURI }
+}
+
+nonisolated struct TagDisplaySnapshotLoadResult: Equatable, Sendable {
+    let orderedObjectURIs: [URL]
+    let snapshots: [TagDisplaySnapshot]
+}
+
+/// タグ管理に必要な使用件数をprivate queueで確定し、値型だけをMainActorへ返す。
+/// `Tag.cards`のprefetchと件数集計を一覧画面の描画Actorから分離する。
+actor TagDisplaySnapshotLoader {
+    func load(
+        orderedObjectURIs: [URL],
+        coordinatorReference: PersistentStoreCoordinatorReference
+    ) async throws -> TagDisplaySnapshotLoadResult {
+        try Task.checkCancellation()
+        guard !orderedObjectURIs.isEmpty else {
+            return TagDisplaySnapshotLoadResult(
+                orderedObjectURIs: [],
+                snapshots: []
+            )
+        }
+
+        let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinatorReference.coordinator
+        context.name = "TagDisplaySnapshotLoader"
+        context.undoManager = nil
+
+        return try await context.perform {
+            try Task.checkCancellation()
+            let objectIDs = orderedObjectURIs.compactMap {
+                coordinatorReference.coordinator.managedObjectID(forURIRepresentation: $0)
+            }
+            guard objectIDs.count == orderedObjectURIs.count else {
+                return TagDisplaySnapshotLoadResult(
+                    orderedObjectURIs: [],
+                    snapshots: []
+                )
+            }
+
+            let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+            request.predicate = NSPredicate(format: "SELF IN %@", objectIDs)
+            request.relationshipKeyPathsForPrefetching = ["cards"]
+            request.returnsObjectsAsFaults = false
+            let fetched = try context.fetch(request)
+            try Task.checkCancellation()
+
+            let tagsByURI = Dictionary(uniqueKeysWithValues: fetched.map {
+                ($0.objectID.uriRepresentation(), $0)
+            })
+            let snapshots = orderedObjectURIs.compactMap { objectURI -> TagDisplaySnapshot? in
+                guard let tag = tagsByURI[objectURI] else { return nil }
+                return TagDisplaySnapshot(
+                    tagID: tag.value(forKey: "id") as? UUID,
+                    objectURI: objectURI.absoluteString,
+                    name: tag.value(forKey: "name") as? String ?? "",
+                    colorHex: tag.value(forKey: "colorHex") as? String ?? "#007AFF",
+                    usageCount: (tag.value(forKey: "cards") as? NSSet)?.count ?? 0
+                )
+            }
+            return TagDisplaySnapshotLoadResult(
+                orderedObjectURIs: orderedObjectURIs,
+                snapshots: snapshots
+            )
+        }
+    }
+}
+
+/// 検索・外部フィルター・セクション集計を MainActor 外で直列実行する。
+actor CardListQueryWorker {
+    private struct PreparedSnapshot: Sendable {
+        let source: CardListQuerySnapshot
+        let normalizedSearchValues: [String]
+    }
+
+    private var preparedGeneration: UUID?
+    private var preparedSnapshots: [PreparedSnapshot] = []
+
+    func evaluate(_ request: CardListQueryRequest) -> CardListQueryResult? {
+        let prepared = prepareSnapshots(for: request)
+        guard !Task.isCancelled else { return nil }
+        let ordered = sort(
+            prepared,
+            key: request.sortKey,
+            ascending: request.sortAscending
+        )
+        var filtered: [PreparedSnapshot] = []
+        filtered.reserveCapacity(request.snapshots.count)
+
+        for snapshot in ordered {
+            guard !Task.isCancelled else { return nil }
+            let source = snapshot.source
+            guard !request.showFavoritesOnly || source.insights.isFavorite else { continue }
+            guard request.selectedTagIDs.isSubset(of: source.tagIDs) else { continue }
+            if let filter = request.externalFilter,
+               !InsightsAggregationRules.matches(
+                   source.insights,
+                   filter: filter,
+                   now: request.now
+               ) {
+                continue
+            }
+
+            if !request.normalizedQuery.isEmpty {
+                let lexicalMatch = snapshot.normalizedSearchValues.contains {
+                    $0.contains(request.normalizedQuery)
+                }
+                let semanticMatch = request.semanticQuery == request.normalizedQuery
+                    && source.id.map(request.semanticMatchedCardIDs.contains) == true
+                guard lexicalMatch || semanticMatch else { continue }
+            }
+            filtered.append(snapshot)
+        }
+
+        let sections = request.normalizedQuery.isEmpty
+            ? group(filtered, sortKey: request.sortKey, ascending: request.sortAscending, now: request.now)
+            : []
+        return CardListQueryResult(
+            snapshotCount: request.snapshots.count,
+            filteredIndices: filtered.map(\.source.index),
+            sections: sections
+        )
+    }
+
+    private func prepareSnapshots(for request: CardListQueryRequest) -> [PreparedSnapshot] {
+        if preparedGeneration == request.snapshotGeneration,
+           preparedSnapshots.count == request.snapshots.count {
+            return preparedSnapshots
+        }
+        let prepared = request.snapshots.map { snapshot in
+            PreparedSnapshot(
+                source: snapshot,
+                normalizedSearchValues: snapshot.searchValues
+                    .map(Self.normalize)
+                    .filter { !$0.isEmpty }
+            )
+        }
+        preparedGeneration = request.snapshotGeneration
+        preparedSnapshots = prepared
+        return prepared
+    }
+
+    private func sort(
+        _ snapshots: [PreparedSnapshot],
+        key: CardSortKey,
+        ascending: Bool
+    ) -> [PreparedSnapshot] {
+        snapshots.sorted { lhs, rhs in
+            let comparison: ComparisonResult
+            switch key {
+            case .name:
+                comparison = lhs.source.nameSortValue.localizedStandardCompare(rhs.source.nameSortValue)
+            case .company:
+                comparison = lhs.source.companySortValue.localizedStandardCompare(rhs.source.companySortValue)
+            case .createdAt:
+                comparison = Self.compare(lhs.source.createdAt, rhs.source.createdAt)
+            case .updatedAt:
+                comparison = Self.compare(lhs.source.updatedAt, rhs.source.updatedAt)
+            }
+            if comparison == .orderedSame {
+                return lhs.source.index < rhs.source.index
+            }
+            return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+        }
+    }
+
+    private static func compare(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
+        let lhs = lhs ?? .distantPast
+        let rhs = rhs ?? .distantPast
+        if lhs == rhs { return .orderedSame }
+        return lhs < rhs ? .orderedAscending : .orderedDescending
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+
+    private func group(
+        _ snapshots: [PreparedSnapshot],
+        sortKey: CardSortKey,
+        ascending: Bool,
+        now: Date
+    ) -> [CardListQuerySectionResult] {
+        switch sortKey {
+        case .name:
+            return groupBySection(snapshots, ascending: ascending) { $0.source.nameSectionValue }
+        case .company:
+            return groupBySection(
+                snapshots,
+                ascending: ascending,
+                value: { $0.source.companySectionValue },
+                trailingKey: "（会社名なし）"
+            )
+        case .createdAt:
+            return groupByDate(snapshots, ascending: ascending, now: now) { $0.source.createdAt }
+        case .updatedAt:
+            return groupByDate(snapshots, ascending: ascending, now: now) { $0.source.updatedAt }
+        }
+    }
+
+    private func groupBySection(
+        _ snapshots: [PreparedSnapshot],
+        ascending: Bool,
+        value: (PreparedSnapshot) -> String,
+        trailingKey: String? = nil
+    ) -> [CardListQuerySectionResult] {
+        var buckets: [String: [Int]] = [:]
+        for snapshot in snapshots {
+            let rawValue = value(snapshot)
+            let key = rawValue.isEmpty
+                ? (trailingKey ?? "その他")
+                : CardGroupingService.sectionKey(for: rawValue)
+            buckets[key, default: []].append(snapshot.source.index)
+        }
+
+        let orderedKeys: [String] = ascending
+            ? CardGroupingService.sectionOrder
+            : Array(CardGroupingService.sectionOrder.reversed())
+        var result = orderedKeys.compactMap { key -> CardListQuerySectionResult? in
+            guard let indices = buckets[key] else { return nil }
+            return CardListQuerySectionResult(id: key, title: key, indices: indices)
+        }
+        if let trailingKey, let indices = buckets[trailingKey] {
+            result.append(CardListQuerySectionResult(
+                id: trailingKey,
+                title: trailingKey,
+                indices: indices
+            ))
+        }
+        return result
+    }
+
+    private func groupByDate(
+        _ snapshots: [PreparedSnapshot],
+        ascending: Bool,
+        now: Date,
+        date: (PreparedSnapshot) -> Date?
+    ) -> [CardListQuerySectionResult] {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? startOfToday
+        let startOfMonth = calendar.dateInterval(of: .month, for: now)?.start ?? startOfToday
+        let threeMonthsAgo = calendar.date(
+            byAdding: .month,
+            value: -3,
+            to: startOfMonth
+        ) ?? startOfToday
+        let orderedKeys = ["今日", "今週", "今月", "3ヶ月以内", "それ以前"]
+        var buckets: [String: [Int]] = [:]
+
+        for snapshot in snapshots {
+            let value = date(snapshot) ?? .distantPast
+            let key: String
+            if value >= startOfToday {
+                key = "今日"
+            } else if value >= startOfWeek {
+                key = "今週"
+            } else if value >= startOfMonth {
+                key = "今月"
+            } else if value >= threeMonthsAgo {
+                key = "3ヶ月以内"
+            } else {
+                key = "それ以前"
+            }
+            buckets[key, default: []].append(snapshot.source.index)
+        }
+
+        let keys = ascending ? Array(orderedKeys.reversed()) : orderedKeys
+        return keys.compactMap { key in
+            guard let indices = buckets[key] else { return nil }
+            return CardListQuerySectionResult(id: key, title: key, indices: indices)
+        }
+    }
+}
+
+/// 一覧検索に必要なCore Data値をprivate queueで読み出す。
+/// MainActorには管理オブジェクトを渡さず、URI順を維持した値型だけを返す。
+actor CardListQuerySnapshotLoader {
+    private nonisolated struct TagValue: Sendable {
+        let id: UUID?
+        let objectURI: String
+        let name: String
+        let colorHex: String
+    }
+
+    private nonisolated enum LoaderError: Error {
+        case missingObjectID
+    }
+
+    func loadAll(
+        sortKey: CardSortKey,
+        ascending: Bool,
+        coordinatorReference: PersistentStoreCoordinatorReference
+    ) async throws -> CardListQuerySnapshotLoadResult {
+        try Task.checkCancellation()
+        let context = makeContext(coordinatorReference: coordinatorReference)
+        return try await context.perform {
+            try Task.checkCancellation()
+            let request = NSFetchRequest<NSDictionary>(entityName: "BusinessCard")
+            request.sortDescriptors = Self.sortDescriptors(key: sortKey, ascending: ascending)
+            Self.configure(request)
+            let fetched = try context.fetch(request)
+            try Task.checkCancellation()
+            let orderedObjectIDs = try fetched.map { values -> NSManagedObjectID in
+                guard let objectID = values[Self.objectIDKey] as? NSManagedObjectID else {
+                    throw LoaderError.missingObjectID
+                }
+                return objectID
+            }
+            let tagsByCardURI = try Self.loadTags(
+                for: orderedObjectIDs,
+                context: context
+            )
+            return try Self.makeLoadResult(
+                fetched: fetched,
+                orderedObjectURIs: orderedObjectIDs.map { $0.uriRepresentation() },
+                tagsByCardURI: tagsByCardURI
+            )
+        }
+    }
+
+    func load(
+        orderedObjectURIs: [URL],
+        coordinatorReference: PersistentStoreCoordinatorReference
+    ) async throws -> CardListQuerySnapshotLoadResult {
+        try Task.checkCancellation()
+        guard !orderedObjectURIs.isEmpty else {
+            return CardListQuerySnapshotLoadResult(
+                orderedObjectURIs: [],
+                snapshots: [],
+                duplicateSnapshots: [],
+                revisions: []
+            )
+        }
+
+        let context = makeContext(coordinatorReference: coordinatorReference)
+
+        return try await context.perform {
+            try Task.checkCancellation()
+            let objectIDs = orderedObjectURIs.compactMap {
+                coordinatorReference.coordinator.managedObjectID(forURIRepresentation: $0)
+            }
+            guard objectIDs.count == orderedObjectURIs.count else {
+                return CardListQuerySnapshotLoadResult(
+                    orderedObjectURIs: [],
+                    snapshots: [],
+                    duplicateSnapshots: [],
+                    revisions: []
+                )
+            }
+
+            let request = NSFetchRequest<NSDictionary>(entityName: "BusinessCard")
+            request.predicate = NSPredicate(format: "SELF IN %@", objectIDs)
+            Self.configure(request)
+            let fetched = try context.fetch(request)
+            try Task.checkCancellation()
+            let tagsByCardURI = try Self.loadTags(for: objectIDs, context: context)
+            return try Self.makeLoadResult(
+                fetched: fetched,
+                orderedObjectURIs: orderedObjectURIs,
+                tagsByCardURI: tagsByCardURI
+            )
+        }
+    }
+
+    private nonisolated func makeContext(
+        coordinatorReference: PersistentStoreCoordinatorReference
+    ) -> NSManagedObjectContext {
+        let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinatorReference.coordinator
+        context.name = "CardListQuerySnapshotLoader"
+        context.undoManager = nil
+        return context
+    }
+
+    private nonisolated static let objectIDKey = "snapshotObjectID"
+
+    /// 画像BLOBを含めず、一覧・検索・重複判定に必要な属性だけをSQL行から取得する。
+    private nonisolated static func configure(_ request: NSFetchRequest<NSDictionary>) {
+        let objectIDExpression = NSExpressionDescription()
+        objectIDExpression.name = objectIDKey
+        objectIDExpression.expression = NSExpression.expressionForEvaluatedObject()
+        objectIDExpression.expressionResultType = .objectIDAttributeType
+        request.resultType = .dictionaryResultType
+        var propertiesToFetch = scalarPropertyKeys.map { $0 as Any }
+        propertiesToFetch.append(objectIDExpression)
+        request.propertiesToFetch = propertiesToFetch
+        request.fetchBatchSize = 100
+    }
+
+    private nonisolated static let scalarPropertyKeys = [
+        "id",
+        "lastName",
+        "lastNameReading",
+        "firstName",
+        "firstNameReading",
+        "company",
+        "companyReading",
+        "department",
+        "title",
+        "email",
+        "phone",
+        "address",
+        "website",
+        "notes",
+        "createdAt",
+        "updatedAt",
+        "isFavorite",
+    ]
+
+    private nonisolated static func sortDescriptors(
+        key: CardSortKey,
+        ascending: Bool
+    ) -> [NSSortDescriptor] {
+        switch key {
+        case .name:
+            return [
+                NSSortDescriptor(key: "lastName", ascending: ascending),
+                NSSortDescriptor(key: "firstName", ascending: ascending),
+            ]
+        case .company:
+            return [
+                NSSortDescriptor(key: "company", ascending: ascending),
+                NSSortDescriptor(key: "lastName", ascending: ascending),
+            ]
+        case .createdAt:
+            return [NSSortDescriptor(key: "createdAt", ascending: ascending)]
+        case .updatedAt:
+            return [NSSortDescriptor(key: "updatedAt", ascending: ascending)]
+        }
+    }
+
+    /// タグ側だけを管理オブジェクトとして取得する。関連カードはobjectIDだけを参照し、
+    /// BusinessCardの属性（特にimageData）をフォールト発火させない。
+    private nonisolated static func loadTags(
+        for objectIDs: [NSManagedObjectID],
+        context: NSManagedObjectContext
+    ) throws -> [URL: [TagValue]] {
+        guard !objectIDs.isEmpty else { return [:] }
+        let selectedURIs = Set(objectIDs.map { $0.uriRepresentation() })
+        let request = NSFetchRequest<NSManagedObject>(entityName: "Tag")
+        request.predicate = NSPredicate(format: "ANY cards IN %@", objectIDs)
+        request.fetchBatchSize = 100
+        let tags = try context.fetch(request)
+        var result: [URL: [TagValue]] = [:]
+
+        for tag in tags {
+            try Task.checkCancellation()
+            let name = string(tag, key: "name")
+            guard !name.isEmpty else { continue }
+            let colorHex = string(tag, key: "colorHex")
+            let value = TagValue(
+                id: tag.value(forKey: "id") as? UUID,
+                objectURI: tag.objectID.uriRepresentation().absoluteString,
+                name: name,
+                colorHex: colorHex.isEmpty ? "#007AFF" : colorHex
+            )
+            let relatedCards = (tag.value(forKey: "cards") as? NSSet)?.allObjects ?? []
+            for case let card as NSManagedObject in relatedCards {
+                let uri = card.objectID.uriRepresentation()
+                guard selectedURIs.contains(uri) else { continue }
+                result[uri, default: []].append(value)
+            }
+        }
+
+        for uri in result.keys {
+            result[uri]?.sort { $0.name < $1.name }
+        }
+        return result
+    }
+
+    private nonisolated static func makeLoadResult(
+        fetched: [NSDictionary],
+        orderedObjectURIs: [URL],
+        tagsByCardURI: [URL: [TagValue]]
+    ) throws -> CardListQuerySnapshotLoadResult {
+        let cardsByURI = Dictionary(uniqueKeysWithValues: try fetched.map { values in
+            guard let objectID = values[objectIDKey] as? NSManagedObjectID else {
+                throw LoaderError.missingObjectID
+            }
+            return (objectID.uriRepresentation(), values)
+        })
+        var snapshots: [CardListQuerySnapshot] = []
+        snapshots.reserveCapacity(orderedObjectURIs.count)
+        var duplicateSnapshots: [DuplicateCardSnapshot] = []
+        duplicateSnapshots.reserveCapacity(orderedObjectURIs.count)
+        var revisions = Set<CardListCardRevision>()
+        revisions.reserveCapacity(orderedObjectURIs.count)
+
+        for (index, objectURI) in orderedObjectURIs.enumerated() {
+            try Task.checkCancellation()
+            guard let values = cardsByURI[objectURI] else { continue }
+            let tags = tagsByCardURI[objectURI] ?? []
+            snapshots.append(makeSnapshot(
+                values: values,
+                objectURI: objectURI,
+                tags: tags,
+                index: index
+            ))
+            duplicateSnapshots.append(makeDuplicateSnapshot(
+                values: values,
+                objectURI: objectURI
+            ))
+            revisions.insert(CardListCardRevision(
+                objectURI: objectURI,
+                updatedAt: values["updatedAt"] as? Date
+            ))
+        }
+        return CardListQuerySnapshotLoadResult(
+            orderedObjectURIs: orderedObjectURIs,
+            snapshots: snapshots,
+            duplicateSnapshots: duplicateSnapshots,
+            revisions: revisions
+        )
+    }
+
+    private nonisolated static func makeDuplicateSnapshot(
+        values: NSDictionary,
+        objectURI: URL
+    ) -> DuplicateCardSnapshot {
+        let lastName = string(values, key: "lastName").trimmingCharacters(in: .whitespaces)
+        let firstName = string(values, key: "firstName").trimmingCharacters(in: .whitespaces)
+        let company = string(values, key: "company")
+        return DuplicateCardSnapshot(
+            objectURI: objectURI.absoluteString,
+            fullName: [lastName, firstName].filter { !$0.isEmpty }.joined(separator: " "),
+            company: company,
+            normalizedCompany: LegalEntityTerms.stripKanji(from: company),
+            title: string(values, key: "title"),
+            department: string(values, key: "department")
+        )
+    }
+
+    private nonisolated static func makeSnapshot(
+        values: NSDictionary,
+        objectURI: URL,
+        tags: [TagValue],
+        index: Int
+    ) -> CardListQuerySnapshot {
+        let lastName = string(values, key: "lastName").trimmingCharacters(in: .whitespaces)
+        let firstName = string(values, key: "firstName").trimmingCharacters(in: .whitespaces)
+        let lastNameReading = string(values, key: "lastNameReading")
+            .trimmingCharacters(in: .whitespaces)
+        let firstNameReading = string(values, key: "firstNameReading")
+            .trimmingCharacters(in: .whitespaces)
+        let fullName = [lastName, firstName].filter { !$0.isEmpty }.joined(separator: " ")
+        let fullNameReading = [lastNameReading, firstNameReading]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let company = string(values, key: "company")
+        let companyReading = string(values, key: "companyReading")
+            .trimmingCharacters(in: .whitespaces)
+        let companySortKey = companyReading.isEmpty
+            ? LegalEntityTerms.stripKanji(from: company)
+            : companyReading
+        let department = string(values, key: "department")
+        let title = string(values, key: "title")
+        let affiliation = [department, title].filter { !$0.isEmpty }.joined(separator: " ")
+        let isFavorite = (values["isFavorite"] as? NSNumber)?.boolValue
+            ?? (values["isFavorite"] as? Bool)
+            ?? false
+        let email = string(values, key: "email")
+        let phone = string(values, key: "phone")
+        let address = string(values, key: "address")
+        let notes = string(values, key: "notes")
+        let website = string(values, key: "website")
+        let updatedAt = values["updatedAt"] as? Date
+        let tagSnapshots = tags.map { tag in
+            CardRowTagSnapshot(name: tag.name, colorHex: tag.colorHex)
+        }
+        let displayName = fullName.isEmpty ? "（名前なし）" : fullName
+        var accessibilityParts = [fullName.isEmpty ? "名前なし" : fullName]
+        if !company.isEmpty { accessibilityParts.append(company) }
+        if isFavorite { accessibilityParts.append("お気に入り") }
+        if !tagSnapshots.isEmpty {
+            accessibilityParts.append("タグ: " + tagSnapshots.map(\.name).joined(separator: "、"))
+        }
+        let searchValues = [
+            fullName,
+            fullNameReading,
+            company,
+            companyReading,
+            department,
+            title,
+            email,
+            phone,
+            address,
+            website,
+            notes,
+        ]
+        .filter { !$0.isEmpty }
+        + tags.map(\.name)
+
+        let nameSectionValue: String
+        if !lastNameReading.isEmpty {
+            nameSectionValue = lastNameReading
+        } else if !lastName.isEmpty {
+            nameSectionValue = lastName
+        } else {
+            nameSectionValue = firstName
+        }
+        let firstNameSortValue = firstNameReading.isEmpty ? firstName : firstNameReading
+
+        return CardListQuerySnapshot(
+            index: index,
+            id: values["id"] as? UUID,
+            row: CardRowDisplaySnapshot(
+                displayName: displayName,
+                company: company,
+                affiliation: affiliation,
+                isFavorite: isFavorite,
+                firstTag: tagSnapshots.first,
+                additionalTagCount: max(tagSnapshots.count - 1, 0),
+                accessibilityLabel: accessibilityParts.joined(separator: "、")
+            ),
+            detail: CardDetailDisplaySnapshot(
+                objectURI: objectURI,
+                lastName: lastName,
+                lastNameReading: lastNameReading,
+                firstName: firstName,
+                firstNameReading: firstNameReading,
+                company: company,
+                department: department,
+                title: title,
+                phone: phone,
+                email: email,
+                address: address,
+                website: website,
+                notes: notes,
+                createdAt: values["createdAt"] as? Date,
+                isFavorite: isFavorite,
+                tags: tags.map {
+                    CardDetailTagSnapshot(
+                        id: $0.objectURI,
+                        name: $0.name,
+                        colorHex: $0.colorHex
+                    )
+                }
+            ),
+            searchValues: searchValues,
+            tagIDs: Set(tags.compactMap(\.id)),
+            aiSearch: (values["id"] as? UUID).map { id in
+                AISearchCardSnapshot(
+                    id: id,
+                    fullName: fullName,
+                    lastName: lastName,
+                    firstName: firstName,
+                    lastNameReading: lastNameReading,
+                    firstNameReading: firstNameReading,
+                    company: company,
+                    department: department,
+                    title: title,
+                    address: address,
+                    notes: notes,
+                    tagNames: tagSnapshots.map(\.name),
+                    hasPhone: !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    hasEmail: !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    createdAt: values["createdAt"] as? Date
+                )
+            },
+            bulkAutoTag: BulkAutoTagCardSnapshot(
+                objectURI: objectURI,
+                updatedAt: updatedAt,
+                cardInfo: AutoTagService.CardInfo(
+                    company: company,
+                    department: department,
+                    title: title,
+                    address: address,
+                    email: email,
+                    website: website
+                )
+            ),
+            insights: InsightsCardSnapshot(
+                company: company,
+                department: department,
+                title: title,
+                address: address,
+                createdAt: values["createdAt"] as? Date,
+                hasEmail: !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                hasPhone: !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                hasTags: !tags.isEmpty,
+                isFavorite: isFavorite
+            ),
+            nameSectionValue: nameSectionValue,
+            companySectionValue: companySortKey,
+            nameSortValue: nameSectionValue + firstNameSortValue,
+            companySortValue: companySortKey + (lastNameReading.isEmpty ? lastName : lastNameReading),
+            createdAt: values["createdAt"] as? Date,
+            updatedAt: updatedAt
+        )
+    }
+
+    private nonisolated static func string(_ object: NSManagedObject, key: String) -> String {
+        object.value(forKey: key) as? String ?? ""
+    }
+
+    private nonisolated static func string(_ values: NSDictionary, key: String) -> String {
+        values[key] as? String ?? ""
+    }
+}
+
 // 名刺一覧画面のViewModel
 @MainActor
 class CardListViewModel: ObservableObject {
@@ -30,7 +886,10 @@ class CardListViewModel: ObservableObject {
         case failure(String)
     }
 
-    @Published var cards: [BusinessCard] = []
+    /// 永続化操作用の管理オブジェクト。描画は`filteredCardItems`だけを購読する。
+    private(set) var cards: [BusinessCard] = []
+    /// 名刺の追加・更新・削除時だけ進む世代番号。並べ替えやViewの再評価では変化しない。
+    @Published private(set) var cardsContentRevision = 0
     @Published var duplicatePairs: [DuplicatePair] = []
     @Published var exportItem: ExportItem? = nil
     @Published var errorMessage: String? = nil
@@ -39,19 +898,37 @@ class CardListViewModel: ObservableObject {
     @Published var searchText: String = "" {
         didSet {
             invalidateSemanticSearchIfNeeded()
-            updateFilteredCards()
+            // 検索解除ではViewが即座にセクション表示へ戻るため、空文字だけは待たせない。
+            scheduleListUpdate(debounce: !normalizedSearchText.isEmpty)
         }
     }
-    @Published var filteredCards: [BusinessCard] = []
-    @Published private(set) var isSemanticSearchInProgress = false
-    @Published private(set) var semanticSearchMessage: String?
+    @Published private var listDisplaySnapshot = CardListDisplaySnapshot.loading
+    var filteredCardItems: [CardListItemSnapshot] { listDisplaySnapshot.filteredItems }
+    var isSemanticSearchInProgress: Bool { listDisplaySnapshot.isSemanticSearchInProgress }
+    var semanticSearchMessage: String? { listDisplaySnapshot.semanticSearchMessage }
     @Published private(set) var recentSearches: [String] = []
-    @Published var groupedCards: [CardSection] = []
+    @Published private(set) var companySearchSuggestions: [String] = []
+    @Published private(set) var tagSearchSuggestions: [String] = []
+    var groupedCardItemSections: [CardListItemSection] {
+        listDisplaySnapshot.groupedItemSections
+    }
+    /// 一覧の描画条件と結果は同じスナップショットから読む。
+    /// 検索debounce中に新しい条件と古い結果を混在させないための表示専用状態。
+    var isListDisplayReady: Bool { listDisplaySnapshot.isReady }
+    var hasDisplayedCards: Bool { listDisplaySnapshot.sourceCount > 0 }
+    var isDisplayedSearchActive: Bool { !listDisplaySnapshot.normalizedQuery.isEmpty }
+    var isDisplayedFilterActive: Bool { listDisplaySnapshot.isFilterActive }
+    var displayedExternalFilter: CardListExternalFilter? { listDisplaySnapshot.externalFilter }
+    var displayedSortKey: CardSortKey { listDisplaySnapshot.sortKey }
     @Published var allTags: [Tag] = []
+    @Published private(set) var tagDisplaySnapshots: [TagDisplaySnapshot] = []
     @Published var selectedTagIDs: Set<UUID> = []
     @Published var showFavoritesOnly: Bool = false
     @Published var externalFilter: CardListExternalFilter? {
-        didSet { updateFilteredCards() }
+        didSet {
+            guard oldValue != externalFilter else { return }
+            scheduleListUpdate(debounce: false)
+        }
     }
     @Published var sortKey: CardSortKey {
         didSet { SettingsStore.shared.sortKey = sortKey.rawValue }
@@ -74,14 +951,14 @@ class CardListViewModel: ObservableObject {
         guard sortKey != key else { return }
         sortKey = key
         sortAscending = (key == .name || key == .company)
-        fetchCards()
+        scheduleListUpdate(debounce: false)
     }
 
     /// メニュー上部の方向選択を反映する。
     func setSortAscending(_ ascending: Bool) {
         guard sortAscending != ascending else { return }
         sortAscending = ascending
-        fetchCards()
+        scheduleListUpdate(debounce: false)
     }
 
     // 既存呼び出しとの互換用：同じキーなら方向を反転する
@@ -96,10 +973,43 @@ class CardListViewModel: ObservableObject {
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
     private var duplicateDetectionGeneration = UUID()
+    private var duplicateDetectionTask: Task<Void, Never>?
     private var lastDuplicateDetectionRevisions: Set<CardRevision>?
+    private var publishedCardRevisions: Set<CardRevision>?
     private var semanticSearchTask: Task<Void, Never>?
     private var semanticSearchQuery: String?
     private var semanticMatchedCardIDs: Set<UUID>?
+    private var pendingSemanticSearchInProgress = false
+    private var pendingSemanticSearchMessage: String?
+    private let listQueryWorker = CardListQueryWorker()
+    private let listQuerySnapshotLoader = CardListQuerySnapshotLoader()
+    private let tagDisplaySnapshotLoader = TagDisplaySnapshotLoader()
+    private let cardDataTransferWorker = CardDataTransferWorker()
+    private let contactImportStoreWriter = ContactImportStoreWriter()
+    private let bulkAutoTagWriter = BulkAutoTagWriter()
+    private let searchDebounceDuration: Duration
+    private var listQuerySnapshots: [CardListQuerySnapshot] = []
+    private var listItems: [CardListItemSnapshot] = []
+    private var listItemsByURI: [URL: CardListItemSnapshot] = [:]
+    private var duplicateCardSnapshots: [DuplicateCardSnapshot] = []
+    private var listQuerySnapshotGeneration = UUID()
+    private var listQuerySnapshotLoadGeneration = UUID()
+    private var listQuerySnapshotLoadTask: Task<Void, Never>?
+    private var listQueryGeneration = UUID()
+    private var listQueryTask: Task<Void, Never>?
+    private var tagDisplaySnapshotLoadGeneration = UUID()
+    private var tagDisplaySnapshotLoadTask: Task<Void, Never>?
+    private var contextRefreshTask: Task<Void, Never>?
+    private var contextRefreshDeferrals: Set<UUID> = []
+    private var deferredCardsChanged = false
+    private var deferredTagsChanged = false
+    private var contactsExportTask: Task<Void, Never>?
+    private var contactsExportGeneration = UUID()
+    private var fileExportTask: Task<Void, Never>?
+    private var fileExportGeneration = UUID()
+    private var deleteAllCardsTask: Task<Void, Never>?
+    private var deleteAllCardsGeneration = UUID()
+    private var bulkAutoTagGeneration = UUID()
     private static let recentSearchesDefaultsKey = "cardSearchRecentQueries"
 
     private struct CardRevision: Hashable {
@@ -107,7 +1017,11 @@ class CardListViewModel: ObservableObject {
         let updatedAt: Date?
     }
 
-    init(context: NSManagedObjectContext? = nil) {
+    init(
+        context: NSManagedObjectContext? = nil,
+        searchDebounceDuration: Duration = .milliseconds(150)
+    ) {
+        self.searchDebounceDuration = searchDebounceDuration
         if let context = context {
             self.context = context
         } else if ProcessInfo.processInfo.arguments.contains("-UITestMode") {
@@ -134,71 +1048,156 @@ class CardListViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.detectDuplicates() }
             .store(in: &cancellables)
+
+        // CloudKitマージや別コンテキスト保存も、同じ表示スナップショットへ反映する。
+        // Main Queue Contextの変更だけを受け、短時間の連続通知は1回の再取得へまとめる。
+        NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange)
+            .filter { [weak self] notification in
+                guard let self else { return false }
+                return (notification.object as? NSManagedObjectContext) === self.context
+            }
+            .sink { [weak self] notification in
+                // mainQueue contextの通知は同じqueueで同期配信されるため、RunLoopへ再予約しない。
+                // 保存直後にrefresh待機へ入っても、必ず対応Taskを捕捉できる。
+                self?.scheduleContextRefresh(for: notification)
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - データ取得
 
     func fetchCards() {
-        let request = BusinessCard.fetchRequest()
-        let asc = sortAscending
-        switch sortKey {
-        case .name:
-            request.sortDescriptors = [
-                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: asc),
-                NSSortDescriptor(keyPath: \BusinessCard.firstName, ascending: asc)
-            ]
-        case .company:
-            request.sortDescriptors = [
-                NSSortDescriptor(keyPath: \BusinessCard.company,   ascending: asc),
-                NSSortDescriptor(keyPath: \BusinessCard.lastName,  ascending: asc)
-            ]
-        case .createdAt:
-            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.createdAt, ascending: asc)]
-        case .updatedAt:
-            request.sortDescriptors = [NSSortDescriptor(keyPath: \BusinessCard.updatedAt, ascending: asc)]
+        contextRefreshTask?.cancel()
+        contextRefreshTask = nil
+        performFetchCards()
+    }
+
+    /// sheet内の保存通知で予約された再取得を、dismiss完了まで保留する。
+    /// 保存内容自体は管理Contextに反映済みで、再取得は一覧の並び・検索スナップショット更新用。
+    func cancelPendingContextRefresh() {
+        contextRefreshTask?.cancel()
+        contextRefreshTask = nil
+    }
+
+    /// sheet 内の連続保存中は Core Data 通知による一覧再取得を保留する。
+    /// 実 dismiss 完了時にトークンを閉じることで、遷移中の中間描画を避けて1回だけ更新する。
+    func beginContextRefreshDeferral() -> UUID {
+        let token = UUID()
+        contextRefreshDeferrals.insert(token)
+        cancelPendingContextRefresh()
+        return token
+    }
+
+    /// - Parameter refreshCards: 呼び出し元で保存成功を確認できた場合に true。
+    ///   通知がまだ届いていなくても最終状態を1回取得する。
+    func endContextRefreshDeferral(_ token: UUID, refreshCards: Bool) {
+        guard contextRefreshDeferrals.remove(token) != nil else { return }
+        guard contextRefreshDeferrals.isEmpty else {
+            deferredCardsChanged = deferredCardsChanged || refreshCards
+            return
         }
-        do {
-            var fetched = try context.fetch(request)
-            // 名前順・会社名順はふりがな / companySortKey 優先で Swift 側ソート
-            if sortKey == .name {
-                fetched.sort {
-                    let lhs = ($0.lastNameReading?.isEmpty == false ? $0.lastNameReading! : $0.lastName ?? "")
-                           + ($0.firstNameReading?.isEmpty == false ? $0.firstNameReading! : $0.firstName ?? "")
-                    let rhs = ($1.lastNameReading?.isEmpty == false ? $1.lastNameReading! : $1.lastName ?? "")
-                           + ($1.firstNameReading?.isEmpty == false ? $1.firstNameReading! : $1.firstName ?? "")
-                    return asc
-                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
-                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
+
+        cancelPendingContextRefresh()
+        let shouldFetchCards = refreshCards || deferredCardsChanged || deferredTagsChanged
+        let shouldFetchTags = deferredTagsChanged
+        deferredCardsChanged = false
+        deferredTagsChanged = false
+
+        if shouldFetchTags {
+            fetchTags()
+        }
+        if shouldFetchCards {
+            performFetchCards()
+        }
+    }
+
+    private func performFetchCards() {
+        listQuerySnapshotLoadTask?.cancel()
+        listQueryTask?.cancel()
+        listQueryGeneration = UUID()
+
+        let generation = UUID()
+        listQuerySnapshotLoadGeneration = generation
+        guard let coordinator = context.persistentStoreCoordinator else {
+            cards = []
+            listQuerySnapshots = []
+            listItems = []
+            listItemsByURI = [:]
+            companySearchSuggestions = []
+            duplicateCardSnapshots = []
+            listQuerySnapshotGeneration = generation
+            listQuerySnapshotLoadTask = nil
+            scheduleListUpdate(debounce: false)
+            return
+        }
+
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let loader = listQuerySnapshotLoader
+        let requestedSortKey = sortKey
+        let requestedAscending = sortAscending
+        listQuerySnapshotLoadTask = Task { [weak self] in
+            do {
+                let result = try await loader.loadAll(
+                    sortKey: requestedSortKey,
+                    ascending: requestedAscending,
+                    coordinatorReference: coordinatorReference
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.listQuerySnapshotLoadGeneration == generation else {
+                    return
                 }
-            } else if sortKey == .company {
-                fetched.sort {
-                    let lhs = $0.companySortKey + ($0.lastNameReading ?? $0.lastName ?? "")
-                    let rhs = $1.companySortKey + ($1.lastNameReading ?? $1.lastName ?? "")
-                    return asc
-                        ? lhs.localizedStandardCompare(rhs) == .orderedAscending
-                        : lhs.localizedStandardCompare(rhs) == .orderedDescending
+                let fetchedCards = result.orderedObjectURIs.compactMap { objectURI -> BusinessCard? in
+                    guard let objectID = coordinator.managedObjectID(forURIRepresentation: objectURI),
+                          let card = self.context.object(with: objectID) as? BusinessCard,
+                          !card.isDeleted else {
+                        return nil
+                    }
+                    return card
                 }
+                guard fetchedCards.count == result.snapshots.count else { return }
+
+                self.reconcileDisplaySnapshot(with: fetchedCards)
+                self.publishListQuerySnapshot(
+                    result,
+                    cards: fetchedCards,
+                    generation: generation,
+                    replacingCards: true
+                )
+                self.listQuerySnapshotLoadTask = nil
+            } catch is CancellationError {
+                guard let self,
+                      self.listQuerySnapshotLoadGeneration == generation else { return }
+                self.listQuerySnapshotLoadTask = nil
+                return
+            } catch {
+                guard let self,
+                      self.listQuerySnapshotLoadGeneration == generation else { return }
+                self.listQuerySnapshotLoadTask = nil
+                AppLogger.persistence.error("名刺の取得に失敗しました: \(error)")
             }
-            cards = fetched
-            updateFilteredCards()
-            detectDuplicatesIfCardsChanged()
-        } catch {
-            AppLogger.persistence.error("名刺の取得に失敗しました: \(error)")
         }
+        // 検索・フィルター変更が同時に発生しても、このload完了後の最新条件だけを評価する。
+        scheduleListUpdate(debounce: false)
     }
 
     // MARK: - お気に入り
 
-    func toggleFavorite(_ card: BusinessCard) {
+    private func toggleFavorite(_ card: BusinessCard) {
         card.isFavorite.toggle()
         card.updatedAt = Date()
         save()
     }
 
+    func toggleFavorite(objectURI: URL) {
+        guard let card = card(for: objectURI) else { return }
+        toggleFavorite(card)
+    }
+
     /// 選択中のカードをすべてお気に入りに追加（すでに全てお気に入りなら全解除）
-    func toggleBulkFavorite(ids: Set<BusinessCard.ID>) {
-        let targets = filteredCards.filter { ids.contains($0.id) }
-        let allFavorited = targets.allSatisfy { $0.isFavorite }
+    func toggleBulkFavorite(objectURIs: Set<URL>) {
+        let targets = cards.filter { objectURIs.contains($0.objectID.uriRepresentation()) }
+        let allFavorited = targets.allSatisfy(\.isFavorite)
         for card in targets {
             card.isFavorite = !allFavorited
             card.updatedAt = Date()
@@ -215,9 +1214,111 @@ class CardListViewModel: ObservableObject {
             NSSortDescriptor(keyPath: \Tag.name, ascending: true),
         ]
         do {
-            allTags = try context.fetch(request)
+            let fetchedTags = try context.fetch(request)
+            allTags = fetchedTags
+            tagSearchSuggestions = uniqueNonEmptyValues(
+                fetchedTags.map(\.tagName),
+                limit: 4
+            )
+            rebuildTagDisplaySnapshots(for: fetchedTags)
         } catch {
             AppLogger.persistence.error("タグの取得に失敗しました: \(error)")
+        }
+    }
+
+    /// 進行中のタグ表示スナップショット生成をテスト・呼び出し元から待機する。
+    func waitForPendingTagDisplaySnapshotRefresh() async {
+        while let task = tagDisplaySnapshotLoadTask {
+            let generation = tagDisplaySnapshotLoadGeneration
+            await task.value
+
+            // 待機中に新しい取得へ差し替わった場合は、その世代まで待つ。
+            guard generation == tagDisplaySnapshotLoadGeneration,
+                  tagDisplaySnapshotLoadTask == nil else {
+                continue
+            }
+            return
+        }
+    }
+
+    /// 明示的なタグ編集結果を、非同期の使用件数再集計を待たず即時反映する。
+    /// 使用件数は既存値を維持し、新規タグだけは必ず0件から始まる。
+    private func upsertImmediateTagDisplaySnapshot(
+        for tag: Tag,
+        name: String,
+        colorHex: String,
+        newTagUsageCount: Int? = nil
+    ) {
+        let objectURI = tag.objectID.uriRepresentation().absoluteString
+        let existingIndex = tagDisplaySnapshots.firstIndex { $0.objectURI == objectURI }
+        let usageCount = existingIndex.map { tagDisplaySnapshots[$0].usageCount }
+            ?? newTagUsageCount
+            ?? 0
+        let snapshot = TagDisplaySnapshot(
+            tagID: tag.id,
+            objectURI: objectURI,
+            name: name,
+            colorHex: colorHex,
+            usageCount: usageCount
+        )
+
+        if let existingIndex {
+            tagDisplaySnapshots[existingIndex] = snapshot
+        } else {
+            tagDisplaySnapshots.append(snapshot)
+        }
+    }
+
+    private func rebuildTagDisplaySnapshots(for fetchedTags: [Tag]) {
+        tagDisplaySnapshotLoadTask?.cancel()
+        let generation = UUID()
+        tagDisplaySnapshotLoadGeneration = generation
+        let orderedObjectURIs = fetchedTags.map { $0.objectID.uriRepresentation() }
+
+        // 削除済みタグだけは即座に除外し、残りは新しい完全な値型配列が届くまで維持する。
+        let existingByURI = Dictionary(uniqueKeysWithValues: tagDisplaySnapshots.map {
+            ($0.objectURI, $0)
+        })
+        tagDisplaySnapshots = orderedObjectURIs.compactMap {
+            existingByURI[$0.absoluteString]
+        }
+
+        guard let coordinator = context.persistentStoreCoordinator else {
+            tagDisplaySnapshots = []
+            tagDisplaySnapshotLoadTask = nil
+            return
+        }
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let loader = tagDisplaySnapshotLoader
+
+        tagDisplaySnapshotLoadTask = Task { [weak self] in
+            do {
+                let result = try await loader.load(
+                    orderedObjectURIs: orderedObjectURIs,
+                    coordinatorReference: coordinatorReference
+                )
+                try Task.checkCancellation()
+                guard let self else { return }
+                guard self.tagDisplaySnapshotLoadGeneration == generation else { return }
+                guard result.orderedObjectURIs == orderedObjectURIs,
+                      result.snapshots.count == orderedObjectURIs.count,
+                      self.allTags.map({ $0.objectID.uriRepresentation() }) == orderedObjectURIs else {
+                    self.tagDisplaySnapshotLoadTask = nil
+                    return
+                }
+                self.tagDisplaySnapshots = result.snapshots
+                self.tagDisplaySnapshotLoadTask = nil
+            } catch is CancellationError {
+                guard let self,
+                      self.tagDisplaySnapshotLoadGeneration == generation else { return }
+                self.tagDisplaySnapshotLoadTask = nil
+                return
+            } catch {
+                guard let self,
+                      self.tagDisplaySnapshotLoadGeneration == generation else { return }
+                self.tagDisplaySnapshotLoadTask = nil
+                AppLogger.persistence.error("タグ表示情報の取得に失敗しました: \(error)")
+            }
         }
     }
 
@@ -231,7 +1332,15 @@ class CardListViewModel: ObservableObject {
         tag.createdAt = Date()
         do {
             try context.save()
+            upsertImmediateTagDisplaySnapshot(
+                for: tag,
+                name: name,
+                colorHex: colorHex,
+                newTagUsageCount: 0
+            )
             fetchTags()
+            rebuildListQuerySnapshots()
+            scheduleListUpdate(debounce: false)
             return .success
         } catch {
             context.rollback()
@@ -246,13 +1355,33 @@ class CardListViewModel: ObservableObject {
         tag.colorHex = colorHex
         do {
             try context.save()
+            upsertImmediateTagDisplaySnapshot(
+                for: tag,
+                name: name,
+                colorHex: colorHex
+            )
             fetchTags()
+            rebuildListQuerySnapshots()
+            scheduleListUpdate(debounce: false)
             return .success
         } catch {
             context.rollback()
             fetchTags()
             return .failure("タグの更新に失敗しました: \(error.localizedDescription)")
         }
+    }
+
+    /// ViewからNSManagedObjectを保持せず、表示スナップショットのURIだけでタグを更新する。
+    @discardableResult
+    func updateTag(
+        objectURI: String,
+        name: String,
+        colorHex: String
+    ) -> TagMutationResult {
+        guard let tag = tag(forObjectURIString: objectURI) else {
+            return .failure("対象のタグは削除されました。")
+        }
+        return updateTag(tag, name: name, colorHex: colorHex)
     }
 
     func deleteTag(_ tag: Tag) {
@@ -264,7 +1393,8 @@ class CardListViewModel: ObservableObject {
                 selectedTagIDs.remove(tagID)
             }
             fetchTags()
-            updateFilteredCards()
+            rebuildListQuerySnapshots()
+            scheduleListUpdate(debounce: false)
         } catch {
             context.rollback()
             fetchTags()
@@ -273,11 +1403,20 @@ class CardListViewModel: ObservableObject {
         }
     }
 
+    /// ViewからNSManagedObjectを保持せず、表示スナップショットのURIだけでタグを削除する。
+    func deleteTag(objectURI: String) {
+        guard let tag = tag(forObjectURIString: objectURI) else {
+            fetchTags()
+            return
+        }
+        deleteTag(tag)
+    }
+
     func moveTag(from source: IndexSet, to destination: Int) {
-        var reordered = allTags
+        var reordered = tagDisplaySnapshots
         reordered.move(fromOffsets: source, toOffset: destination)
-        for (index, tag) in reordered.enumerated() {
-            tag.sortOrder = Int16(index)
+        for (index, snapshot) in reordered.enumerated() {
+            tag(forObjectURIString: snapshot.objectURI)?.sortOrder = Int16(index)
         }
         save()
         fetchTags()
@@ -302,12 +1441,28 @@ class CardListViewModel: ObservableObject {
 
     func setTagFilter(_ tag: Tag, enabled: Bool) {
         guard let id = tag.id else { return }
+        setTagFilter(id: id, enabled: enabled)
+    }
+
+    /// フィルターUIがTagを直接保持しないための値型API。
+    func setTagFilter(id: UUID, enabled: Bool) {
         if enabled {
             selectedTagIDs.insert(id)
         } else {
             selectedTagIDs.remove(id)
         }
-        updateFilteredCards()
+        scheduleListUpdate(debounce: false)
+    }
+
+    private func tag(forObjectURIString objectURI: String) -> Tag? {
+        guard let url = URL(string: objectURI),
+              let objectID = context.persistentStoreCoordinator?
+                .managedObjectID(forURIRepresentation: url),
+              let object = try? context.existingObject(with: objectID),
+              !object.isDeleted else {
+            return nil
+        }
+        return object as? Tag
     }
 
     func toggleFavoritesFilter() {
@@ -316,7 +1471,7 @@ class CardListViewModel: ObservableObject {
 
     func setFavoritesFilter(_ enabled: Bool) {
         showFavoritesOnly = enabled
-        updateFilteredCards()
+        scheduleListUpdate(debounce: false)
     }
 
     /// お気に入り・タグ・Insights由来の条件を一括解除する。
@@ -326,7 +1481,7 @@ class CardListViewModel: ObservableObject {
         if externalFilter != nil {
             externalFilter = nil
         } else {
-            updateFilteredCards()
+            scheduleListUpdate(debounce: false)
         }
     }
 
@@ -341,30 +1496,47 @@ class CardListViewModel: ObservableObject {
             return
         }
         recordRecentSearch(query)
-        guard shouldPerformSemanticSearch(for: query) else {
-            semanticSearchMessage = nil
-            return
-        }
-
         semanticSearchTask?.cancel()
-        let candidateCards = cards
-        semanticSearchQuery = query
+        semanticSearchQuery = nil
         semanticMatchedCardIDs = nil
-        semanticSearchMessage = nil
-        isSemanticSearchInProgress = true
-        updateFilteredCards()
+        pendingSemanticSearchMessage = nil
+        pendingSemanticSearchInProgress = false
+        let lexicalSearchTask = scheduleListUpdate(debounce: false)
 
         semanticSearchTask = Task { [weak self] in
             guard let self else { return }
-            let result = await AISearchService.shared.search(query: query, cards: candidateCards)
+            // debounce 中の古い filteredCards ではなく、確定した通常検索結果で AI の要否を決める。
+            await lexicalSearchTask.value
+            guard !Task.isCancelled, self.normalizedSearchText == query else { return }
+            guard self.shouldPerformSemanticSearch(for: query) else {
+                self.pendingSemanticSearchMessage = nil
+                return
+            }
+
+            // private contextで確定済みの値型だけを推論へ渡す。
+            // 検索中に保存・削除が発生してもNSManagedObjectを跨いで保持しない。
+            let candidateCards = self.listQuerySnapshots.compactMap(\.aiSearch)
+            let candidateGeneration = self.listQuerySnapshotGeneration
+            self.semanticSearchQuery = query
+            self.semanticMatchedCardIDs = nil
+            self.pendingSemanticSearchMessage = nil
+            self.pendingSemanticSearchInProgress = true
+            let progressTask = self.scheduleListUpdate(debounce: false)
+            await progressTask.value
             guard !Task.isCancelled,
                   self.semanticSearchQuery == query,
                   self.normalizedSearchText == query else { return }
+            let result = await AISearchService.shared.search(query: query, cards: candidateCards)
+            guard !Task.isCancelled,
+                  self.semanticSearchQuery == query,
+                  self.normalizedSearchText == query,
+                  self.listQuerySnapshotGeneration == candidateGeneration else { return }
 
             self.semanticMatchedCardIDs = Set(result.matchedCardIDs)
-            self.semanticSearchMessage = result.text
-            self.isSemanticSearchInProgress = false
-            self.updateFilteredCards()
+            self.pendingSemanticSearchMessage = result.text
+            self.pendingSemanticSearchInProgress = false
+            let resultTask = self.scheduleListUpdate(debounce: false)
+            await resultTask.value
         }
     }
 
@@ -374,14 +1546,6 @@ class CardListViewModel: ObservableObject {
         if submit {
             submitUnifiedSearch()
         }
-    }
-
-    var companySearchSuggestions: [String] {
-        uniqueNonEmptyValues(cards.compactMap(\.company), limit: 4)
-    }
-
-    var tagSearchSuggestions: [String] {
-        uniqueNonEmptyValues(allTags.map(\.tagName), limit: 4)
     }
 
     func clearRecentSearches() {
@@ -394,9 +1558,9 @@ class CardListViewModel: ObservableObject {
         semanticSearchTask = nil
         semanticSearchQuery = nil
         semanticMatchedCardIDs = nil
-        semanticSearchMessage = nil
-        isSemanticSearchInProgress = false
-        updateFilteredCards()
+        pendingSemanticSearchMessage = nil
+        pendingSemanticSearchInProgress = false
+        scheduleListUpdate(debounce: false)
     }
 
     /// 意味検索結果を現在の通常検索結果へ合流する。テストでも世代不一致を検証できるよう内部APIにする。
@@ -407,59 +1571,276 @@ class CardListViewModel: ObservableObject {
         semanticSearchTask = nil
         semanticSearchQuery = normalizedQuery
         semanticMatchedCardIDs = ids
-        semanticSearchMessage = message
-        isSemanticSearchInProgress = false
-        updateFilteredCards()
+        pendingSemanticSearchMessage = message
+        pendingSemanticSearchInProgress = false
+        scheduleListUpdate(debounce: false)
     }
 
-    private func updateFilteredCards() {
-        var result = cards
+    /// テストでは非同期検索結果の確定を待ち、UI と同じ世代破棄経路を検証する。
+    func waitForPendingListUpdate() async {
+        await listQuerySnapshotLoadTask?.value
+        await listQueryTask?.value
+    }
 
-        // お気に入りフィルタ
-        if showFavoritesOnly {
-            result = result.filter { $0.isFavorite }
-        }
+    func listItem(for objectURI: URL) -> CardListItemSnapshot? {
+        listItemsByURI[objectURI]
+    }
 
-        // タグフィルタ（選択されたタグすべてを持つカードのみ）
-        if !selectedTagIDs.isEmpty {
-            result = result.filter { card in
-                let cardTagIDs = Set((card.tags as? Set<Tag> ?? []).compactMap { $0.id })
-                return selectedTagIDs.isSubset(of: cardTagIDs)
-            }
-        }
+    @discardableResult
+    private func scheduleListUpdate(debounce: Bool) -> Task<Void, Never> {
+        listQueryTask?.cancel()
+        let generation = UUID()
+        listQueryGeneration = generation
+        let worker = listQueryWorker
+        let delay = searchDebounceDuration
+        let snapshotLoadTask = listQuerySnapshotLoadTask
 
-        if let externalFilter {
-            result = result.filter { InsightsService.shared.matches($0, filter: externalFilter) }
-        }
-
-        // テキスト検索
-        let q = normalizedSearchText
-        if !q.isEmpty {
-            result = result.filter { card in
-                func match(_ s: String?) -> Bool {
-                    s?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                        .contains(q) ?? false
+        let task = Task { [weak self] in
+            if debounce {
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
                 }
-                let lexicalMatch = match(card.fullName)
-                    || match(card.fullNameReading)
-                    || match(card.company)
-                    || match(card.companyReading)
-                    || match(card.department)
-                    || match(card.title)
-                    || match(card.email)
-                    || match(card.phone)
-                    || match(card.address)
-                    || match(card.website)
-                    || match(card.notes)
-                    || card.tagArray.contains { match($0.tagName) }
-                let semanticMatch = card.id.map {
-                    semanticSearchQuery == q && semanticMatchedCardIDs?.contains($0) == true
-                } ?? false
-                return lexicalMatch || semanticMatch
+            }
+            await snapshotLoadTask?.value
+            guard !Task.isCancelled,
+                  let self,
+                  self.listQueryGeneration == generation,
+                  self.listQuerySnapshotLoadGeneration == self.listQuerySnapshotGeneration else {
+                return
+            }
+            let request = self.makeListQueryRequest()
+            guard !Task.isCancelled,
+                  let result = await worker.evaluate(request),
+                  !Task.isCancelled,
+                  self.listQueryGeneration == generation,
+                  self.listQuerySnapshotGeneration == request.snapshotGeneration,
+                  self.cards.count == result.snapshotCount else {
+                return
+            }
+
+            let filteredItems = result.filteredIndices.compactMap { index in
+                self.listItems.indices.contains(index) ? self.listItems[index] : nil
+            }
+            let groupedItemSections = result.sections.map { section in
+                CardListItemSection(
+                    id: section.id,
+                    title: section.title,
+                    items: section.indices.compactMap { index in
+                        self.listItems.indices.contains(index) ? self.listItems[index] : nil
+                    }
+                )
+            }
+            // 1つのPublished値として公開し、検索/グループ表示の中間状態を作らない。
+            self.listDisplaySnapshot = CardListDisplaySnapshot(
+                isReady: true,
+                sourceCount: result.snapshotCount,
+                sourceObjectURIs: Set(self.listItems.map(\.id)),
+                normalizedQuery: request.normalizedQuery,
+                isFilterActive: request.showFavoritesOnly
+                    || !request.selectedTagIDs.isEmpty
+                    || request.externalFilter != nil,
+                externalFilter: request.externalFilter,
+                sortKey: request.sortKey,
+                isSemanticSearchInProgress: request.isSemanticSearchInProgress,
+                semanticSearchMessage: request.semanticSearchMessage,
+                filteredItems: filteredItems,
+                groupedItemSections: groupedItemSections
+            )
+        }
+        listQueryTask = task
+        return task
+    }
+
+    private func makeListQueryRequest() -> CardListQueryRequest {
+        CardListQueryRequest(
+            snapshotGeneration: listQuerySnapshotGeneration,
+            snapshots: listQuerySnapshots,
+            normalizedQuery: normalizedSearchText,
+            selectedTagIDs: selectedTagIDs,
+            showFavoritesOnly: showFavoritesOnly,
+            externalFilter: externalFilter,
+            semanticQuery: semanticSearchQuery,
+            semanticMatchedCardIDs: semanticMatchedCardIDs ?? [],
+            isSemanticSearchInProgress: pendingSemanticSearchInProgress,
+            semanticSearchMessage: pendingSemanticSearchMessage,
+            sortKey: sortKey,
+            sortAscending: sortAscending,
+            now: Date()
+        )
+    }
+
+    /// 管理オブジェクトの全属性・タグ走査はprivate queueへ委譲する。
+    /// MainActorでは表示順のURIを確定し、完成した値型配列だけを一括反映する。
+    private func rebuildListQuerySnapshots() {
+        listQuerySnapshotLoadTask?.cancel()
+        listQueryTask?.cancel()
+        listQueryGeneration = UUID()
+
+        let generation = UUID()
+        listQuerySnapshotLoadGeneration = generation
+        let orderedObjectURIs = cards.map { $0.objectID.uriRepresentation() }
+        guard let coordinator = context.persistentStoreCoordinator else {
+            listQuerySnapshots = []
+            listItems = []
+            listItemsByURI = [:]
+            companySearchSuggestions = []
+            duplicateCardSnapshots = []
+            listQuerySnapshotGeneration = generation
+            listQuerySnapshotLoadTask = nil
+            scheduleListUpdate(debounce: false)
+            return
+        }
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let loader = listQuerySnapshotLoader
+
+        listQuerySnapshotLoadTask = Task { [weak self] in
+            do {
+                let result = try await loader.load(
+                    orderedObjectURIs: orderedObjectURIs,
+                    coordinatorReference: coordinatorReference
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.listQuerySnapshotLoadGeneration == generation,
+                      result.orderedObjectURIs == orderedObjectURIs,
+                      result.snapshots.count == orderedObjectURIs.count,
+                      self.cards.map({ $0.objectID.uriRepresentation() }) == orderedObjectURIs else {
+                    return
+                }
+
+                self.publishListQuerySnapshot(
+                    result,
+                    cards: self.cards,
+                    generation: generation
+                )
+                self.listQuerySnapshotLoadTask = nil
+                self.scheduleListUpdate(debounce: false)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      self.listQuerySnapshotLoadGeneration == generation else { return }
+                self.listQuerySnapshotLoadTask = nil
+                AppLogger.persistence.error("一覧検索データの取得に失敗しました: \(error)")
             }
         }
-        filteredCards = result
-        updateGroupedCards()
+    }
+
+    /// 同じ private-context 読み取りから作った検索値と行表示値を同時に公開する。
+    /// `cards` と各 snapshot の index は同じ URI 順であることを呼び出し側が検証済み。
+    private func publishListQuerySnapshot(
+        _ result: CardListQuerySnapshotLoadResult,
+        cards sourceCards: [BusinessCard],
+        generation: UUID,
+        replacingCards: Bool = false
+    ) {
+        listQuerySnapshots = result.snapshots
+        duplicateCardSnapshots = result.duplicateSnapshots
+        listItems = zip(sourceCards, result.snapshots).map { card, snapshot in
+            CardListItemSnapshot(
+                id: snapshot.detail.objectURI,
+                row: snapshot.row,
+                detail: snapshot.detail,
+                imageIdentifier: CardImageCacheKey.businessCard(card)
+            )
+        }
+        listItemsByURI = Dictionary(uniqueKeysWithValues: listItems.map { ($0.id, $0) })
+        companySearchSuggestions = uniqueNonEmptyValues(
+            result.snapshots.map(\.row.company),
+            limit: 4
+        )
+        listQuerySnapshotGeneration = generation
+        // 行表示値を先に揃えてから一覧をPublishし、CardRowの初回bodyで欠落値を見せない。
+        if replacingCards {
+            cards = sourceCards
+        }
+        let revisions = Set(result.revisions.map {
+            CardRevision(id: $0.objectURI.absoluteString, updatedAt: $0.updatedAt)
+        })
+        publishCardsContentRevisionIfNeeded(revisions)
+        detectDuplicatesIfCardsChanged(revisions, snapshots: result.duplicateSnapshots)
+    }
+
+    /// 非同期workerの完了待ち中に、削除・invalidate済みの管理オブジェクトを旧表示へ残さない。
+    /// 新規挿入は次の完成スナップショットでまとめて表示する。
+    private func reconcileDisplaySnapshot(with fetchedCards: [BusinessCard]) {
+        guard listDisplaySnapshot.isReady else { return }
+        let fetchedURIs = Set(fetchedCards.map { $0.objectID.uriRepresentation() })
+        let remainingSourceURIs = listDisplaySnapshot.sourceObjectURIs.intersection(fetchedURIs)
+
+        if remainingSourceURIs.isEmpty, !fetchedCards.isEmpty,
+           !listDisplaySnapshot.sourceObjectURIs.isEmpty {
+            listDisplaySnapshot = .loading
+            return
+        }
+
+        let filteredItems = listDisplaySnapshot.filteredItems.filter {
+            remainingSourceURIs.contains($0.id)
+        }
+        let groupedItemSections: [CardListItemSection] = listDisplaySnapshot.groupedItemSections.compactMap { section in
+            let items = section.items.filter { remainingSourceURIs.contains($0.id) }
+            guard !items.isEmpty else { return nil }
+            return CardListItemSection(id: section.id, title: section.title, items: items)
+        }
+        listItemsByURI = listItemsByURI.filter { remainingSourceURIs.contains($0.key) }
+        listDisplaySnapshot = CardListDisplaySnapshot(
+            isReady: true,
+            sourceCount: remainingSourceURIs.count,
+            sourceObjectURIs: remainingSourceURIs,
+            normalizedQuery: listDisplaySnapshot.normalizedQuery,
+            isFilterActive: listDisplaySnapshot.isFilterActive,
+            externalFilter: listDisplaySnapshot.externalFilter,
+            sortKey: listDisplaySnapshot.sortKey,
+            isSemanticSearchInProgress: listDisplaySnapshot.isSemanticSearchInProgress,
+            semanticSearchMessage: listDisplaySnapshot.semanticSearchMessage,
+            filteredItems: filteredItems,
+            groupedItemSections: groupedItemSections
+        )
+    }
+
+    /// Core Dataの変更通知を、一覧とタグの再取得へまとめる。
+    /// Taskを1つだけ所有することで同じ同期変更から届く連続通知を集約する。
+    private func scheduleContextRefresh(for notification: Notification) {
+        guard let userInfo = notification.userInfo else { return }
+        let changedObjects = [
+            NSInsertedObjectsKey,
+            NSUpdatedObjectsKey,
+            NSDeletedObjectsKey,
+            NSRefreshedObjectsKey,
+            NSInvalidatedObjectsKey,
+        ].reduce(into: Set<NSManagedObject>()) { result, key in
+            result.formUnion(userInfo[key] as? Set<NSManagedObject> ?? [])
+        }
+        let invalidatedAll = (userInfo[NSInvalidatedAllObjectsKey] as? Bool) == true
+        let cardsChanged = invalidatedAll || changedObjects.contains { $0 is BusinessCard }
+        let tagsChanged = invalidatedAll || changedObjects.contains { $0 is Tag }
+        guard cardsChanged || tagsChanged else { return }
+
+        if !contextRefreshDeferrals.isEmpty {
+            deferredCardsChanged = deferredCardsChanged || cardsChanged
+            deferredTagsChanged = deferredTagsChanged || tagsChanged
+            return
+        }
+
+        contextRefreshTask?.cancel()
+        contextRefreshTask = Task { [weak self] in
+            guard !Task.isCancelled, let self else { return }
+            if tagsChanged {
+                self.fetchTags()
+            }
+            if cardsChanged || tagsChanged {
+                self.performFetchCards()
+            }
+            self.contextRefreshTask = nil
+        }
+    }
+
+    /// テストから外部変更の反映完了を待つ。
+    func waitForPendingContextRefresh() async {
+        await contextRefreshTask?.value
+        await waitForPendingListUpdate()
     }
 
     private var normalizedSearchText: String {
@@ -501,12 +1882,12 @@ class CardListViewModel: ObservableObject {
         semanticSearchTask = nil
         semanticSearchQuery = nil
         semanticMatchedCardIDs = nil
-        semanticSearchMessage = nil
-        isSemanticSearchInProgress = false
+        pendingSemanticSearchMessage = nil
+        pendingSemanticSearchInProgress = false
     }
 
     private func shouldPerformSemanticSearch(for query: String) -> Bool {
-        if filteredCards.isEmpty { return true }
+        if filteredCardItems.isEmpty { return true }
         let naturalLanguageCues = [
             "の人", "関係", "関連", "系", "担当", "会った", "もらった", "交換した",
             "先月", "今月", "去年", "未登録", "登録されていない", "がない", "お気に入り",
@@ -520,54 +1901,95 @@ class CardListViewModel: ObservableObject {
         externalFilter = nil
     }
 
-    // MARK: - セクション分けグループ化（CardGroupingService に委譲）
-
-    private func updateGroupedCards() {
-        guard !isSearchActive else {
-            groupedCards = []
-            return
-        }
-        let source = isFilterActive ? filteredCards : cards
-        switch sortKey {
-        case .name:
-            groupedCards = CardGroupingService.groupByName(source, ascending: sortAscending)
-        case .company:
-            groupedCards = CardGroupingService.groupByCompany(source, ascending: sortAscending)
-        case .createdAt:
-            groupedCards = CardGroupingService.groupByDate(source, dateOf: { $0.createdAt }, ascending: sortAscending)
-        case .updatedAt:
-            groupedCards = CardGroupingService.groupByDate(source, dateOf: { $0.updatedAt }, ascending: sortAscending)
-        }
-    }
-
     // MARK: - 一括操作（選択モード）
 
-    func selectedCards(from ids: Set<BusinessCard.ID>) -> [BusinessCard] {
-        cards.filter { ids.contains($0.id) }
+    private func card(for objectURI: URL) -> BusinessCard? {
+        guard let coordinator = context.persistentStoreCoordinator,
+              let objectID = coordinator.managedObjectID(forURIRepresentation: objectURI),
+              let object = try? context.existingObject(with: objectID),
+              let card = object as? BusinessCard,
+              !card.isDeleted else {
+            return nil
+        }
+        return card
     }
 
-    func exportSelectedCSV(ids: Set<BusinessCard.ID>) {
-        performExport(selectedCards(from: ids), label: "CSVエクスポート",
-                      export: ExportService.shared.exportCSV)
+    /// 編集フォームを開く瞬間だけ、URIからMainActor context上のオブジェクトを解決する。
+    /// 一覧ViewはCore Dataの解決処理を持たず、表示中もオブジェクトを保持しない。
+    func cardForEditing(objectURI: URL) -> BusinessCard? {
+        card(for: objectURI)
     }
 
-    func exportSelectedVCard(ids: Set<BusinessCard.ID>) {
-        performExport(selectedCards(from: ids), label: "vCardエクスポート",
-                      export: ExportService.shared.exportVCard)
+    private func cards(for objectURIs: Set<URL>) -> [BusinessCard] {
+        cards.filter { objectURIs.contains($0.objectID.uriRepresentation()) }
     }
 
-    func addTagToCards(tag: Tag, ids: Set<BusinessCard.ID>) {
-        let selected = selectedCards(from: ids)
-        for card in selected {
+    /// 一括タグ画面用に、private contextで作成済みのtag IDスナップショットから集計する。
+    /// MainActorで選択カードのto-many relationshipを展開しない。
+    func bulkTagAssignmentSummary(
+        for objectURIs: Set<URL>
+    ) -> BulkTagAssignmentSummary {
+        let selected = listQuerySnapshots.filter {
+            objectURIs.contains($0.detail.objectURI)
+        }
+        var countsByTagID: [UUID: Int] = [:]
+        for snapshot in selected {
+            for tagID in snapshot.tagIDs {
+                countsByTagID[tagID, default: 0] += 1
+            }
+        }
+        return BulkTagAssignmentSummary(
+            selectedCardCount: selected.count,
+            countsByTagID: countsByTagID
+        )
+    }
+
+    func exportSelectedCSV(objectURIs: Set<URL>) {
+        performExport(
+            cards(for: objectURIs),
+            label: "CSVエクスポート",
+            format: .csv
+        )
+    }
+
+    func exportSelectedVCard(objectURIs: Set<URL>) {
+        performExport(
+            cards(for: objectURIs),
+            label: "vCardエクスポート",
+            format: .vCard
+        )
+    }
+
+    func addTagToCards(tag: Tag, objectURIs: Set<URL>) {
+        for card in cards(for: objectURIs) {
             card.addToTags(tag)
             card.updatedAt = Date()
         }
         save()
     }
 
-    func removeTagFromCards(tag: Tag, ids: Set<BusinessCard.ID>) {
-        let selected = selectedCards(from: ids)
-        for card in selected {
+    /// 一括タグ画面がTagを保持しないための値型API。
+    func addTagToCards(tagObjectURI: String, cardObjectURIs: Set<URL>) {
+        guard let tag = tag(forObjectURIString: tagObjectURI) else {
+            errorMessage = "対象のタグは削除されました。"
+            fetchTags()
+            return
+        }
+        addTagToCards(tag: tag, objectURIs: cardObjectURIs)
+    }
+
+    /// 一括タグ画面がTagを保持しないための値型API。
+    func removeTagFromCards(tagObjectURI: String, cardObjectURIs: Set<URL>) {
+        guard let tag = tag(forObjectURIString: tagObjectURI) else {
+            errorMessage = "対象のタグは削除されました。"
+            fetchTags()
+            return
+        }
+        removeTagFromCards(tag: tag, objectURIs: cardObjectURIs)
+    }
+
+    func removeTagFromCards(tag: Tag, objectURIs: Set<URL>) {
+        for card in cards(for: objectURIs) {
             card.removeFromTags(tag)
             card.updatedAt = Date()
         }
@@ -576,41 +1998,70 @@ class CardListViewModel: ObservableObject {
 
     /// 選択カード全件に AI でタグを提案・付与する。Pro 限定。
     /// - Returns: (処理対象件数, 1 件以上タグが付与されたカード件数)
-    func bulkAutoTag(ids: Set<BusinessCard.ID>) async -> (processed: Int, tagged: Int) {
-        let selected = selectedCards(from: ids)
-        guard !selected.isEmpty, !allTags.isEmpty else { return (0, 0) }
-        let tagInfos: [AutoTagService.TagInfo] = allTags.compactMap { tag in
-            guard let id = tag.id else { return nil }
-            return AutoTagService.TagInfo(id: id, name: tag.tagName)
+    func bulkAutoTag(objectURIs: Set<URL>) async -> (processed: Int, tagged: Int) {
+        let selected = listQuerySnapshots
+            .filter { objectURIs.contains($0.detail.objectURI) }
+            .map(\.bulkAutoTag)
+        return await bulkAutoTag(selected: selected)
+    }
+
+    private func bulkAutoTag(
+        selected: [BulkAutoTagCardSnapshot]
+    ) async -> (processed: Int, tagged: Int) {
+        guard !selected.isEmpty, !tagDisplaySnapshots.isEmpty,
+              let coordinator = context.persistentStoreCoordinator else { return (0, 0) }
+        let tagInfos: [AutoTagService.TagInfo] = tagDisplaySnapshots.compactMap { tag in
+            guard let id = tag.tagID else { return nil }
+            return AutoTagService.TagInfo(id: id, name: tag.name)
         }
-        var taggedCount = 0
+        guard !tagInfos.isEmpty else { return (0, 0) }
+
+        let generation = UUID()
+        bulkAutoTagGeneration = generation
+        var suggestions: [BulkAutoTagSuggestion] = []
+        suggestions.reserveCapacity(selected.count)
+
         for card in selected {
-            let info = AutoTagService.CardInfo(
-                company: card.company ?? "",
-                department: card.department ?? "",
-                title: card.title ?? "",
-                address: card.address ?? "",
-                email: card.email ?? "",
-                website: card.website ?? ""
+            guard !Task.isCancelled, bulkAutoTagGeneration == generation else {
+                return (0, 0)
+            }
+            let suggested = await AutoTagService.shared.suggestTags(
+                cardInfo: card.cardInfo,
+                tags: tagInfos
             )
-            let suggested = await AutoTagService.shared.suggestTags(cardInfo: info, tags: tagInfos)
             guard !suggested.isEmpty else { continue }
-            var addedAny = false
-            for tag in allTags {
-                guard let id = tag.id, suggested.contains(id) else { continue }
-                let cardTags = card.tags as? Set<Tag> ?? []
-                if !cardTags.contains(tag) {
-                    card.addToTags(tag)
-                    addedAny = true
-                }
-            }
-            if addedAny {
-                card.updatedAt = Date()
-                taggedCount += 1
-            }
+            suggestions.append(BulkAutoTagSuggestion(
+                objectURI: card.objectURI,
+                expectedUpdatedAt: card.updatedAt,
+                tagIDs: Set(suggested)
+            ))
         }
-        save()
-        return (selected.count, taggedCount)
+
+        guard !Task.isCancelled, bulkAutoTagGeneration == generation else { return (0, 0) }
+        do {
+            let result = try await bulkAutoTagWriter.apply(
+                suggestions: suggestions,
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+            guard !Task.isCancelled, bulkAutoTagGeneration == generation else { return (0, 0) }
+
+            // private writerで保存済みの対象だけを最新化し、完成状態を1回再取得する。
+            for objectURI in result.updatedObjectURIs {
+                guard let objectID = coordinator.managedObjectID(forURIRepresentation: objectURI),
+                      let card = try? context.existingObject(with: objectID), !card.isDeleted else {
+                    continue
+                }
+                context.refresh(card, mergeChanges: true)
+            }
+            performFetchCards()
+            return (selected.count, result.updatedObjectURIs.count)
+        } catch is CancellationError {
+            return (0, 0)
+        } catch {
+            guard bulkAutoTagGeneration == generation else { return (0, 0) }
+            errorMessage = "AIタグの一括反映に失敗しました: \(error.localizedDescription)"
+            return (selected.count, 0)
+        }
     }
 
     /// カード単体のタグトグル（コンテキストメニュー用）
@@ -629,122 +2080,211 @@ class CardListViewModel: ObservableObject {
 
     /// 重複検出。ルールベースは常に実行、AI 二次判定は Pro 限定。
     func detectDuplicates() {
-        let revisions = cardRevisions
+        guard let revisions = publishedCardRevisions else { return }
+        detectDuplicates(revisions: revisions, snapshots: duplicateCardSnapshots)
+    }
+
+    /// private contextで作成済みの値型だけを重複判定へ渡す。
+    /// 全件のCore Data属性をMainActorで再走査しない。
+    private func detectDuplicates(
+        revisions: Set<CardRevision>,
+        snapshots: [DuplicateCardSnapshot]
+    ) {
         lastDuplicateDetectionRevisions = revisions
         let generation = UUID()
         duplicateDetectionGeneration = generation
         let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
-        // 即時: ルールベースで表示
-        duplicatePairs = checker.findDuplicates(in: cards)
-        // 非同期: AI 二次判定でボーダーライン候補を追加（Pro/Grandfather のみ）
-        guard EntitlementStore.shared.hasAccess else { return }
-        let snapshot = cards
-        Task {
-            let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
-            guard generation == self.duplicateDetectionGeneration,
-                  revisions == self.cardRevisions else { return }
+        let shouldEnhanceWithAI = EntitlementStore.shared.hasAccess
+
+        duplicateDetectionTask?.cancel()
+        duplicateDetectionTask = Task { [weak self] in
+            guard let scan = await checker.scanRuleBased(
+                snapshots: snapshots,
+                includeBorderline: shouldEnhanceWithAI
+            ), !Task.isCancelled, let self,
+                  generation == self.duplicateDetectionGeneration,
+                  revisions == self.publishedCardRevisions else { return }
+
+            // 全ペア比較の完了後だけ MainActor の表示状態へ反映する。
+            self.duplicatePairs = scan.confirmed
+            guard shouldEnhanceWithAI else { return }
+
+            let enhanced = await checker.enhanceWithAI(scan)
+            guard !Task.isCancelled,
+                  generation == self.duplicateDetectionGeneration,
+                  revisions == self.publishedCardRevisions else { return }
             self.duplicatePairs = enhanced
         }
     }
 
     /// 並べ替えだけでは重複判定を再実行せず、カード集合または更新日時が変わった時だけ更新する。
-    private func detectDuplicatesIfCardsChanged() {
-        let revisions = cardRevisions
+    private func detectDuplicatesIfCardsChanged(
+        _ revisions: Set<CardRevision>,
+        snapshots: [DuplicateCardSnapshot]
+    ) {
         guard revisions != lastDuplicateDetectionRevisions else { return }
-        detectDuplicates()
+        detectDuplicates(revisions: revisions, snapshots: snapshots)
     }
 
-    private var cardRevisions: Set<CardRevision> {
-        Set(cards.map {
-            CardRevision(
-                id: $0.objectID.uriRepresentation().absoluteString,
-                updatedAt: $0.updatedAt
-            )
-        })
+    private func publishCardsContentRevisionIfNeeded(_ revisions: Set<CardRevision>) {
+        guard revisions != publishedCardRevisions else { return }
+        publishedCardRevisions = revisions
+        cardsContentRevision &+= 1
     }
 
     // MARK: - エクスポート
 
     func exportCSV() {
-        performExport(cards, label: "CSVエクスポート",
-                      export: ExportService.shared.exportCSV)
+        performExport(cards, label: "CSVエクスポート", format: .csv)
     }
 
     func exportVCard() {
-        performExport(cards, label: "vCardエクスポート",
-                      export: ExportService.shared.exportVCard)
+        performExport(cards, label: "vCardエクスポート", format: .vCard)
     }
 
-    private func performExport(_ cards: [BusinessCard], label: String,
-                               export: ([CardExportDTO]) throws -> URL) {
+    private enum FileExportFormat {
+        case csv
+        case vCard
+    }
+
+    private func performExport(
+        _ cards: [BusinessCard],
+        label: String,
+        format: FileExportFormat
+    ) {
         guard !cards.isEmpty else { return }
-        let dtos = cards.map { $0.toExportDTO() }
-        do {
-            exportItem = ExportItem(url: try export(dtos))
-        } catch {
-            errorMessage = "\(label)に失敗しました: \(error.localizedDescription)"
+        guard let coordinator = context.persistentStoreCoordinator else {
+            errorMessage = "\(label)に失敗しました: \(CardDataTransferError.missingPersistentStore.localizedDescription)"
+            return
+        }
+        let cardIDsByURI = Dictionary(uniqueKeysWithValues: listQuerySnapshots.compactMap { snapshot in
+            snapshot.id.map { (snapshot.bulkAutoTag.objectURI, $0) }
+        })
+        let orderedCardIDs = cards.compactMap {
+            cardIDsByURI[$0.objectID.uriRepresentation()]
+        }
+        guard orderedCardIDs.count == cards.count else {
+            errorMessage = "\(label)に失敗しました: \(CardDataTransferError.objectNotFound.localizedDescription)"
+            return
+        }
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let generation = UUID()
+        fileExportGeneration = generation
+        fileExportTask?.cancel()
+        fileExportTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let dtos = try await cardDataTransferWorker.loadCards(
+                    orderedCardIDs: orderedCardIDs,
+                    coordinatorReference: coordinatorReference
+                )
+                try Task.checkCancellation()
+                let url: URL
+                switch format {
+                case .csv:
+                    url = try await ExportService.shared.exportCSVInBackground(from: dtos)
+                case .vCard:
+                    url = try await ExportService.shared.exportVCardInBackground(from: dtos)
+                }
+                guard !Task.isCancelled, fileExportGeneration == generation else { return }
+                exportItem = ExportItem(url: url)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, fileExportGeneration == generation else { return }
+                errorMessage = "\(label)に失敗しました: \(error.localizedDescription)"
+            }
+            guard fileExportGeneration == generation else { return }
+            fileExportTask = nil
         }
     }
 
     // MARK: - コンテキストメニューアクション
 
     func shareVCard(card: BusinessCard) {
-        performExport([card], label: "vCardの生成",
-                      export: ExportService.shared.exportVCard)
+        performExport([card], label: "vCardの生成", format: .vCard)
+    }
+
+    func shareVCard(objectURI: URL) {
+        guard let card = card(for: objectURI) else {
+            errorMessage = CardDataTransferError.objectNotFound.localizedDescription
+            return
+        }
+        performExport([card], label: "vCardの生成", format: .vCard)
     }
 
     func saveToContacts(card: BusinessCard) {
-        let dto = card.toExportDTO()
-        Task {
-            do {
-                try await ContactsService.shared.export(card: dto)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+        guard let coordinator = context.persistentStoreCoordinator else {
+            errorMessage = CardDataTransferError.missingPersistentStore.localizedDescription
+            return
         }
+        startContactsExport(
+            request: ContactExportRequest(
+                objectURI: card.objectID.uriRepresentation(),
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+        )
+    }
+
+    private func startContactsExport(request: ContactExportRequest) {
+        let generation = UUID()
+        contactsExportGeneration = generation
+        contactsExportTask?.cancel()
+        contactsExportTask = Task { [weak self] in
+            do {
+                try await ContactsService.shared.export(request: request)
+                guard !Task.isCancelled,
+                      self?.contactsExportGeneration == generation else { return }
+            } catch is CancellationError {
+                guard self?.contactsExportGeneration == generation else { return }
+                self?.contactsExportTask = nil
+                return
+            } catch {
+                guard !Task.isCancelled,
+                      self?.contactsExportGeneration == generation else { return }
+                self?.errorMessage = error.localizedDescription
+            }
+            guard self?.contactsExportGeneration == generation else { return }
+            self?.contactsExportTask = nil
+        }
+    }
+
+    func saveToContacts(objectURI: URL) {
+        guard let coordinator = context.persistentStoreCoordinator else {
+            errorMessage = CardDataTransferError.missingPersistentStore.localizedDescription
+            return
+        }
+        startContactsExport(
+            request: ContactExportRequest(
+                objectURI: objectURI,
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+        )
     }
 
     // MARK: - 連絡先からインポート
 
-    func importFromContacts() {
+    func importFromContacts() async {
         guard !isImporting else { return }
         isImporting = true
-        Task {
-            defer { isImporting = false }
-            do {
-                let contacts = try await ContactsService.shared.importContacts()
-                var count = 0
-                for contact in contacts {
-                    // 名前・会社・電話・メールがすべて空のエントリはスキップ
-                    let hasName = !contact.lastName.isEmpty || !contact.firstName.isEmpty
-                    let hasInfo = !contact.company.isEmpty || !contact.phone.isEmpty || !contact.email.isEmpty
-                    guard hasName || hasInfo else { continue }
-
-                    let card = BusinessCard(context: context)
-                    card.id         = UUID()
-                    card.lastName   = contact.lastName.isEmpty ? nil : contact.lastName
-                    card.firstName  = contact.firstName.isEmpty ? nil : contact.firstName
-                    card.company    = contact.company.isEmpty ? nil : contact.company
-                    card.department = contact.department.isEmpty ? nil : contact.department
-                    card.title      = contact.title.isEmpty ? nil : contact.title
-                    card.phone      = contact.phone.isEmpty ? nil : contact.phone
-                    card.email      = contact.email.isEmpty ? nil : contact.email
-                    card.address    = contact.address.isEmpty ? nil : contact.address
-                    card.website    = contact.website.isEmpty ? nil : contact.website
-                    card.notes      = contact.notes.isEmpty ? nil : contact.notes
-                    card.imageData  = contact.imageData
-                    card.createdAt  = Date()
-                    card.updatedAt  = Date()
-                    count += 1
-                }
-                try context.save()
-                fetchCards()
-                importResultMessage = "\(count)件の連絡先をインポートしました"
-            } catch {
-                context.rollback()
-                fetchCards()
-                errorMessage = error.localizedDescription
+        defer { isImporting = false }
+        do {
+            let contacts = try await ContactsService.shared.importContacts()
+            try Task.checkCancellation()
+            guard let coordinator = context.persistentStoreCoordinator else {
+                throw CardDataTransferError.missingPersistentStore
             }
+            let count = try await contactImportStoreWriter.insert(
+                contacts: contacts,
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+            try Task.checkCancellation()
+            fetchCards()
+            importResultMessage = "\(count)件の連絡先をインポートしました"
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -755,20 +2295,49 @@ class CardListViewModel: ObservableObject {
         save()
     }
 
+    /// View層は管理オブジェクトを保持せず、安定したobject URIだけを渡す。
+    func deleteCards(objectURIs: Set<URL>) {
+        let resolvedCards = cards(for: objectURIs)
+        guard !resolvedCards.isEmpty else { return }
+        deleteCards(resolvedCards)
+    }
+
     // MARK: - 全削除
 
     func deleteAllCards() {
-        let request = BusinessCard.fetchRequest()
-        do {
-            let all = try context.fetch(request)
-            all.forEach { context.delete($0) }
-            try context.save()
-            fetchCards()
-        } catch {
-            context.rollback()
-            fetchCards()
-            errorMessage = "削除に失敗しました: \(error.localizedDescription)"
+        guard let coordinator = context.persistentStoreCoordinator else {
+            errorMessage = "削除に失敗しました: \(CardDataTransferError.missingPersistentStore.localizedDescription)"
+            return
         }
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let generation = UUID()
+        deleteAllCardsGeneration = generation
+        deleteAllCardsTask?.cancel()
+        deleteAllCardsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await contactImportStoreWriter.deleteAll(
+                    coordinatorReference: coordinatorReference
+                )
+                guard !Task.isCancelled, deleteAllCardsGeneration == generation else { return }
+                fetchCards()
+            } catch is CancellationError {
+                guard deleteAllCardsGeneration == generation else { return }
+                deleteAllCardsTask = nil
+                return
+            } catch {
+                guard !Task.isCancelled, deleteAllCardsGeneration == generation else { return }
+                errorMessage = "削除に失敗しました: \(error.localizedDescription)"
+            }
+            guard deleteAllCardsGeneration == generation else { return }
+            deleteAllCardsTask = nil
+        }
+    }
+
+    /// テストからprivate writerと最終一覧更新の完了を待つ。
+    func waitForPendingDataMutation() async {
+        await deleteAllCardsTask?.value
+        await waitForPendingListUpdate()
     }
 
     // MARK: - 保存

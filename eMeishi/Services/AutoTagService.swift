@@ -58,14 +58,14 @@ class AutoTagService {
     // MARK: - Sendable DTO
 
     /// NSManagedObject（Tag）の代わりにアクター境界を安全に越えられる Sendable 型
-    struct TagInfo: Sendable {
+    nonisolated struct TagInfo: Equatable, Sendable {
         let id: UUID
         let name: String
     }
 
     // MARK: - カード情報構造体
 
-    struct CardInfo {
+    nonisolated struct CardInfo: Equatable, Sendable {
         var company: String = ""
         var department: String = ""
         var title: String = ""

@@ -1,6 +1,19 @@
 import SwiftUI
 import FoundationModels
 
+nonisolated enum CloudZoneResetNotice: Equatable, Sendable {
+    case success
+    case failure(message: String)
+}
+
+nonisolated enum AdvancedSettingsPresentation: Equatable, Sendable {
+    case zoneResetConfirmation
+}
+
+nonisolated enum AdvancedSettingsConfirmationCommit: Equatable, Sendable {
+    case resetCloudZone
+}
+
 // MARK: - 高度な設定画面
 
 struct AdvancedSettingsView: View {
@@ -9,9 +22,11 @@ struct AdvancedSettingsView: View {
     @ObservedObject private var llm = LocalLLMService.shared
     @ObservedObject private var zoneReset = CloudKitZoneResetService.shared
     @Binding var modelError: String?
-    @State private var showZoneResetConfirm = false
-    @State private var showZoneResetResult = false
-    @State private var zoneResetSucceeded = false
+    @State private var presentationState = QueuedPresentationState<AdvancedSettingsPresentation>()
+    @State private var confirmationCommitState = DismissalCommitState<AdvancedSettingsConfirmationCommit>()
+    @State private var zoneResetNotice: CloudZoneResetNotice?
+    @State private var zoneResetTask: Task<Void, Never>?
+    @State private var zoneResetTaskGate = SecondaryViewTaskGate()
 
     var body: some View {
         List {
@@ -83,7 +98,7 @@ struct AdvancedSettingsView: View {
             // iCloud 同期のトラブルシューティング
             Section {
                 Button(role: .destructive) {
-                    showZoneResetConfirm = true
+                    presentationState.request(.zoneResetConfirmation)
                 } label: {
                     if zoneReset.isResetting {
                         HStack(spacing: 8) {
@@ -95,8 +110,20 @@ struct AdvancedSettingsView: View {
                     }
                 }
                 .disabled(zoneReset.isResetting)
-                if let err = zoneReset.lastError {
-                    Text(err).font(.caption).foregroundStyle(.red)
+                if let zoneResetNotice {
+                    switch zoneResetNotice {
+                    case .success:
+                        Label(
+                            "iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にしてください。",
+                            systemImage: "checkmark.circle"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    case .failure(let message):
+                        Label(message, systemImage: "exclamationmark.icloud")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } header: {
                 Text("iCloud")
@@ -108,32 +135,88 @@ struct AdvancedSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(
             "iCloud同期をリセットしますか？",
-            isPresented: $showZoneResetConfirm,
+            isPresented: zoneResetConfirmationBinding,
             titleVisibility: .visible
         ) {
             Button("リセット", role: .destructive) {
-                Task {
-                    let ok = await zoneReset.resetCoreDataZone()
-                    zoneResetSucceeded = ok
-                    if ok { settings.iCloudSyncEnabled = false }
-                    showZoneResetResult = true
-                }
+                scheduleConfirmationCommit(.resetCloudZone)
             }
         } message: {
             Text("この操作は取り消せません。実行後はアプリを再起動する必要があります。")
         }
-        .alert(
-            zoneResetSucceeded ? "リセットしました" : "リセットに失敗しました",
-            isPresented: $showZoneResetResult
-        ) {
-            Button("OK") {}
-        } message: {
-            if zoneResetSucceeded {
-                Text("iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にすると、ローカルのデータがクラウドに再アップロードされます。")
+        .background {
+            PresentationDismissalObserver(
+                activeID: presentationState.active?.id,
+                dismissingID: presentationState.dismissing?.id,
+                onDismissalCompleted: completeConfirmationDismissal
+            )
+            .frame(width: 0, height: 0)
+        }
+        .onDisappear(perform: cancelViewOwnedTasks)
+    }
+
+    private var zoneResetConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { presentationState.active?.destination == .zoneResetConfirmation },
+            set: { isPresented in
+                guard !isPresented,
+                      let active = presentationState.active,
+                      active.destination == .zoneResetConfirmation else { return }
+                presentationState.clearActive(requestID: active.id)
+            }
+        )
+    }
+
+    /// 破壊的処理は確認UIの背後で開始せず、UIKitのdismiss完了後まで保留する。
+    private func scheduleConfirmationCommit(_ action: AdvancedSettingsConfirmationCommit) {
+        guard let active = presentationState.active,
+              active.destination == .zoneResetConfirmation,
+              confirmationCommitState.schedule(action, for: active.id) else { return }
+        presentationState.clearActive(requestID: active.id)
+    }
+
+    private func completeConfirmationDismissal(requestID: UUID) {
+        let commit = confirmationCommitState.take(afterDismissing: requestID)
+        guard commit == .resetCloudZone else {
+            presentationState.presentNext(afterDismissing: requestID)
+            return
+        }
+        presentationState.presentNext(afterDismissing: requestID)
+        startZoneReset()
+    }
+
+    private func startZoneReset() {
+        guard !zoneReset.isResetting,
+              let operationID = zoneResetTaskGate.begin() else { return }
+        zoneResetNotice = nil
+
+        // 確定済みのCloudKit zone削除は中途半端に止めない。
+        // サービス処理は独立して完了させ、画面所有Taskは結果の反映だけを監視する。
+        let serviceTask = Task { @MainActor in
+            await zoneReset.resetCoreDataZone()
+        }
+        zoneResetTask = Task { @MainActor in
+            let succeeded = await serviceTask.value
+            guard !Task.isCancelled,
+                  zoneResetTaskGate.finish(operationID) else { return }
+            zoneResetTask = nil
+            if succeeded {
+                settings.iCloudSyncEnabled = false
+                zoneResetNotice = .success
             } else {
-                Text(zoneReset.lastError ?? "時間をおいて再度お試しください。")
+                zoneResetNotice = .failure(
+                    message: zoneReset.lastError ?? "時間をおいて再度お試しください。"
+                )
             }
         }
+    }
+
+    private func cancelViewOwnedTasks() {
+        zoneResetTaskGate.cancel()
+        zoneResetTask?.cancel()
+        zoneResetTask = nil
+        confirmationCommitState.removeAll()
+        presentationState.removeAll()
     }
 
     // MARK: - 読み取り方法行
