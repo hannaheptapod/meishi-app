@@ -563,7 +563,6 @@ actor CardListQuerySnapshotLoader {
         var propertiesToFetch = scalarPropertyKeys.map { $0 as Any }
         propertiesToFetch.append(objectIDExpression)
         request.propertiesToFetch = propertiesToFetch
-        request.fetchBatchSize = 100
     }
 
     private nonisolated static let scalarPropertyKeys = [
@@ -1052,13 +1051,14 @@ class CardListViewModel: ObservableObject {
         // CloudKitマージや別コンテキスト保存も、同じ表示スナップショットへ反映する。
         // Main Queue Contextの変更だけを受け、短時間の連続通知は1回の再取得へまとめる。
         NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange)
+            // private contextのreset通知も投稿元queueで同期配信される。
+            // @MainActorのselfへ触れるfilterより前にMain RunLoopへ移す。
+            .receive(on: RunLoop.main)
             .filter { [weak self] notification in
                 guard let self else { return false }
                 return (notification.object as? NSManagedObjectContext) === self.context
             }
             .sink { [weak self] notification in
-                // mainQueue contextの通知は同じqueueで同期配信されるため、RunLoopへ再予約しない。
-                // 保存直後にrefresh待機へ入っても、必ず対応Taskを捕捉できる。
                 self?.scheduleContextRefresh(for: notification)
             }
             .store(in: &cancellables)
