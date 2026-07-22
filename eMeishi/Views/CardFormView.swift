@@ -1,3 +1,4 @@
+import CoreData
 import SwiftUI
 import UIKit
 
@@ -9,7 +10,7 @@ nonisolated struct CardFormBatchProgress: Equatable, Sendable {
 nonisolated enum CardFormMode: Equatable, Sendable {
     case create
     case edit
-    case ocrReview(batchProgress: CardFormBatchProgress?)
+    case ocrReview
 }
 
 // 名刺の新規作成・編集フォーム画面
@@ -53,7 +54,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = onSkip
         self.batchProgress = batchProgress
-        self.mode = .ocrReview(batchProgress: batchProgress)
+        self.mode = .ocrReview
     }
 
     // MARK: - 初期化（クロップ済み画像からOCR・矩形検出スキップ）
@@ -64,7 +65,7 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = onSkip
         self.batchProgress = batchProgress
-        self.mode = .ocrReview(batchProgress: batchProgress)
+        self.mode = .ocrReview
     }
 
     // MARK: - 初期化（外部から ViewModel を注入）
@@ -75,13 +76,18 @@ struct CardFormView: View {
         self.onSave = onSave
         self.onSkip = nil
         self.batchProgress = nil
-        self.mode = .ocrReview(batchProgress: nil)
+        self.mode = .ocrReview
     }
 
     // MARK: - 初期化（既存カードの編集）
 
     init(card: BusinessCard, onSave: @escaping () -> Void) {
-        _viewModel = StateObject(wrappedValue: CardFormViewModel(card: card))
+        _viewModel = StateObject(
+            wrappedValue: CardFormViewModel(
+                card: card,
+                context: card.managedObjectContext
+            )
+        )
         self.onSave = onSave
         self.onSkip = nil
         self.batchProgress = nil
@@ -99,7 +105,7 @@ struct CardFormView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxHeight: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(.rect(cornerRadius: AppTheme.imageCornerRadius, style: .continuous))
                     }
                 }
 
@@ -128,48 +134,52 @@ struct CardFormView: View {
 
                 if !viewModel.isProcessingOCR {
                 Section("氏名") {
-                    TextField("姓", text: $viewModel.lastName)
-                        .textContentType(.familyName)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .lastName)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .firstName }
-                    if !isOCRReview {
-                        TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
-                            .textInputAutocapitalization(.never)
+                    LabeledContent("姓") {
+                        TextField("姓", text: $viewModel.lastName)
+                            .textContentType(.familyName)
                             .autocorrectionDisabled()
-                            .focused($focusedField, equals: .lastNameReading)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .lastName)
                             .submitLabel(.next)
-                            .onSubmit { focusedField = .firstName }
+                            .onSubmit { focusedField = .lastNameReading }
                     }
-                    TextField("名", text: $viewModel.firstName)
-                        .textContentType(.givenName)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .firstName)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .company }
-                    if !isOCRReview {
-                        TextField("名（ふりがな）", text: $viewModel.firstNameReading)
-                            .textInputAutocapitalization(.never)
+                    readingRow(
+                        text: $viewModel.lastNameReading,
+                        focus: .lastNameReading,
+                        nextFocus: .firstName
+                    )
+                    LabeledContent("名") {
+                        TextField("名", text: $viewModel.firstName)
+                            .textContentType(.givenName)
                             .autocorrectionDisabled()
-                            .focused($focusedField, equals: .firstNameReading)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .firstName)
                             .submitLabel(.next)
-                            .onSubmit { focusedField = .company }
+                            .onSubmit { focusedField = .firstNameReading }
                     }
+                    readingRow(
+                        text: $viewModel.firstNameReading,
+                        focus: .firstNameReading,
+                        nextFocus: .company
+                    )
                 }
 
                 Section("所属") {
-                    TextField("会社名", text: $viewModel.company)
-                        .textContentType(.organizationName)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .company)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = isOCRReview ? .email : .companyReading }
-                    if !isOCRReview {
-                        TextField("会社名（ふりがな）", text: $viewModel.companyReading)
-                            .textInputAutocapitalization(.never)
+                    LabeledContent("会社名") {
+                        TextField("会社名", text: $viewModel.company)
+                            .textContentType(.organizationName)
                             .autocorrectionDisabled()
-                            .focused($focusedField, equals: .companyReading)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .company)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .companyReading }
+                    }
+                    readingRow(
+                        text: $viewModel.companyReading,
+                        focus: .companyReading,
+                        nextFocus: nil
+                    )
+                    if !isOCRReview {
                         TextField("部署", text: $viewModel.department)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .department)
@@ -192,8 +202,10 @@ struct CardFormView: View {
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
                                         .foregroundStyle(.red)
+                                        .frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.borderless)
+                                .accessibilityLabel("電話番号\(i + 1)を削除")
                             }
                         }
                     }
@@ -216,30 +228,6 @@ struct CardFormView: View {
                 if isOCRReview {
                     Section {
                         DisclosureGroup(isExpanded: $isShowingAdditionalFields) {
-                            TextField("姓（ふりがな）", text: $viewModel.lastNameReading)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            ReadingCandidatePicker(
-                                candidates: viewModel.readingCandidates(for: .lastName),
-                                selectedReading: viewModel.lastNameReading,
-                                onSelect: viewModel.selectReadingCandidate
-                            )
-                            TextField("名（ふりがな）", text: $viewModel.firstNameReading)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            ReadingCandidatePicker(
-                                candidates: viewModel.readingCandidates(for: .firstName),
-                                selectedReading: viewModel.firstNameReading,
-                                onSelect: viewModel.selectReadingCandidate
-                            )
-                            TextField("会社名（ふりがな）", text: $viewModel.companyReading)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            ReadingCandidatePicker(
-                                candidates: viewModel.readingCandidates(for: .company),
-                                selectedReading: viewModel.companyReading,
-                                onSelect: viewModel.selectReadingCandidate
-                            )
                             TextField("部署", text: $viewModel.department)
                             TextField("役職", text: $viewModel.title)
                             TextField("住所", text: $viewModel.address)
@@ -256,41 +244,22 @@ struct CardFormView: View {
                                         .foregroundStyle(.secondary)
                                     FlowLayout(spacing: 6) {
                                         ForEach(listViewModel.allTags) { tag in
-                                            let selected = viewModel.selectedTags.contains(tag.id ?? UUID())
-                                            Button {
-                                                guard let id = tag.id else { return }
-                                                if selected {
-                                                    viewModel.selectedTags.remove(id)
-                                                } else {
-                                                    viewModel.selectedTags.insert(id)
+                                            if let id = tag.id {
+                                                let selected = viewModel.selectedTags.contains(id)
+                                                TagSelectionChip(tag: tag, isSelected: selected) {
+                                                    if selected {
+                                                        viewModel.selectedTags.remove(id)
+                                                    } else {
+                                                        viewModel.selectedTags.insert(id)
+                                                    }
                                                 }
-                                            } label: {
-                                                HStack(spacing: 4) {
-                                                    if selected { Image(systemName: "checkmark").font(.caption2) }
-                                                    Circle().fill(tag.color).frame(width: 8, height: 8)
-                                                    Text(tag.tagName).font(.caption)
-                                                }
-                                                .padding(.horizontal, 10)
-                                                .padding(.vertical, 6)
-                                                .background(
-                                                    selected ? tag.color.opacity(0.18) : AppTheme.auxiliarySurface,
-                                                    in: .capsule
-                                                )
                                             }
-                                            .buttonStyle(.plain)
                                         }
                                     }
                                 }
                             }
                         } label: {
-                            HStack {
-                                Text("その他の項目")
-                                if !viewModel.readingCandidates.isEmpty {
-                                    Text("読み候補 \(viewModel.readingCandidates.count)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                            Text("その他の項目")
                         }
                     }
                 }
@@ -310,7 +279,9 @@ struct CardFormView: View {
                                     .foregroundStyle(.secondary)
                             }
                             FlowLayout(spacing: 6) {
-                                ForEach(listViewModel.allTags.filter { viewModel.suggestedTagIDs.contains($0.id ?? UUID()) }) { tag in
+                                ForEach(listViewModel.allTags.filter { tag in
+                                    tag.id.map { viewModel.suggestedTagIDs.contains($0) } ?? false
+                                }) { tag in
                                     HStack(spacing: 4) {
                                         // 承認ボタン
                                         Button {
@@ -328,7 +299,7 @@ struct CardFormView: View {
                                                     .font(.caption)
                                             }
                                             .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
+                                            .frame(minHeight: 44)
                                             .background(tag.color.opacity(0.12))
                                             .foregroundStyle(tag.color)
                                             .clipShape(Capsule())
@@ -338,6 +309,7 @@ struct CardFormView: View {
                                             )
                                         }
                                         .buttonStyle(.plain)
+                                        .accessibilityLabel("\(tag.tagName)を追加")
                                         // 却下ボタン
                                         Button {
                                             if let id = tag.id {
@@ -347,8 +319,10 @@ struct CardFormView: View {
                                             Image(systemName: "xmark")
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
+                                                .frame(width: 44, height: 44)
                                         }
                                         .buttonStyle(.plain)
+                                        .accessibilityLabel("\(tag.tagName)の提案を閉じる")
                                     }
                                 }
                             }
@@ -370,34 +344,16 @@ struct CardFormView: View {
                     } else {
                         FlowLayout(spacing: 6) {
                             ForEach(listViewModel.allTags) { tag in
-                                let selected = viewModel.selectedTags.contains(tag.id ?? UUID())
-                                Button {
-                                    if let id = tag.id {
+                                if let id = tag.id {
+                                    let selected = viewModel.selectedTags.contains(id)
+                                    TagSelectionChip(tag: tag, isSelected: selected) {
                                         if selected {
                                             viewModel.selectedTags.remove(id)
                                         } else {
                                             viewModel.selectedTags.insert(id)
                                         }
                                     }
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        if selected {
-                                            Image(systemName: "checkmark")
-                                                .font(.caption2)
-                                        }
-                                        Circle()
-                                            .fill(tag.color)
-                                            .frame(width: 8, height: 8)
-                                        Text(tag.tagName)
-                                            .font(.caption)
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(selected ? tag.color.opacity(0.2) : Color(.systemGray6))
-                                    .foregroundStyle(selected ? tag.color : .secondary)
-                                    .clipShape(Capsule())
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -519,5 +475,23 @@ struct CardFormView: View {
     private var isOCRReview: Bool {
         if case .ocrReview = mode { return true }
         return false
+    }
+
+    @ViewBuilder
+    private func readingRow(
+        text: Binding<String>,
+        focus: FormField,
+        nextFocus: FormField?
+    ) -> some View {
+        HStack {
+            Text("ふりがな")
+            TextField("未入力", text: text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
+                .focused($focusedField, equals: focus)
+                .submitLabel(nextFocus == nil ? .done : .next)
+                .onSubmit { focusedField = nextFocus }
+        }
     }
 }

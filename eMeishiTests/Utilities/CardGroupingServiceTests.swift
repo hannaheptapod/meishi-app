@@ -2,6 +2,21 @@ import Testing
 import CoreData
 @testable import eMeishi
 
+struct SectionIndexSelectionTests {
+    @Test func clampsStaleIndexAfterItemsShrink() {
+        let result = SectionIndexSelection.adjustedIndex(
+            current: 12,
+            itemCount: 3,
+            delta: -1
+        )
+        #expect(result == 1)
+    }
+
+    @Test func returnsNilWhenNoSectionsExist() {
+        #expect(SectionIndexSelection.adjustedIndex(current: 4, itemCount: 0, delta: 1) == nil)
+    }
+}
+
 // MARK: - テスト用ヘルパー
 
 @MainActor

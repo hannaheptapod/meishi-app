@@ -11,6 +11,8 @@ struct AISearchChatView: View {
     @State private var messages: [AISearchService.ChatMessage] = []
     @State private var isSearching = false
     @State private var didSendInitialQuery = false
+    @State private var suggestions: [String] = []
+    @State private var searchTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -28,11 +30,18 @@ struct AISearchChatView: View {
                     }
                     ToolbarItem(placement: .primaryAction) {
                         if !messages.isEmpty {
-                            Button("クリア") { messages.removeAll() }
+                            Button("クリア") {
+                                searchTask?.cancel()
+                                isSearching = false
+                                messages.removeAll()
+                            }
                         }
                     }
                 }
                 .onAppear {
+                    if suggestions.isEmpty {
+                        suggestions = buildSuggestions()
+                    }
                     // スクリーンショット撮影モード：モック会話を注入
                     if ScreenshotMode.isActive,
                        ScreenshotMode.startScreen == "AIChat",
@@ -45,6 +54,9 @@ struct AISearchChatView: View {
                         inputText = initialQuery
                         sendMessage()
                     }
+                }
+                .onDisappear {
+                    searchTask?.cancel()
                 }
         }
     }
@@ -96,7 +108,6 @@ struct AISearchChatView: View {
     // MARK: - ウェルカム
 
     private var welcomeSection: some View {
-        let suggestions = buildSuggestions()
         return Group {
             if !suggestions.isEmpty {
                 Section {
@@ -172,9 +183,10 @@ struct AISearchChatView: View {
             .font(.body)
 
         if !message.matchedCardIDs.isEmpty {
+            let matchedIDs = Set(message.matchedCardIDs)
             let matchedCards = listViewModel.cards.filter { card in
                 guard let id = card.id else { return false }
-                return message.matchedCardIDs.contains(id)
+                return matchedIDs.contains(id)
             }
 
             Text("\(matchedCards.count)件見つかりました")
@@ -212,12 +224,13 @@ struct AISearchChatView: View {
         inputText = ""
         isSearching = true
 
-        Task {
+        searchTask?.cancel()
+        searchTask = Task {
             let response = await AISearchService.shared.search(
                 query: query,
-                cards: listViewModel.cards,
-                conversationHistory: messages
+                cards: listViewModel.cards
             )
+            guard !Task.isCancelled else { return }
             messages.append(response)
             isSearching = false
         }

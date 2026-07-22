@@ -76,19 +76,28 @@ struct TagManagementView: View {
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            .overlay {
+                if viewModel.allTags.isEmpty {
+                    ContentUnavailableView(
+                        "タグがありません",
+                        systemImage: "tag",
+                        description: Text("右上の追加ボタンからタグを作成できます。")
+                    )
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    EditButton()
+                    Button("完了") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if !viewModel.allTags.isEmpty {
+                        EditButton()
+                    }
                     Button {
                         isShowingCreateSheet = true
                     } label: {
                         Label("タグを追加", systemImage: "plus")
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完了") { dismiss() }
                 }
             }
             .confirmationDialog(
@@ -135,9 +144,10 @@ struct TagManagementView: View {
                                 if selected.wrappedValue == preset.hex {
                                     Image(systemName: "checkmark")
                                         .font(.caption.bold())
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(preset.hex == "#FFCC00" ? .black : .white)
                                 }
                             }
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(preset.name)
@@ -147,11 +157,6 @@ struct TagManagementView: View {
             .padding(.vertical, 4)
         }
     }
-
-    // インスタンスメソッド版（body 内で呼ぶ用）
-    private func colorPicker(selected: Binding<String>) -> some View {
-        Self.colorPicker(selected: selected)
-    }
 }
 
 private struct TagCreateSheet: View {
@@ -159,6 +164,7 @@ private struct TagCreateSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var color = "#007AFF"
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -181,14 +187,26 @@ private struct TagCreateSheet: View {
                     Button("追加") {
                         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
-                        viewModel.createTag(name: trimmed, colorHex: color)
-                        dismiss()
+                        switch viewModel.createTag(name: trimmed, colorHex: color) {
+                        case .success:
+                            dismiss()
+                        case .failure(let message):
+                            saveError = message
+                        }
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
         .presentationDetents([.medium])
+        .alert("タグを追加できません", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
     }
 }
 
@@ -202,6 +220,13 @@ struct TagEditSheet: View {
 
     @State private var editName: String = ""
     @State private var editColor: String = ""
+    @State private var saveError: String?
+
+    init(tag: Tag) {
+        self.tag = tag
+        _editName = State(initialValue: tag.tagName)
+        _editColor = State(initialValue: tag.colorHex ?? "#007AFF")
+    }
 
     var body: some View {
         NavigationStack {
@@ -225,17 +250,25 @@ struct TagEditSheet: View {
                     Button("保存") {
                         let name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !name.isEmpty else { return }
-                        viewModel.updateTag(tag, name: name, colorHex: editColor)
-                        dismiss()
+                        switch viewModel.updateTag(tag, name: name, colorHex: editColor) {
+                        case .success:
+                            dismiss()
+                        case .failure(let message):
+                            saveError = message
+                        }
                     }
                     .fontWeight(.semibold)
                     .disabled(editName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .onAppear {
-                editName = tag.tagName
-                editColor = tag.colorHex ?? "#007AFF"
-            }
+        }
+        .alert("タグを保存できません", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
         }
     }
 }

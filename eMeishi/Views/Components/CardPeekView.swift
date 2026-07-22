@@ -8,6 +8,10 @@ struct CardPeekView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.large) {
             CardImageHero(
                 imageData: card.imageData,
+                cacheIdentifier: CardImageCacheKey.businessCard(
+                    card,
+                    dataCount: card.imageData?.count ?? 0
+                ),
                 initials: initials,
                 maximumHeight: 250,
                 onTap: nil
@@ -39,7 +43,7 @@ struct CardPeekView: View {
             }
         }
         .padding(AppTheme.Spacing.large)
-        .frame(width: 390, alignment: .leading)
+        .frame(minWidth: 280, idealWidth: 360, maxWidth: 390, alignment: .leading)
         .background(AppTheme.background)
         .accessibilityElement(children: .contain)
     }

@@ -28,6 +28,40 @@ final class EMeishiUITests: XCTestCase {
         app.descendants(matching: .any)["cardRow_\(name)"]
     }
 
+    private var cardSearchField: XCUIElement {
+        app.searchFields.firstMatch
+    }
+
+    private var nativeTabBar: XCUIElement {
+        app.tabBars.firstMatch
+    }
+
+    private var cardsTab: XCUIElement {
+        nativeTabBar.buttons["名刺"]
+    }
+
+    private var insightsTab: XCUIElement {
+        nativeTabBar.buttons["インサイト"]
+    }
+
+    private var addButton: XCUIElement {
+        app.buttons["cardAddButton"]
+    }
+
+    private var splitAddButton: XCUIElement {
+        app.buttons["splitCardAddButton"]
+    }
+
+    private var sortFilterMenu: XCUIElement {
+        app.buttons
+            .matching(NSPredicate(
+                format: "identifier == %@ OR label == %@",
+                "sortFilterMenu",
+                "並べ替え・フィルター"
+            ))
+            .firstMatch
+    }
+
     /// LazyVStack でまだ生成されていない行を、限定回数スクロールして探す。
     private func waitForCardRow(_ name: String, maxSwipes: Int = 3) -> Bool {
         let row = cardRow(name)
@@ -49,12 +83,13 @@ final class EMeishiUITests: XCTestCase {
         app.sheets.count > 0
     }
 
-    /// SwiftUI Menu は端末によって identifier が伝播しない場合があるため、表示ラベルも使う。
+    /// UIMenu は identifier がUIテストへ伝播しない場合があるため、表示ラベルも使う。
     private func waitForMenuItem(identifier: String, label: String) -> Bool {
         let predicate = NSPredicate(
-            format: "identifier == %@ OR label == %@",
+            format: "identifier == %@ OR label == %@ OR label BEGINSWITH %@",
             identifier,
-            label
+            label,
+            "\(label), "
         )
         return app.descendants(matching: .any)
             .matching(predicate)
@@ -112,27 +147,82 @@ final class EMeishiUITests: XCTestCase {
         let selectButton = app.buttons["selectButton"]
         XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
 
-        let tabBar = app.tabBars.firstMatch
-        XCTAssertTrue(tabBar.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(nativeTabBar.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardsTab.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(insightsTab.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardsTab.isSelected)
 
-        // 標準Tab Bar中央の追加
-        let addButton = tabBar.buttons["追加"]
-        XCTAssertTrue(addButton.exists)
-        XCTAssertLessThan(abs(addButton.frame.midX - app.frame.midX), 4, "追加ボタンは標準Tab Bar中央に配置する")
+        // 標準Tab Barと独立Glass追加ボタンを左右へ分離する
+        XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
+        let navigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
+        XCTAssertLessThan(navigationTabsFrame.maxX, addButton.frame.minX)
+        XCTAssertGreaterThan(addButton.frame.maxX, app.frame.width * 0.8)
+        XCTAssertEqual(
+            navigationTabsFrame.height,
+            addButton.frame.height,
+            accuracy: 1,
+            "展開時の追加ボタンと標準タブ操作面の高さを揃える"
+        )
+        XCTAssertEqual(
+            navigationTabsFrame.midY,
+            addButton.frame.midY,
+            accuracy: 1,
+            "追加ボタンと標準タブ操作面の中心Yを揃える"
+        )
+        XCTAssertEqual(navigationTabsFrame.minY, addButton.frame.minY, accuracy: 1)
+        XCTAssertEqual(navigationTabsFrame.maxY, addButton.frame.maxY, accuracy: 1)
+
+        // 通常検索と自然言語検索は1つの標準検索欄を共有し、独立ボタンを置かない
+        XCTAssertTrue(cardSearchField.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(app.buttons["aiSearchButton"].exists)
 
         // 3点メニュー
         let ellipsisMenu = app.buttons["ellipsisMenu"]
         XCTAssertTrue(ellipsisMenu.exists)
 
-        XCTAssertTrue(tabBar.buttons["一覧"].exists)
-        XCTAssertTrue(tabBar.buttons["めくる"].exists)
-        XCTAssertTrue(tabBar.buttons["インサイト"].exists)
-        XCTAssertTrue(tabBar.buttons["設定"].exists)
+        XCTAssertFalse(nativeTabBar.buttons["めくる"].exists)
+        XCTAssertFalse(nativeTabBar.buttons["設定"].exists)
     }
 
     @MainActor
-    func testCenterAddOpensAdditionChoices() throws {
-        let addButton = app.tabBars.buttons["追加"]
+    func testNativeTabBarSupportsDragSelection() throws {
+        XCTAssertTrue(cardsTab.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(insightsTab.waitForExistence(timeout: Self.shortTimeout))
+
+        cardsTab.press(forDuration: 0.15, thenDragTo: insightsTab)
+
+        XCTAssertTrue(
+            app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout),
+            "純正タブバー上のドラッグでインサイトへ切り替わるべき"
+        )
+        XCTAssertTrue(insightsTab.isSelected)
+    }
+
+    @MainActor
+    func testForegroundControlsDoNotActivateCardsBehindThem() throws {
+        XCTAssertTrue(cardSearchField.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardsTab.waitForExistence(timeout: Self.shortTimeout))
+
+        // コンテンツを前面操作面の背後までスクロールさせた状態で検証する。
+        app.swipeUp()
+        app.swipeUp()
+
+        cardSearchField.tap()
+        XCTAssertFalse(
+            app.navigationBars.staticTexts["名刺詳細"].exists,
+            "検索欄の背面にあるカードを開かない"
+        )
+
+        cardsTab.tap()
+        XCTAssertTrue(cardsTab.isSelected)
+        XCTAssertFalse(
+            app.navigationBars.staticTexts["名刺詳細"].exists,
+            "選択中タブの背面にあるカードを開かない"
+        )
+    }
+
+    @MainActor
+    func testTrailingAddOpensAdditionChoices() throws {
         XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
         addButton.tap()
 
@@ -143,16 +233,43 @@ final class EMeishiUITests: XCTestCase {
     }
 
     @MainActor
-    func testBrowseTabAndDetailRootBarVisibility() throws {
-        app.tabBars.buttons["めくる"].tap()
-        XCTAssertTrue(app.navigationBars.staticTexts["めくる"].waitForExistence(timeout: Self.shortTimeout))
+    func testTrailingAddPreservesPreviouslySelectedTab() throws {
+        XCTAssertTrue(insightsTab.waitForExistence(timeout: Self.shortTimeout))
+        insightsTab.tap()
+        XCTAssertTrue(insightsTab.isSelected)
 
-        app.tabBars.buttons["一覧"].tap()
-        let card = cardRow("山田 太郎")
-        XCTAssertTrue(card.waitForExistence(timeout: Self.defaultTimeout))
-        card.tap()
-        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
-        XCTAssertFalse(app.tabBars.firstMatch.isHittable, "詳細では標準Tab Barを操作可能な状態で表示しない")
+        XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
+        addButton.tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(insightsTab.isSelected, "追加画面を開いても直前のタブを維持するべき")
+    }
+
+    @MainActor
+    func testUnifiedSearchUsesOneStandardSearchField() throws {
+        let searchField = cardSearchField
+        XCTAssertTrue(searchField.waitForExistence(timeout: Self.shortTimeout))
+        searchField.tap()
+        searchField.typeText("山田")
+        searchField.typeText("\n")
+
+        XCTAssertTrue(cardRow("山田 太郎").waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(app.buttons["aiSearchButton"].exists)
+    }
+
+    @MainActor
+    func testUnifiedSearchExplainsAIFallbackBeforeSubmit() throws {
+        let searchField = cardSearchField
+        XCTAssertTrue(searchField.waitForExistence(timeout: Self.shortTimeout))
+        searchField.tap()
+        searchField.typeText("東京の営業")
+
+        // UIテスト環境はPro権限なし。検索確定でAI検索の案内へ進むことを事前表示する。
+        XCTAssertTrue(app.staticTexts["AI検索を利用できます"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(
+            app.staticTexts["キーボードの「検索」を押すと、Pro機能のAI検索をご案内します。"]
+                .waitForExistence(timeout: Self.shortTimeout)
+        )
+        XCTAssertFalse(app.buttons["aiSearchButton"].exists)
     }
 
     // MARK: - 選択モード
@@ -169,27 +286,99 @@ final class EMeishiUITests: XCTestCase {
 
         // 一括削除ボタンが表示される
         XCTAssertTrue(app.buttons["bulkDeleteButton"].exists)
-        XCTAssertFalse(app.tabBars.firstMatch.isHittable, "選択操作用bottomBarと標準Tab Barを重ねない")
+        XCTAssertFalse(nativeTabBar.isHittable)
     }
 
     @MainActor
-    func testFilterControlsScrollAwayWithList() throws {
-        let filterBar = app.descendants(matching: .any)["filterControlBar"]
-        XCTAssertTrue(filterBar.waitForExistence(timeout: Self.shortTimeout))
-        XCTAssertTrue(filterBar.isHittable)
+    func testSortFilterMenuStaysInTopToolbarWhileScrolling() throws {
+        XCTAssertTrue(sortFilterMenu.waitForExistence(timeout: Self.shortTimeout))
+        let selectButton = app.buttons["selectButton"]
+        XCTAssertTrue(selectButton.waitForExistence(timeout: Self.shortTimeout))
+        let moreMenu = app.buttons["ellipsisMenu"]
+        XCTAssertTrue(moreMenu.waitForExistence(timeout: Self.shortTimeout))
+        let searchField = cardSearchField
+        XCTAssertTrue(searchField.waitForExistence(timeout: Self.shortTimeout))
+        let initialSortFrame = sortFilterMenu.frame
+        XCTAssertEqual(
+            initialSortFrame.width,
+            initialSortFrame.height,
+            accuracy: 1,
+            "並べ替え・フィルターは真円のタップ領域にする"
+        )
+        XCTAssertEqual(
+            initialSortFrame.midY,
+            selectButton.frame.midY,
+            accuracy: 2,
+            "並べ替え・フィルターは選択と同じ列へ置く"
+        )
+        XCTAssertLessThan(
+            initialSortFrame.maxX,
+            selectButton.frame.minX,
+            "並べ替え・フィルターを選択の左へ置く"
+        )
+        XCTAssertLessThan(
+            selectButton.frame.maxX,
+            moreMenu.frame.minX,
+            "三点メニューは選択の右へ置く"
+        )
+        XCTAssertEqual(
+            initialSortFrame.midY,
+            moreMenu.frame.midY,
+            accuracy: 2,
+            "右上の3操作は同じ列へ置く"
+        )
+        XCTAssertLessThanOrEqual(
+            initialSortFrame.maxY,
+            searchField.frame.minY,
+            "並べ替え・フィルターを検索欄とは別の上部ツールバーへ置く"
+        )
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "sort-filter-toolbar"
+        attachment.lifetime = .keepAlways
+        add(attachment)
 
         app.swipeUp()
         app.swipeUp()
 
-        XCTAssertFalse(filterBar.isHittable, "フィルターだけを上端へ固定して検索バーと重ねない")
+        XCTAssertTrue(sortFilterMenu.isHittable, "右上メニューはスクロール後も操作できる")
+        XCTAssertEqual(sortFilterMenu.frame.midY, initialSortFrame.midY, accuracy: 2)
+        XCTAssertEqual(sortFilterMenu.frame.midX, initialSortFrame.midX, accuracy: 2)
     }
 
     @MainActor
-    func testVisibleRowsDoNotOverlapStandardTabBarAtBottom() throws {
-        let tabBar = app.tabBars.firstMatch
-        XCTAssertTrue(tabBar.waitForExistence(timeout: Self.shortTimeout))
+    func testVisibleRowsDoNotOverlapRootNavigationAtBottom() throws {
+        XCTAssertTrue(nativeTabBar.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardsTab.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
+        let initialNavigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
+        let initialAddButtonFrame = addButton.frame
 
         for _ in 0..<6 { app.swipeUp() }
+
+        // スクロール後もTab Barを縮小せず、独立追加ボタンとの配置を維持する。
+        XCTAssertTrue(addButton.isHittable, "スクロール後も独立追加ボタンが操作できる")
+        let navigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
+        XCTAssertLessThan(navigationTabsFrame.maxX, addButton.frame.minX)
+        XCTAssertEqual(
+            navigationTabsFrame.height,
+            addButton.frame.height,
+            accuracy: 1,
+            "スクロール後も追加ボタンと標準タブ操作面の高さを揃える"
+        )
+        XCTAssertEqual(
+            navigationTabsFrame.midY,
+            addButton.frame.midY,
+            accuracy: 1,
+            "スクロール後も追加ボタンと標準タブ操作面の中心Yを揃える"
+        )
+        XCTAssertEqual(navigationTabsFrame.minY, addButton.frame.minY, accuracy: 1)
+        XCTAssertEqual(navigationTabsFrame.maxY, addButton.frame.maxY, accuracy: 1)
+        XCTAssertEqual(navigationTabsFrame.height, initialNavigationTabsFrame.height, accuracy: 2)
+        XCTAssertEqual(navigationTabsFrame.midY, initialNavigationTabsFrame.midY, accuracy: 2)
+        XCTAssertEqual(addButton.frame.height, initialAddButtonFrame.height, accuracy: 2)
+        XCTAssertEqual(addButton.frame.midY, initialAddButtonFrame.midY, accuracy: 2)
+        let navigationTop = min(nativeTabBar.frame.minY, addButton.frame.minY)
 
         let visibleRows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'cardRow_'"))
@@ -199,10 +388,13 @@ final class EMeishiUITests: XCTestCase {
             guard row.isHittable else { continue }
             XCTAssertLessThanOrEqual(
                 row.frame.maxY,
-                tabBar.frame.minY + 1,
-                "最終行まで標準Tab Barの上へスクロールできる"
+                navigationTop + 1,
+                "最終行までルートナビゲーションの上へスクロールできる"
             )
         }
+
+        addButton.tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
     }
 
     @MainActor
@@ -261,6 +453,19 @@ final class EMeishiUITests: XCTestCase {
 
         // 詳細画面のナビゲーションタイトルが表示される
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["saveToContactsButton"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(app.buttons["shareCardButton"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
+        XCTAssertFalse(nativeTabBar.isHittable)
+
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Split Viewでは左の一覧が残るため、一覧所属の追加操作も維持する。
+            XCTAssertTrue(splitAddButton.exists)
+        }
+
+        // 詳細自体は下スワイプでdismissせず、標準の戻る導線を使う。
+        app.swipeDown()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].exists)
     }
 
     @MainActor
@@ -278,6 +483,9 @@ final class EMeishiUITests: XCTestCase {
 
         // リスト画面に戻ったことを確認（選択ボタンが表示される）
         XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 3))
+        XCTAssertTrue(nativeTabBar.isHittable, "Tab Barは一覧への復帰と同時に操作可能になる")
+        XCTAssertTrue(addButton.exists, "追加ボタンは一覧と同時に復帰する")
+        XCTAssertTrue(cardSearchField.isHittable, "検索欄は一覧への復帰と同時に操作可能になる")
     }
 
     // MARK: - コンテキストメニュー（長押し）
@@ -379,7 +587,7 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testSearchFiltersCards() throws {
         // 検索バーをタップ
-        let searchField = app.searchFields.firstMatch
+        let searchField = cardSearchField
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
         searchField.tap()
         searchField.typeText("山田")
@@ -408,7 +616,58 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(
             waitForMenuItem(identifier: "tagManager", label: "タグ管理")
         )
-        XCTAssertFalse(app.buttons["settingsMenu"].exists, "設定はタブにのみ表示する")
+        XCTAssertTrue(
+            waitForMenuItem(identifier: "settingsMenu", label: "設定")
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["aiSearchMenu"].exists,
+            "自然言語検索は標準検索欄へ統合し、3点メニューには置かない"
+        )
+    }
+
+    @MainActor
+    func testSettingsOpensFromMenuAndHidesRootNavigation() throws {
+        let ellipsisMenu = app.buttons["ellipsisMenu"]
+        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
+        ellipsisMenu.tap()
+
+        let settings = app.buttons["設定"]
+        XCTAssertTrue(settings.waitForExistence(timeout: Self.shortTimeout))
+        settings.tap()
+
+        XCTAssertTrue(app.navigationBars.staticTexts["設定"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(cardSearchField.exists, "検索欄を設定のNavigation Itemへ持ち越さない")
+        XCTAssertFalse(nativeTabBar.isHittable)
+
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(nativeTabBar.isHittable)
+        XCTAssertTrue(
+            addButton.isHittable,
+            "追加ボタン復帰状態: exists=\(addButton.exists), frame=\(addButton.frame), appFrame=\(app.frame)"
+        )
+        XCTAssertTrue(cardSearchField.isHittable)
+    }
+
+    @MainActor
+    func testDuplicateCheckUsesRootOwnedNavigationChrome() throws {
+        let ellipsisMenu = app.buttons["ellipsisMenu"]
+        XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
+        ellipsisMenu.tap()
+
+        let duplicateAction = app.buttons
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "重複チェック"))
+            .firstMatch
+        XCTAssertTrue(duplicateAction.waitForExistence(timeout: Self.shortTimeout))
+        duplicateAction.tap()
+
+        XCTAssertTrue(app.navigationBars.staticTexts["重複チェック"].waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertFalse(cardSearchField.exists, "検索欄を重複確認のNavigation Itemへ持ち越さない")
+        XCTAssertFalse(nativeTabBar.isHittable)
+
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(nativeTabBar.isHittable)
+        XCTAssertTrue(addButton.isHittable)
+        XCTAssertTrue(cardSearchField.isHittable)
     }
 
     // MARK: - フィルタ時のカウント表示
@@ -416,7 +675,7 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testSearchShowsFilteredResults() throws {
         // 検索バーで検索すると該当カードのみが表示される
-        let searchField = app.searchFields.firstMatch
+        let searchField = cardSearchField
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
         searchField.tap()
         searchField.typeText("山田")
@@ -434,23 +693,101 @@ final class EMeishiUITests: XCTestCase {
     // MARK: - 1.2.0 回帰テスト
 
     @MainActor
-    func testSortPopoverUsesFixedOptionRows() throws {
-        let sortButton = app.buttons["sortButton"]
-        XCTAssertTrue(sortButton.waitForExistence(timeout: Self.defaultTimeout))
-        sortButton.tap()
+    func testNativeSortFilterMenuKeepsItsTriggerPosition() throws {
+        XCTAssertTrue(sortFilterMenu.waitForExistence(timeout: Self.defaultTimeout))
+        let initialFrame = sortFilterMenu.frame
+        sortFilterMenu.tap()
 
-        let options = ["名前", "会社名", "登録日時", "更新日時"].map {
-            app.buttons["sortOption_\($0)"]
+        let sortTitles = ["名前", "会社名", "登録日時", "更新日時"]
+        for title in sortTitles {
+            XCTAssertTrue(waitForMenuItem(identifier: "sortOption_\(title)", label: title))
         }
-        for option in options {
-            XCTAssertTrue(option.waitForExistence(timeout: Self.shortTimeout))
-        }
-        let optionX = options.map { $0.frame.minX }
-        let optionWidths = options.map { $0.frame.width }
-        XCTAssertLessThan((optionX.max() ?? 0) - (optionX.min() ?? 0), 2,
-                          "全ソート項目が同じ固定列に配置されるべき")
-        XCTAssertLessThan((optionWidths.max() ?? 0) - (optionWidths.min() ?? 0), 2,
-                          "全ソート項目が同じ固定幅であるべき")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["displayMode_card"].exists,
+            "廃止したカード表示モードをメニューへ戻さない"
+        )
+        XCTAssertFalse(app.buttons["sortDirectionAscending"].exists)
+        XCTAssertFalse(app.buttons["sortDirectionDescending"].exists)
+
+        // 既定の「登録日時」を再選択すると方向だけが反転する。
+        // 左端の選択状態とサブタイトルを検証し、旧来の独立方向UIが復活しないことも担保する。
+        let activeSortOption = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ OR label == %@ OR label BEGINSWITH %@",
+                "sortOption_登録日時",
+                "登録日時",
+                "登録日時, "
+            ))
+            .firstMatch
+        activeSortOption.tap()
+        sortFilterMenu.tap()
+        XCTAssertTrue(waitForMenuItem(identifier: "sortOption_登録日時", label: "登録日時"))
+
+        let sortOptionWithDirection = app.buttons
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "登録日時, "))
+            .firstMatch
+        XCTAssertTrue(sortOptionWithDirection.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(sortOptionWithDirection.isSelected, "ソートの選択状態は左端の標準チェック列で示す")
+        XCTAssertTrue(
+            sortOptionWithDirection.label.contains("昇順")
+                || sortOptionWithDirection.label.contains("降順"),
+            "現在の方向はファイルアプリと同じサブタイトルで示す"
+        )
+
+        XCTAssertTrue(waitForMenuItem(identifier: "allCardsFilterOption", label: "すべての名刺"))
+        XCTAssertTrue(waitForMenuItem(identifier: "favoritesFilterOption", label: "お気に入り"))
+        XCTAssertTrue(waitForMenuItem(identifier: "tagFilterMenu", label: "タグ"))
+        XCTAssertTrue(waitForMenuItem(identifier: "resetFiltersButton", label: "フィルターをリセット"))
+
+        let initialResetButton = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ OR label == %@",
+                "resetFiltersButton",
+                "フィルターをリセット"
+            ))
+            .firstMatch
+        XCTAssertFalse(initialResetButton.isEnabled, "フィルター未適用時はリセットを無効にする")
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "native-sort-filter-menu"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let tagMenu = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ OR label == %@", "tagFilterMenu", "タグ"))
+            .firstMatch
+        tagMenu.tap()
+        XCTAssertTrue(waitForMenuItem(identifier: "tagFilter_IT", label: "IT"))
+        let itFilter = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ OR label == %@", "tagFilter_IT", "IT"))
+            .firstMatch
+        itFilter.tap()
+
+        XCTAssertEqual(sortFilterMenu.frame.midX, initialFrame.midX, accuracy: 2)
+        XCTAssertEqual(sortFilterMenu.frame.midY, initialFrame.midY, accuracy: 2)
+        XCTAssertTrue(
+            String(describing: sortFilterMenu.value).contains("フィルター1件"),
+            "タグ選択後もトリガー位置は変えず、適用件数だけを更新する"
+        )
+
+        sortFilterMenu.tap()
+        let resetButton = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ OR label == %@",
+                "resetFiltersButton",
+                "フィルターをリセット"
+            ))
+            .firstMatch
+        XCTAssertTrue(resetButton.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(resetButton.isEnabled, "フィルター適用後はリセットを有効にする")
+        resetButton.tap()
+
+        XCTAssertTrue(
+            String(describing: sortFilterMenu.value).contains("フィルターなし"),
+            "リセット後は全フィルターを解除する"
+        )
+        XCTAssertEqual(sortFilterMenu.frame.midX, initialFrame.midX, accuracy: 2)
+        XCTAssertEqual(sortFilterMenu.frame.midY, initialFrame.midY, accuracy: 2)
     }
 
     @MainActor
@@ -481,15 +818,19 @@ final class EMeishiUITests: XCTestCase {
         fullScreenImage.pinch(withScale: 2.0, velocity: 1.0)
         fullScreenImage.doubleTap()
         XCTAssertTrue(app.buttons["閉じる"].waitForExistence(timeout: Self.shortTimeout))
+        fullScreenImage.swipeDown()
+        XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+
+        preview.tap()
+        XCTAssertTrue(app.scrollViews["fullScreenCardImage"].waitForExistence(timeout: Self.shortTimeout))
         app.buttons["閉じる"].tap()
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
     }
 
     @MainActor
     func testInsightsSurvivesContinuousScrolling() throws {
-        let insights = app.tabBars.buttons["インサイト"]
-        XCTAssertTrue(insights.waitForExistence(timeout: Self.shortTimeout))
-        insights.tap()
+        XCTAssertTrue(insightsTab.waitForExistence(timeout: Self.shortTimeout))
+        insightsTab.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
 
         let scrollView = app.scrollViews["insightsScrollView"]
@@ -503,7 +844,8 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testInsightActionShowsFilterAtTopOfCardList() throws {
-        app.tabBars.buttons["インサイト"].tap()
+        XCTAssertTrue(insightsTab.waitForExistence(timeout: Self.shortTimeout))
+        insightsTab.tap()
         XCTAssertTrue(app.navigationBars.staticTexts["インサイト"].waitForExistence(timeout: Self.shortTimeout))
 
         let recentAction = app.buttons["insightAction_clock"]

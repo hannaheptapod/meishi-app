@@ -31,8 +31,11 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
 
     // MARK: - UIKit 表示
 
-    private func presentPicker() {
-        guard let topVC = Self.topViewController() else { return }
+    private func presentPicker(completion: (() -> Void)? = nil) {
+        guard let topVC = Self.topViewController() else {
+            completion?()
+            return
+        }
 
         let picker = UIImagePickerController()
         picker.sourceType = .camera
@@ -40,7 +43,7 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
         picker.modalPresentationStyle = .fullScreen
         picker.cameraOverlayView = buildOverlay()
 
-        topVC.present(picker, animated: images.isEmpty)
+        topVC.present(picker, animated: images.isEmpty, completion: completion)
     }
 
     private static func topViewController() -> UIViewController? {
@@ -104,10 +107,8 @@ class CameraBatchCapture: NSObject, UIImagePickerControllerDelegate, UINavigatio
             }
 
             picker.dismiss(animated: false) { [weak self] in
-                self?.presentPicker()
-                // present のアニメーション完了を待ってからスナップショットを除去
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(0.05))
+                self?.presentPicker { [weak self] in
+                    // UIKitのpresentation完了と同じタイミングで覆いを外す。
                     self?.removeSnapshot()
                 }
             }

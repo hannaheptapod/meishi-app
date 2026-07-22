@@ -226,4 +226,16 @@ struct DuplicateCheckerLegalEntityTests {
             #expect(r.firstNameReading == "ひふみ")
         }
     }
+
+    @Test func inferReadingFromEmailSurvivesIncorrectOCRNameSplit() {
+        // 架空名を誤分割しても、予約済みドメインのメール由来候補を失わない。
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "yamada.hanako@example.invalid",
+            lastName: "山田花",
+            firstName: "子"
+        )
+
+        #expect(result?.lastNameReading == "やまだ")
+        #expect(result?.firstNameReading == "はなこ")
+    }
 }

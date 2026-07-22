@@ -1,7 +1,9 @@
 import SwiftUI
 
 enum AppTheme {
-    static let brandOrange = Color(red: 1.0, green: 0.34, blue: 0.0)
+    /// Asset CatalogのAccentColorを唯一のブランド色定義として使用する。
+    /// 環境のaccentColorを参照すると、ルートのtint設定前にsystemBlueへ解決されるため直接参照する。
+    static let brandOrange = Color("AccentColor")
     static let background = Color(uiColor: .systemGroupedBackground)
     static let contentSurface = Color(uiColor: .secondarySystemGroupedBackground)
     static let auxiliarySurface = Color(uiColor: .tertiarySystemGroupedBackground)

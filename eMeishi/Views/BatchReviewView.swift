@@ -47,9 +47,6 @@ struct BatchReviewView: View {
             } message: {
                 Text(queuePersistenceWarning ?? "")
             }
-        } else if !images.isEmpty {
-            // 全件処理済み
-            Color.clear.onAppear { onComplete() }
         }
     }
 

@@ -75,6 +75,7 @@ private struct DuplicatePairRow: View {
     let pair: DuplicatePair
 
     @Environment(\.managedObjectContext) private var context
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         // ID から BusinessCard を解決（削除済みなら nil）
@@ -83,12 +84,7 @@ private struct DuplicatePairRow: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("類似度 \(pair.scoreText)")
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(scoreColor(pair.score), in: Capsule())
+                DuplicateScoreBadge(scoreText: pair.scoreText)
                 if pair.isAIDetected {
                     HStack(spacing: 2) {
                         Image(systemName: "sparkles")
@@ -106,11 +102,19 @@ private struct DuplicatePairRow: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
-            HStack(spacing: 12) {
-                cardSummary(cardA)
-                Image(systemName: "arrow.left.arrow.right")
-                    .foregroundStyle(.secondary)
-                cardSummary(cardB)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
+                    cardSummary(cardA)
+                    Divider()
+                    cardSummary(cardB)
+                }
+            } else {
+                HStack(spacing: AppTheme.Spacing.medium) {
+                    cardSummary(cardA)
+                    Image(systemName: "arrow.left.arrow.right")
+                        .foregroundStyle(.secondary)
+                    cardSummary(cardB)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -137,9 +141,5 @@ private struct DuplicatePairRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func scoreColor(_ score: Double) -> Color {
-        score >= 0.9 ? .red : score >= 0.8 ? .orange : .mint
     }
 }

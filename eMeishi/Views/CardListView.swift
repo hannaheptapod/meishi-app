@@ -1,28 +1,19 @@
-import PhotosUI
+import CoreData
 import SwiftUI
 import UIKit
 
 // 名刺一覧画面
 struct CardListView: View {
+    var usesSplitView = false
 
     @EnvironmentObject private var viewModel: CardListViewModel
     @EnvironmentObject private var navigationState: AppNavigationState
-    @State private var isShowingForm = false
-    @State private var batchImages: [UIImage] = []
-    @State private var isReviewingBatch = false
-    @State private var isShowingAddSheet = false
+    @Environment(\.managedObjectContext) private var viewContext
     @State private var isShowingImportConfirm = false
     @State private var isShowingTagManager = false
-    @State private var isShowingPhotoPicker = false
-    @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var isImportingPhotos = false
-    @State private var photoImportMessage: String?
-    @State private var isShowingPendingOCRPrompt = false
-    @State private var pendingOCRImages: [UIImage] = []
-    @State private var cardForDetail: BusinessCard?
-    @State private var isShowingSortPopover = false
     @State private var isContextMenuPresented = false
     @State private var suppressCardTapUntil = Date.distantPast
+    @State private var selectionChromeOwner = UUID()
 
     // コンテキストメニュー用
     @State private var cardToEdit: BusinessCard? = nil
@@ -34,14 +25,12 @@ struct CardListView: View {
     @State private var selectedCardIDs: Set<BusinessCard.ID> = []
     @State private var isShowingBulkDeleteConfirm = false
     @State private var isShowingBulkTagSheet = false
-    @State private var isShowingAIChat = false
     @State private var isShowingPaywall = false
     // スクリーンショット撮影モード用：CardFormView を OCR 完了状態のモックで開く
     @State private var isShowingMockOCRForm = false
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     // 触覚フィードバック
     private let haptic = UIImpactFeedbackGenerator(style: .light)
@@ -54,45 +43,35 @@ struct CardListView: View {
         )
     }
 
-    private var screenBackground: Color {
-        AppTheme.background
-    }
-
     var body: some View {
         interactionPresentations
     }
 
-    private var baseView: AnyView {
-        AnyView(
+    private var baseView: some View {
         Group {
             if viewModel.cards.isEmpty {
                 emptyState
-            } else if shouldShowAISearchPrompt {
-                // テキスト検索で0件 → AI チャット検索を提案
-                aiSearchPrompt
+            } else if viewModel.filteredCards.isEmpty && viewModel.isSearchActive {
+                searchEmptyState
+            } else if viewModel.filteredCards.isEmpty && viewModel.isFilterActive {
+                filterEmptyState
             } else {
                 cardList
             }
         }
             .navigationTitle(editMode == .active ? selectionTitle : "名刺")
-            .navigationBarTitleDisplayMode(editMode == .active ? .inline : .automatic)
-            .searchable(
-                text: $viewModel.searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "名前・会社・連絡先を検索"
-            )
-            .background {
-                SearchBarSparklesInjector(searchText: viewModel.searchText) {
-                    openAISearch()
-                }
-                .frame(width: 0, height: 0)
-                .allowsHitTesting(false)
-            }
-            .onSubmit(of: .search) {
-                if viewModel.filteredCards.isEmpty && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    openAISearch()
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaBar(edge: .top, spacing: 0) {
+                if let externalFilter = viewModel.externalFilter,
+                   editMode == .inactive {
+                    activeExternalFilterBar(externalFilter)
+                        .frame(maxWidth: AppTheme.cardListMaximumWidth)
+                        .padding(.horizontal, AppTheme.Spacing.large)
+                        .padding(.top, AppTheme.Spacing.small)
+                        .padding(.bottom, AppTheme.Spacing.xSmall)
                 }
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .toolbar {
                 if editMode == .active {
                     selectionToolbarContent
@@ -100,93 +79,47 @@ struct CardListView: View {
                     normalToolbarContent
                 }
             }
-            .environment(\.editMode, $editMode)
-            .navigationDestination(item: $cardForDetail) { card in
-                CardDetailView(card: card)
-            }
-        .background(screenBackground.ignoresSafeArea())
-        )
-    }
-
-    private var importPresentations: AnyView {
-        AnyView(
-            baseView
-            .sheet(isPresented: $isShowingForm, onDismiss: viewModel.fetchCards) {
-                CardFormView(onSave: { isShowingForm = false })
-            }
-            .sheet(isPresented: $isShowingAddSheet) {
-                AddCardSheet(
-                    pendingCount: pendingOCRImages.count,
-                    isImporting: isImportingPhotos,
-                    onCamera: {
-                        isShowingAddSheet = false
-                        startCameraCapture()
-                    },
-                    onPhotos: {
-                        isShowingAddSheet = false
-                        selectedPhotoItems = []
-                        isShowingPhotoPicker = true
-                    },
-                    onManual: {
-                        isShowingAddSheet = false
-                        isShowingForm = true
-                    },
-                    onResume: pendingOCRImages.isEmpty ? nil : {
-                        isShowingAddSheet = false
-                        batchImages = pendingOCRImages
-                        isReviewingBatch = !batchImages.isEmpty
-                    }
+            .onChange(of: editMode) { _, mode in
+                navigationState.setRootChromeSuppressed(
+                    mode == .active,
+                    owner: selectionChromeOwner
                 )
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
             }
-            // カメラは CameraBatchCapture（UIKit直接管理）で表示。fullScreenCover 不使用。
-            .sheet(isPresented: $isReviewingBatch, onDismiss: {
-                batchImages = []
-                viewModel.fetchCards()
-            }) {
-                BatchReviewView(images: $batchImages, onComplete: {
-                    isReviewingBatch = false
-                })
-                .environmentObject(viewModel)
+            .environment(\.editMode, $editMode)
+            .navigationDestination(for: CardListRoute.self) { route in
+                destination(for: route)
             }
-            .photosPicker(
-                isPresented: $isShowingPhotoPicker,
-                selection: $selectedPhotoItems,
-                maxSelectionCount: 10,
-                selectionBehavior: .ordered,
-                matching: .images,
-                preferredItemEncoding: .compatible
-            )
-            .onChange(of: selectedPhotoItems) { _, items in
-                handlePhotoSelection(items)
-            }
-            .alert("写真の読込み", isPresented: Binding(
-                get: { photoImportMessage != nil },
-                set: { if !$0 { photoImportMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { photoImportMessage = nil }
-            } message: {
-                Text(photoImportMessage ?? "")
-            }
-            .alert("未完了の読み取り", isPresented: $isShowingPendingOCRPrompt) {
-                Button("再開") {
-                    batchImages = pendingOCRImages
-                    isReviewingBatch = !batchImages.isEmpty
-                }
-                Button("破棄", role: .destructive) {
-                    pendingOCRImages = []
-                    Task { await discardPendingOCR() }
-                }
-            } message: {
-                Text("前回中断した名刺が\(pendingOCRImages.count)枚あります。")
-            }
-        )
+            .background(AppTheme.background.ignoresSafeArea())
     }
 
-    private var managementPresentations: AnyView {
-        AnyView(
-            importPresentations
+    @ViewBuilder
+    private func destination(for route: CardListRoute) -> some View {
+        switch route {
+        case .detail(let objectURI):
+            if let objectID = viewContext.persistentStoreCoordinator?
+                .managedObjectID(forURIRepresentation: objectURI),
+               let object = try? viewContext.existingObject(with: objectID),
+               let card = object as? BusinessCard {
+                CardDetailView(card: card)
+            } else {
+                ContentUnavailableView("名刺を表示できません", systemImage: "exclamationmark.triangle")
+            }
+        case .settings:
+            SettingsView()
+        case .duplicates:
+            DuplicateListView(pairs: $viewModel.duplicatePairs, onMerge: {
+                viewModel.fetchCards()
+                viewModel.detectDuplicates()
+            })
+        }
+    }
+
+    private var importPresentations: some View {
+        baseView
+    }
+
+    private var managementPresentations: some View {
+        importPresentations
             .sheet(item: $viewModel.exportItem) { item in
                 ShareSheet(activityItems: [item.url])
             }
@@ -216,15 +149,16 @@ struct CardListView: View {
             } message: {
                 Text(viewModel.importResultMessage ?? "")
             }
-        )
     }
 
-    private var interactionPresentations: AnyView {
-        AnyView(
-            managementPresentations
+    private var interactionPresentations: some View {
+        managementPresentations
             // コンテキストメニューからの編集シート
-            .sheet(item: $cardToEdit, onDismiss: viewModel.fetchCards) { card in
-                CardFormView(card: card, onSave: { cardToEdit = nil })
+            .sheet(item: $cardToEdit) { card in
+                CardFormView(card: card, onSave: {
+                    viewModel.fetchCards()
+                    cardToEdit = nil
+                })
             }
             // コンテキストメニューからの削除確認
             .confirmationDialog(
@@ -271,32 +205,11 @@ struct CardListView: View {
                 .environmentObject(entitlementStore)
             }
             .onAppear {
-                viewModel.fetchCards()
                 viewModel.externalFilter = navigationState.externalFilter
-                presentRequestedAddSheetIfNeeded()
                 handleScreenshotMode()
             }
             .onChange(of: navigationState.externalFilter) { _, filter in
                 viewModel.externalFilter = filter
-            }
-            .onChange(of: navigationState.isCardAdditionRequested) { _, requested in
-                if requested { presentRequestedAddSheetIfNeeded() }
-            }
-            .onChange(of: editMode) { _, mode in
-                // 選択用bottomBarと標準Tab Barを同時に表示しない。
-                navigationState.isRootBarHidden = mode == .active
-            }
-            .onDisappear {
-                if editMode == .active {
-                    navigationState.isRootBarHidden = false
-                }
-            }
-            .task {
-                await loadPendingOCR()
-            }
-            .sheet(isPresented: $isShowingAIChat) {
-                AISearchChatView()
-                    .environmentObject(viewModel)
             }
             .sheet(isPresented: $isShowingPaywall) {
                 PaywallView(context: .aiSearch)
@@ -309,27 +222,6 @@ struct CardListView: View {
                 }, onSave: { isShowingMockOCRForm = false })
                 .environmentObject(viewModel)
             }
-        )
-    }
-
-    private func openAISearch() {
-        if entitlementStore.hasAccess {
-            isShowingAIChat = true
-        } else {
-            isShowingPaywall = true
-        }
-    }
-
-    private func presentRequestedAddSheetIfNeeded() {
-        guard navigationState.isCardAdditionRequested else { return }
-        isShowingAddSheet = true
-        navigationState.consumeCardAdditionRequest()
-    }
-
-    private var shouldShowAISearchPrompt: Bool {
-        viewModel.isSearchActive
-            && viewModel.filteredCards.isEmpty
-            && !viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// XCUITest（ScreenshotRunner）から START_SCREEN を受け取った場合、対応するシートを開く
@@ -337,9 +229,12 @@ struct CardListView: View {
         guard ScreenshotMode.isActive, let screen = ScreenshotMode.startScreen else { return }
         switch screen {
         case "Tags":     isShowingTagManager = true
-        case "AIChat":   isShowingAIChat = true
+        case "AIChat":
+            viewModel.searchText = "IT関係の人"
+            viewModel.submitUnifiedSearch()
         case "FormOCR":  isShowingMockOCRForm = true
         case "Paywall":  isShowingPaywall = true
+        case "Settings": navigationState.pushCardsRoute(.settings)
         default: break
         }
     }
@@ -359,27 +254,38 @@ struct CardListView: View {
 
     @ToolbarContentBuilder
     private var normalToolbarContent: some ToolbarContent {
+        // 写真アプリと同様に、並べ替え・フィルターを選択操作の左へ置く。
+        ToolbarItem(placement: .topBarTrailing) {
+            if !viewModel.cards.isEmpty {
+                sortFilterMenu
+            }
+        }
+
+        if !usesSplitView {
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        }
+
         ToolbarItem(placement: .topBarTrailing) {
             if !viewModel.cards.isEmpty {
                 Button("選択") {
                     editMode = .active
                     selectedCardIDs = []
                 }
+                .tint(Color.primary)
                 .accessibilityIdentifier("selectButton")
             }
         }
 
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        if !usesSplitView {
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        }
 
-        // 右上: 3点メニュー
+        // 右上: その他の操作
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 if !viewModel.cards.isEmpty {
-                    NavigationLink {
-                        DuplicateListView(pairs: $viewModel.duplicatePairs, onMerge: {
-                            viewModel.fetchCards()
-                            viewModel.detectDuplicates()
-                        })
+                    Button {
+                        navigationState.pushCardsRoute(.duplicates)
                     } label: {
                         Label(
                             viewModel.duplicatePairs.isEmpty ? "重複チェック" : "重複チェック（\(viewModel.duplicatePairs.count)件）",
@@ -409,12 +315,34 @@ struct CardListView: View {
                     Label("タグ管理", systemImage: "tag")
                 }
                 .accessibilityIdentifier("tagManager")
+                Divider()
+                Button {
+                    navigationState.pushCardsRoute(.settings)
+                } label: {
+                    Label("設定", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("settingsMenu")
             } label: {
                 Label("メニュー", systemImage: "ellipsis")
             }
+            .tint(Color.primary)
             .accessibilityIdentifier("ellipsisMenu")
         }
 
+        if usesSplitView {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    navigationState.requestCardAddition()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .tint(AppTheme.brandOrange)
+                .accessibilityLabel("名刺を追加")
+                .accessibilityIdentifier("splitCardAddButton")
+            }
+        }
     }
 
     // MARK: - 選択モードのツールバー
@@ -430,6 +358,7 @@ struct CardListView: View {
                     selectedCardIDs = Set(viewModel.filteredCards.compactMap(\.id))
                 }
             }
+            .tint(Color.primary)
             .accessibilityIdentifier("selectAllButton")
         }
 
@@ -440,17 +369,19 @@ struct CardListView: View {
                 selectedCardIDs = []
             }
             .fontWeight(.semibold)
+            .tint(Color.primary)
             .accessibilityIdentifier("doneButton")
         }
 
         // 下部: 一括操作（左: 削除 / 中央: タグ＋お気に入り / 右: エクスポート）
         ToolbarItemGroup(placement: .bottomBar) {
             // 削除
-            Button {
+            Button(role: .destructive) {
                 isShowingBulkDeleteConfirm = true
             } label: {
                 Label("削除", systemImage: "trash")
             }
+            .tint(.red)
             .disabled(selectedCardIDs.isEmpty)
             .accessibilityIdentifier("bulkDeleteButton")
 
@@ -462,6 +393,7 @@ struct CardListView: View {
             } label: {
                 Label("タグ", systemImage: "tag")
             }
+            .tint(Color.primary)
             .disabled(selectedCardIDs.isEmpty)
 
             // お気に入り
@@ -471,6 +403,7 @@ struct CardListView: View {
             } label: {
                 Label("お気に入り", systemImage: "star")
             }
+            .tint(Color.primary)
             .disabled(selectedCardIDs.isEmpty)
 
             Spacer()
@@ -490,6 +423,7 @@ struct CardListView: View {
             } label: {
                 Label("エクスポート", systemImage: "square.and.arrow.up")
             }
+            .tint(Color.primary)
             .disabled(selectedCardIDs.isEmpty)
         }
     }
@@ -501,13 +435,6 @@ struct CardListView: View {
             (viewModel.sortKey == .name || viewModel.sortKey == .company)
         return ScrollViewReader { proxy in
             List(selection: selectionBinding) {
-                if editMode == .inactive {
-                    filterControlBar
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-
                 if viewModel.isSearchActive {
                     // 検索中はフラット表示
                     ForEach(viewModel.filteredCards) { card in
@@ -539,16 +466,18 @@ struct CardListView: View {
                         } header: {
                             HStack(spacing: 7) {
                                 Text(section.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.primary)
                                 Text("\(section.cards.count)")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.quaternary, in: Capsule())
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Color.primary.opacity(0.72))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.secondary.opacity(0.16), in: Capsule())
                             }
                             .textCase(nil)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(section.title)、\(section.cards.count)件")
                         }
                         .id(section.id)
                     }
@@ -558,7 +487,7 @@ struct CardListView: View {
             .listRowSpacing(8)
             .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
-            .background(screenBackground)
+            .background(AppTheme.background)
             .scrollIndicators(showIndex ? .hidden : .automatic)
             .scrollDismissesKeyboard(.immediately)
             .overlay(alignment: .trailing) {
@@ -572,250 +501,97 @@ struct CardListView: View {
             }
             .frame(maxWidth: AppTheme.cardListMaximumWidth)
             .frame(maxWidth: .infinity)
+            .animation(
+                reduceMotion ? nil : .snappy(duration: 0.32, extraBounce: 0.03),
+                value: visibleCardTransitionIDs
+            )
         }
     }
 
-    private func startCameraCapture() {
-        CameraBatchCapture.shared.start { images in
-            batchImages = images
-            if !images.isEmpty {
-                Task {
-                    let inputs = images.compactMap { image in
-                        image.jpegData(compressionQuality: 0.82).map {
-                            CardImageInput(data: $0, source: .camera)
-                        }
-                    }
-                    do {
-                        try await PendingOCRStore.shared.persist(inputs)
-                    } catch {
-                        photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-                    }
-                    try? await Task.sleep(for: .seconds(0.1))
-                    isReviewingBatch = true
-                }
+    // MARK: - フィルター・ソート
+
+    /// Insights から遷移した条件だけは、現在の一覧条件を見失わないよう検索欄直下に明示する。
+    private func activeExternalFilterBar(_ externalFilter: CardListExternalFilter) -> some View {
+        HStack(spacing: AppTheme.Spacing.small) {
+            Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                .foregroundStyle(AppTheme.brandOrange)
+            Text("絞り込み中：\(externalFilter.displayTitle)")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: AppTheme.Spacing.small)
+            Button {
+                haptic.impactOccurred()
+                navigationState.externalFilter = nil
+                viewModel.clearExternalFilter()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("絞り込みを解除")
         }
+        .padding(.horizontal, AppTheme.Spacing.large)
+        .frame(minHeight: 40)
+        .background(AppTheme.contentSurface, in: .capsule)
+        .accessibilityIdentifier("activeExternalFilter")
     }
 
-    private func importSelectedPhotos(_ items: [PhotosPickerItem]) async {
-        isImportingPhotos = true
-        defer {
-            isImportingPhotos = false
-            selectedPhotoItems = []
-        }
-
-        let result = await PhotoImportService.shared.importImages(from: items)
-        batchImages = result.images.compactMap { UIImage(data: $0.data) }
-
-        if batchImages.isEmpty {
-            let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
-            photoImportMessage = "読込みに失敗しました。\(reason)。もう一度お試しください。"
-            return
-        }
-
-        if !result.failures.isEmpty {
-            photoImportMessage = "\(batchImages.count)枚を読み込み、\(result.failures.count)枚は読み込めませんでした。"
-        }
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        do {
-            try await PendingOCRStore.shared.persist(result.images)
-        } catch {
-            photoImportMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-        }
-        isReviewingBatch = true
+    private var sortFilterMenu: some View {
+        NativeSortFilterMenuButton(
+            sortKey: viewModel.sortKey,
+            sortAscending: viewModel.sortAscending,
+            showFavoritesOnly: viewModel.showFavoritesOnly,
+            tags: viewModel.allTags.compactMap { tag in
+                guard let id = tag.id else { return nil }
+                return NativeSortFilterMenuButton.TagOption(id: id, name: tag.tagName)
+            },
+            selectedTagIDs: viewModel.selectedTagIDs,
+            externalFilterTitle: viewModel.externalFilter?.displayTitle,
+            isFilterActive: viewModel.isFilterActive,
+            accessibilityValue: sortFilterAccessibilityValue,
+            onSelectSort: { key in
+                haptic.impactOccurred()
+                viewModel.toggleSort(key: key)
+            },
+            onSelectAllCards: resetFilters,
+            onSetFavorites: { isEnabled in
+                haptic.impactOccurred()
+                viewModel.setFavoritesFilter(isEnabled)
+            },
+            onSetTag: { tagID, isEnabled in
+                guard let tag = viewModel.allTags.first(where: { $0.id == tagID }) else { return }
+                haptic.impactOccurred()
+                viewModel.setTagFilter(tag, enabled: isEnabled)
+            },
+            onClearExternalFilter: {
+                haptic.impactOccurred()
+                navigationState.externalFilter = nil
+                viewModel.clearExternalFilter()
+            },
+            onResetFilters: resetFilters
+        )
+        .frame(width: 44, height: 44)
     }
 
-    private func handlePhotoSelection(_ items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        Task { await importSelectedPhotos(items) }
+    private var activeFilterCount: Int {
+        viewModel.selectedTagIDs.count
+            + (viewModel.showFavoritesOnly ? 1 : 0)
+            + (viewModel.externalFilter == nil ? 0 : 1)
     }
 
-    private func loadPendingOCR() async {
-        guard !ScreenshotMode.isActive else { return }
-        do {
-            let restored = try await PendingOCRStore.shared.restore()
-            pendingOCRImages = restored.compactMap { UIImage(data: $0.data) }
-            isShowingPendingOCRPrompt = !pendingOCRImages.isEmpty
-        } catch {
-            photoImportMessage = "前回の未完了読み取りを復元できませんでした。破損した一時データは設定を変えずに保持しています。"
+    private var sortFilterAccessibilityValue: String {
+        let direction = viewModel.sortAscending ? "昇順" : "降順"
+        guard activeFilterCount > 0 else {
+            return "\(viewModel.sortKey.rawValue)・\(direction)・フィルターなし"
         }
+        return "\(viewModel.sortKey.rawValue)・\(direction)・フィルター\(activeFilterCount)件"
     }
 
-    private func discardPendingOCR() async {
-        do {
-            try await PendingOCRStore.shared.discard()
-        } catch {
-            photoImportMessage = "未完了の読み取り情報を破棄できませんでした。"
-        }
-    }
-
-    // MARK: - フィルター・ソート統合バー
-
-    private var filterControlBar: some View {
-        VStack(spacing: 0) {
-            if let externalFilter = viewModel.externalFilter {
-                HStack(spacing: AppTheme.Spacing.small) {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .foregroundStyle(AppTheme.brandOrange)
-                    Text("絞り込み中：\(externalFilter.displayTitle)")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: AppTheme.Spacing.small)
-                    Button {
-                        haptic.impactOccurred()
-                        navigationState.externalFilter = nil
-                        viewModel.clearExternalFilter()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption.weight(.bold))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("絞り込みを解除")
-                }
-                .padding(.horizontal, AppTheme.Spacing.large)
-                .frame(minHeight: 40)
-                .accessibilityIdentifier("activeExternalFilter")
-            }
-            filterSortBar
-        }
-        .background(.regularMaterial)
-    }
-
-    private var filterSortBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                // ── 並び替え ──
-                Button {
-                    isShowingSortPopover.toggle()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                            .font(.footnote)
-                        Text(viewModel.sortKey.rawValue)
-                            .font(.footnote)
-                    }
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 32)
-                    .background(AppTheme.auxiliarySurface, in: .capsule)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("sortButton")
-                .accessibilityValue("\(viewModel.sortKey.rawValue)・\(viewModel.sortAscending ? "昇順" : "降順")")
-                .popover(
-                    isPresented: $isShowingSortPopover,
-                    attachmentAnchor: .rect(.bounds),
-                    arrowEdge: .top
-                ) {
-                    VStack(spacing: 0) {
-                        ForEach(CardSortKey.allCases) { key in
-                            Button {
-                                haptic.impactOccurred()
-                                viewModel.toggleSort(key: key)
-                            } label: {
-                                HStack(spacing: 14) {
-                                    Image(systemName: viewModel.sortAscending ? "arrow.up" : "arrow.down")
-                                        .font(.body.weight(.medium))
-                                        .opacity(viewModel.sortKey == key ? 1 : 0)
-                                        .frame(width: 24, alignment: .center)
-                                        .accessibilityIdentifier("sortDirection_\(key.rawValue)")
-                                        .accessibilityHidden(viewModel.sortKey != key)
-
-                                    Text(key.rawValue)
-                                        .foregroundStyle(.primary)
-
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(.horizontal, 18)
-                                .frame(width: 250, height: 44)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("sortOption_\(key.rawValue)")
-                            .accessibilityValue(viewModel.sortKey == key
-                                ? (viewModel.sortAscending ? "昇順" : "降順")
-                                : "")
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .presentationCompactAdaptation(.popover)
-                }
-
-                // ── 区切り + フィルタアイコン ──
-                HStack(spacing: 6) {
-                    Divider()
-                        .frame(height: 20)
-                    Image(systemName: "line.3.horizontal.decrease")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("絞り込み")
-                }
-
-                // ── お気に入りフィルタ ──
-                Button {
-                    haptic.impactOccurred()
-                    viewModel.toggleFavoritesFilter()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "star.fill")
-                            .font(.caption)
-                        Text("お気に入り")
-                            .font(.footnote)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 32)
-                    .background(
-                        viewModel.showFavoritesOnly
-                            ? AppTheme.brandOrange.opacity(0.14)
-                            : AppTheme.auxiliarySurface,
-                        in: .capsule
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("お気に入りフィルタ")
-                .accessibilityAddTraits(viewModel.showFavoritesOnly ? .isSelected : [])
-
-                // ── タグフィルタ ──
-                ForEach(viewModel.allTags) { tag in
-                    let isSelected = viewModel.selectedTagIDs.contains(tag.id ?? UUID())
-                    Button {
-                        haptic.impactOccurred()
-                        viewModel.toggleTagFilter(tag)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(tag.color)
-                                .frame(width: 8, height: 8)
-                            Text(tag.tagName)
-                                .font(.footnote)
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 32)
-                        .background(
-                            isSelected
-                                ? tag.color.opacity(0.16)
-                                : AppTheme.auxiliarySurface,
-                            in: .capsule
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("タグフィルタ: \(tag.tagName)")
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .animation(
-                    reduceMotion ? nil : .snappy(duration: 0.22),
-                    value: viewModel.showFavoritesOnly
-                )
-                .animation(
-                    reduceMotion ? nil : .snappy(duration: 0.22),
-                    value: viewModel.selectedTagIDs
-                )
-        }
-        .accessibilityIdentifier("filterControlBar")
+    private func resetFilters() {
+        guard viewModel.isFilterActive else { return }
+        haptic.impactOccurred()
+        navigationState.externalFilter = nil
+        viewModel.clearAllFilters()
     }
 
     // MARK: - カード行（コンテキストメニュー付き）
@@ -823,16 +599,25 @@ struct CardListView: View {
     @ViewBuilder
     private func cardRow(for card: BusinessCard) -> some View {
         if editMode == .inactive {
-            CardRowView(card: card)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .onTapGesture {
+            Button {
                 guard !isContextMenuPresented, Date() >= suppressCardTapUntil else { return }
                 haptic.impactOccurred(intensity: 0.55)
-                cardForDetail = card
+                if usesSplitView {
+                    navigationState.selectedCardForSplit = card
+                } else {
+                    navigationState.pushCardsRoute(.detail(card.objectID.uriRepresentation()))
+                }
+            } label: {
+                CardRowView(
+                    card: card,
+                    compact: usesSplitView,
+                    isSelected: usesSplitView && navigationState.selectedCardForSplit?.objectID == card.objectID
+                )
             }
+            .buttonStyle(CardRowButtonStyle())
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .accessibilityIdentifier("cardRow_\(card.fullName)")
             .accessibilityHint("詳細を表示")
-            .accessibilityAddTraits(.isButton)
             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -862,12 +647,26 @@ struct CardListView: View {
                     }
             }
         } else {
-            CardRowView(card: card)
+            CardRowView(card: card, compact: usesSplitView)
                 .accessibilityIdentifier("cardRow_\(card.fullName)")
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
         }
+    }
+
+    /// 一覧の並び替え・絞り込み・追加削除を安定IDでアニメーションさせる。
+    private var visibleCardTransitionIDs: [String] {
+        if viewModel.isSearchActive {
+            return viewModel.filteredCards.map(transitionID(for:))
+        }
+        return viewModel.groupedCards
+            .flatMap(\.cards)
+            .map(transitionID(for:))
+    }
+
+    private func transitionID(for card: BusinessCard) -> String {
+        card.id?.uuidString ?? card.objectID.uriRepresentation().absoluteString
     }
 
     // MARK: - コンテキストメニュー
@@ -883,24 +682,28 @@ struct CardListView: View {
                 systemImage: card.isFavorite ? "star.slash" : "star.fill"
             )
         }
+        .tint(Color.primary)
 
         Button {
             cardToEdit = card
         } label: {
             Label("編集", systemImage: "pencil")
         }
+        .tint(Color.primary)
 
         Button {
             viewModel.shareVCard(card: card)
         } label: {
             Label("vCardとして共有", systemImage: "square.and.arrow.up")
         }
+        .tint(Color.primary)
 
         Button {
             viewModel.saveToContacts(card: card)
         } label: {
             Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
         }
+        .tint(Color.primary)
 
         Divider()
 
@@ -914,29 +717,66 @@ struct CardListView: View {
 
     // MARK: - AI検索UI
 
-    /// テキスト検索で0件時に表示する AI チャット検索提案
-    private var aiSearchPrompt: some View {
-        VStack(spacing: 12) {
-            Button {
-                openAISearch()
-            } label: {
-                Label("AI検索で探す", systemImage: "sparkles")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.tint.opacity(0.1))
-                    .clipShape(Capsule())
+    /// 通常検索が0件になった段階から、検索確定後のAI検索までを同じ場所で案内する。
+    private var searchEmptyState: some View {
+        Group {
+            if viewModel.isSemanticSearchInProgress {
+                ContentUnavailableView {
+                    VStack(spacing: AppTheme.Spacing.medium) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("AIで検索中")
+                            .font(.headline)
+                    }
+                } description: {
+                    Text("名前・会社・部署・役職・住所・タグから、条件に合う名刺を探しています。")
+                }
+            } else if let message = viewModel.semanticSearchMessage {
+                ContentUnavailableView {
+                    Label("AI検索でも見つかりませんでした", systemImage: "sparkles")
+                } description: {
+                    Text(message)
+                } actions: {
+                    clearSearchButton
+                }
+            } else {
+                ContentUnavailableView {
+                    Label(
+                        entitlementStore.hasAccess ? "AIで名刺を検索" : "AI検索を利用できます",
+                        systemImage: "sparkles"
+                    )
+                } description: {
+                    if entitlementStore.hasAccess {
+                        Text("キーボードの「検索」を押すと、「\(viewModel.searchText)」に合う名刺を内容から探します。")
+                    } else {
+                        Text("キーボードの「検索」を押すと、Pro機能のAI検索をご案内します。")
+                    }
+                } actions: {
+                    clearSearchButton
+                }
             }
-            .padding(.top, 12)
-
-            Text("AIチャットで自然言語検索できます")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.bottom, 8)
+    }
+
+    private var clearSearchButton: some View {
+        Button("検索を消去") {
+            viewModel.searchText = ""
+        }
+        .buttonStyle(.bordered)
+    }
+
+    /// フィルターで0件になった場合に、空白画面ではなく解除手段を示す。
+    private var filterEmptyState: some View {
+        ContentUnavailableView {
+            Label("条件に一致する名刺がありません", systemImage: "line.3.horizontal.decrease.circle")
+        } description: {
+            Text("別の条件を選ぶか、フィルターをリセットしてください。")
+        } actions: {
+            Button("フィルターをリセット", action: resetFilters)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - 空状態
@@ -945,7 +785,7 @@ struct CardListView: View {
         ContentUnavailableView(
             "名刺がありません",
             systemImage: "person.crop.rectangle.stack",
-            description: Text("画面下部中央の追加から、名刺を撮影または読み込めます。")
+            description: Text("画面下部右端の追加から、名刺を撮影または読み込めます。")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
@@ -954,168 +794,5 @@ struct CardListView: View {
 
 }
 
-// CardRowView, SectionIndexView は Views/Components/ に定義
-// ShareSheet, ExportItem は Utilities/ に定義
-
-private struct AddCardSheet: View {
-    let pendingCount: Int
-    let isImporting: Bool
-    let onCamera: () -> Void
-    let onPhotos: () -> Void
-    let onManual: () -> Void
-    let onResume: (() -> Void)?
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: AppTheme.Spacing.medium) {
-                addAction(
-                    title: "カメラで撮影",
-                    detail: "名刺を撮影して文字を読み取ります",
-                    systemImage: "camera",
-                    action: onCamera
-                )
-                addAction(
-                    title: "写真から読み込む",
-                    detail: "写真ライブラリから最大10枚選べます",
-                    systemImage: "photo.on.rectangle.angled",
-                    action: onPhotos
-                )
-                addAction(
-                    title: "手動で入力",
-                    detail: "画像を使わずに名刺を登録します",
-                    systemImage: "square.and.pencil",
-                    action: onManual
-                )
-                if let onResume {
-                    addAction(
-                        title: "未完了の読み取りを再開",
-                        detail: "\(pendingCount)枚の確認を続けます",
-                        systemImage: "arrow.clockwise",
-                        action: onResume
-                    )
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(AppTheme.Spacing.large)
-            .navigationTitle("名刺を追加")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .disabled(isImporting)
-    }
-
-    private func addAction(
-        title: String,
-        detail: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: AppTheme.Spacing.medium) {
-                Image(systemName: systemImage)
-                    .font(.title3)
-                    .foregroundStyle(.primary)
-                    .frame(width: 32)
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(AppTheme.Spacing.large)
-            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-            .contentShape(.rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous))
-        }
-        .buttonStyle(.glass)
-        .accessibilityLabel(title)
-    }
-}
-
-// MARK: - 検索バー内 sparkles ボタン
-
-/// UISearchBar の searchTextField.rightView に sparkles ボタンを配置する
-/// searchText を受け取ることで、検索アクティブ化時に updateUIView が呼ばれる
-private struct SearchBarSparklesInjector: UIViewRepresentable {
-    var searchText: String
-    let onTap: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap) }
-
-    func makeUIView(context: Context) -> UIView {
-        let v = UIView()
-        retryInject(from: v, coordinator: context.coordinator, attempts: 20)
-        return v
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTap = onTap
-        retryInject(from: uiView, coordinator: context.coordinator, attempts: 20)
-    }
-
-    private func retryInject(from view: UIView, coordinator: Coordinator, attempts: Int) {
-        guard attempts > 0 else { return }
-        Task {
-            try? await Task.sleep(for: .seconds(0.15))
-            if self.inject(from: view, coordinator: coordinator) { return }
-            self.retryInject(from: view, coordinator: coordinator, attempts: attempts - 1)
-        }
-    }
-
-    @discardableResult
-    private func inject(from view: UIView, coordinator: Coordinator) -> Bool {
-        guard let window = view.window else { return false }
-
-        if let searchBar = Self.findSearchBar(in: window) {
-            let tf = searchBar.searchTextField
-            if let rv = tf.rightView, rv.tag == 8888 { return true }
-            tf.rightView = Self.makeButton(coordinator: coordinator)
-            tf.rightViewMode = .always
-            return true
-        }
-
-        if let tf = Self.findSearchTextField(in: window) {
-            if let rv = tf.rightView, rv.tag == 8888 { return true }
-            tf.rightView = Self.makeButton(coordinator: coordinator)
-            tf.rightViewMode = .always
-            return true
-        }
-
-        return false
-    }
-
-    private static func makeButton(coordinator: Coordinator) -> UIButton {
-        let btn = UIButton(type: .system)
-        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-        btn.setImage(UIImage(systemName: "sparkles", withConfiguration: cfg), for: .normal)
-        btn.tintColor = UIColor(AppTheme.brandOrange)
-        btn.tag = 8888
-        btn.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
-        btn.addTarget(coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
-        return btn
-    }
-
-    private static func findSearchBar(in view: UIView) -> UISearchBar? {
-        if let sb = view as? UISearchBar { return sb }
-        for child in view.subviews {
-            if let found = findSearchBar(in: child) { return found }
-        }
-        return nil
-    }
-
-    private static func findSearchTextField(in view: UIView) -> UISearchTextField? {
-        if let tf = view as? UISearchTextField { return tf }
-        for child in view.subviews {
-            if let found = findSearchTextField(in: child) { return found }
-        }
-        return nil
-    }
-
-    final class Coordinator: NSObject {
-        var onTap: () -> Void
-        init(onTap: @escaping () -> Void) { self.onTap = onTap }
-        @objc func tapped() { onTap() }
-    }
-}
+// CardRowView、一覧操作部品は Views/Components/ に定義
+// ShareSheet、ExportItem は Utilities/ に定義

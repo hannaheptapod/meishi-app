@@ -1,12 +1,15 @@
 import Combine
 import SwiftUI
 
+nonisolated enum CardListRoute: Hashable, Sendable {
+    case detail(URL)
+    case settings
+    case duplicates
+}
+
 nonisolated enum AppTab: Hashable, Sendable {
     case cards
-    case browse
-    case add
     case insights
-    case settings
 }
 
 nonisolated enum CardListExternalFilter: Hashable, Sendable {
@@ -36,26 +39,47 @@ nonisolated enum CardListExternalFilter: Hashable, Sendable {
 @MainActor
 final class AppNavigationState: ObservableObject {
     @Published var selectedTab: AppTab = .cards
-    @Published var cardsPath = NavigationPath()
-    @Published var browsePath = NavigationPath()
+    @Published var cardsPath: [CardListRoute] = []
     @Published var insightsPath = NavigationPath()
-    @Published var settingsPath = NavigationPath()
     @Published var externalFilter: CardListExternalFilter?
     @Published var isCardAdditionRequested = false
-    @Published var isRootBarHidden = false
+    @Published var selectedCardForSplit: BusinessCard?
+    @Published private(set) var isRootChromeSuppressed = false
+
+    private var rootChromeSuppressors: Set<UUID> = []
+
+    func pushCardsRoute(_ route: CardListRoute) {
+        cardsPath.append(route)
+    }
 
     func showCards(filteredBy filter: CardListExternalFilter) {
         externalFilter = filter
+        selectedCardForSplit = nil
         selectedTab = .cards
-        cardsPath = NavigationPath()
+        cardsPath = []
     }
 
     func requestCardAddition() {
-        selectedTab = .cards
         isCardAdditionRequested = true
     }
 
     func consumeCardAdditionRequest() {
         isCardAdditionRequested = false
+    }
+
+    func showSettings() {
+        selectedCardForSplit = nil
+        selectedTab = .cards
+        cardsPath = [.settings]
+    }
+
+    /// ルート画面上の選択モードなどが、Tab Barと追加ボタンを隠す状態を所有者単位で管理する。
+    func setRootChromeSuppressed(_ suppressed: Bool, owner: UUID) {
+        if suppressed {
+            rootChromeSuppressors.insert(owner)
+        } else {
+            rootChromeSuppressors.remove(owner)
+        }
+        isRootChromeSuppressed = !rootChromeSuppressors.isEmpty
     }
 }

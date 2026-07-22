@@ -5,76 +5,106 @@ import SwiftUI
 struct CardRowView: View {
 
     @ObservedObject var card: BusinessCard
+    var compact = false
+    var isSelected = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
-            CardThumbnailView(card: card, size: 64)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    if card.isFavorite {
-                        Image(systemName: "star.fill")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.yellow)
-                    }
-                }
-                if let company = card.company, !company.isEmpty {
-                    Text(company)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary.opacity(0.9))
-                        .lineLimit(1)
-                }
-                let dept = card.department ?? ""
-                let ttl = card.title ?? ""
-                let deptTitle = [dept, ttl].filter { !$0.isEmpty }.joined(separator: " ")
-                if !deptTitle.isEmpty {
-                    Text(deptTitle)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                if !cardTags.isEmpty {
-                    HStack(spacing: 4) {
-                        if let tag = cardTags.first {
-                            HStack(spacing: 3) {
-                                Circle()
-                                    .fill(tag.color)
-                                    .frame(width: 6, height: 6)
-                                Text(tag.tagName)
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        }
-                        if cardTags.count > 1 {
-                            Text("+\(cardTags.count - 1)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 8)
-        }
+        rowLayout
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, AppTheme.Spacing.large)
-        .padding(.vertical, AppTheme.Spacing.medium)
+        .padding(.horizontal, compact ? AppTheme.Spacing.medium : AppTheme.Spacing.large)
+        .padding(.vertical, compact ? AppTheme.Spacing.small : AppTheme.Spacing.medium)
         .background(
-            AppTheme.contentSurface.opacity(0.55),
-            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
-        )
-        .glassEffect(
-            .regular.interactive(),
+            isSelected ? AppTheme.brandOrange.opacity(0.14) : AppTheme.contentSurface,
             in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
         )
         .contentShape(RoundedRectangle(cornerRadius: AppTheme.contentCornerRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(cardAccessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var rowLayout: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.medium) {
+                CardThumbnailView(card: card, size: thumbnailSize)
+                cardText
+            }
+        } else {
+            HStack(spacing: compact ? AppTheme.Spacing.small : AppTheme.Spacing.medium) {
+                CardThumbnailView(card: card, size: thumbnailSize)
+                cardText
+                Spacer(minLength: AppTheme.Spacing.small)
+            }
+            .frame(minHeight: compact ? 60 : 76)
+        }
+    }
+
+    private var thumbnailSize: CGFloat {
+        compact ? 56 : 72
+    }
+
+    private var cardText: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: AppTheme.Spacing.xSmall) {
+                Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    .contentTransition(.interpolate)
+                if card.isFavorite {
+                    Image(systemName: "star.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.yellow)
+                        .accessibilityHidden(true)
+                }
+            }
+            if let company = card.company, !company.isEmpty {
+                Text(company)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    .contentTransition(.interpolate)
+            }
+            let department = card.department ?? ""
+            let title = card.title ?? ""
+            let affiliation = [department, title].filter { !$0.isEmpty }.joined(separator: " ")
+            if !affiliation.isEmpty {
+                Text(affiliation)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    .contentTransition(.interpolate)
+            }
+            if !cardTags.isEmpty {
+                HStack(spacing: AppTheme.Spacing.xSmall) {
+                    if let tag = cardTags.first {
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(tag.color)
+                                .frame(width: 6, height: 6)
+                            Text(tag.tagName)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(tag.color.opacity(0.12), in: .capsule)
+                    }
+                    if cardTags.count > 1 {
+                        Text("+\(cardTags.count - 1)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(AppTheme.auxiliarySurface, in: .capsule)
+                    }
+                }
+                .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var cardTags: [Tag] {
@@ -92,4 +122,20 @@ struct CardRowView: View {
         return parts.joined(separator: "、")
     }
 
+}
+
+/// 不透明なカードを直接押している間だけ押下状態を表示する。
+/// 前面の検索・タブなどへのタッチには反応させない。
+struct CardRowButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .brightness(configuration.isPressed ? -0.025 : 0)
+            .animation(
+                reduceMotion ? nil : .snappy(duration: 0.16, extraBounce: 0),
+                value: configuration.isPressed
+            )
+    }
 }

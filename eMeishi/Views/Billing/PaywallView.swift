@@ -148,42 +148,37 @@ struct PaywallView: View {
     }
 
     private func mockProductButton(id: String, title: String, description: String, price: String, badge: String?) -> some View {
-        Button {
-            selectedProductID = id
-        } label: {
-        VStack(alignment: .leading, spacing: 8) {
-            if let badge {
-                Text(badge)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 3)
-                    .background(AppTheme.brandOrange, in: Capsule())
-            }
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.headline)
-                    Text(description).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(price).font(.title3.bold())
-                Image(systemName: selectedProductID == id ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selectedProductID == id ? AppTheme.brandOrange : .secondary)
-            }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
-        .background(
-            selectedProductID == id ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
-            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
+        planOption(
+            id: id,
+            title: title,
+            description: description,
+            price: price,
+            badge: badge,
+            disabled: false
         )
-        }
-        .buttonStyle(.plain)
     }
 
     private func productButton(_ product: Product, badge: String?) -> some View {
+        planOption(
+            id: product.id,
+            title: product.displayName,
+            description: product.description,
+            price: product.displayPrice,
+            badge: badge,
+            disabled: isPurchasing || isRestoring
+        )
+    }
+
+    private func planOption(
+        id: String,
+        title: String,
+        description: String,
+        price: String,
+        badge: String?,
+        disabled: Bool
+    ) -> some View {
         Button {
-            selectedProductID = product.id
+            selectedProductID = id
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 if let badge {
@@ -196,28 +191,29 @@ struct PaywallView: View {
                 }
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(product.displayName)
+                        Text(title)
                             .font(.headline)
-                        Text(product.description)
+                        Text(description)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(product.displayPrice)
+                    Text(price)
                         .font(.title3.bold())
-                    Image(systemName: selectedProductID == product.id ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selectedProductID == product.id ? AppTheme.brandOrange : .secondary)
+                    Image(systemName: selectedProductID == id ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selectedProductID == id ? AppTheme.brandOrange : .secondary)
                 }
             }
             .padding()
             .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
             .background(
-                selectedProductID == product.id ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
+                selectedProductID == id ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
                 in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
             )
         }
         .buttonStyle(.plain)
-        .disabled(isPurchasing || isRestoring)
+        .disabled(disabled)
+        .accessibilityAddTraits(selectedProductID == id ? .isSelected : [])
     }
 
     private var purchaseBar: some View {

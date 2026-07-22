@@ -7,13 +7,14 @@ struct CardDetailView: View {
     @ObservedObject var card: BusinessCard
 
     @EnvironmentObject private var listViewModel: CardListViewModel
-    @EnvironmentObject private var navigationState: AppNavigationState
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isShowingEditForm = false
     @State private var exportItem: ExportItem? = nil
     @State private var alertMessage: String? = nil
     @State private var isShowingAlert = false
     @State private var isShowingCardImage = false
+    @State private var isSavingToContacts = false
 
     private let contactsService = ContactsService.shared
     private let exportService   = ExportService.shared
@@ -23,6 +24,7 @@ struct CardDetailView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xLarge) {
                 CardImageHero(
                     imageData: card.imageData,
+                    cacheIdentifier: imageCacheIdentifier,
                     initials: initials,
                     maximumHeight: 420,
                     onTap: card.imageData == nil ? nil : { isShowingCardImage = true }
@@ -41,59 +43,40 @@ struct CardDetailView: View {
                 .accessibilityIdentifier("cardImagePreview")
 
                 profileSection
-                detailActions
 
-                if !card.phoneList.isEmpty || !(card.email ?? "").isEmpty {
-                    titledSurface("連絡先") {
-                        ForEach(card.phoneList, id: \.self) { phone in
-                            InformationRow(
-                                title: "電話",
-                                value: phone,
-                                systemImage: "phone",
-                                actionLabel: "\(phone)へ電話",
-                                action: telephoneAction(phone)
-                            )
-                        }
-                        if let email = card.email, !email.isEmpty {
-                            InformationRow(
-                                title: "メール",
-                                value: email,
-                                systemImage: "envelope",
-                                actionLabel: "\(email)へメール",
-                                action: urlAction(URL(string: "mailto:\(email)"))
-                            )
+                if !contactItems.isEmpty {
+                    ContentSection("連絡先") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(contactItems.enumerated()), id: \.element.id) { index, item in
+                                if index > 0 {
+                                    Divider()
+                                }
+                                DetailValueRow(
+                                    title: item.title,
+                                    value: item.value,
+                                    isLink: item.destination != nil,
+                                    actionLabel: "\(item.title)を開く",
+                                    actionSystemImage: item.actionSystemImage,
+                                    action: item.destination.map { destination in
+                                        { open(destination, label: item.title) }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
 
-                if hasOtherInformation {
-                    titledSurface("その他") {
-                        if let address = card.address, !address.isEmpty {
-                            InformationRow(
-                                title: "住所",
-                                value: address,
-                                systemImage: "mappin.and.ellipse",
-                                actionLabel: "地図で開く",
-                                action: mapAction(address)
-                            )
-                        }
-                        if let website = card.website, !website.isEmpty {
-                            InformationRow(
-                                title: "Webサイト",
-                                value: website,
-                                systemImage: "globe",
-                                actionLabel: "ブラウザで開く",
-                                action: urlAction(ExternalURLNormalizer.websiteURL(from: website))
-                            )
-                        }
-                        if let notes = card.notes, !notes.isEmpty {
-                            InformationRow(title: "メモ", value: notes, systemImage: "note.text")
-                        }
+                if let notes = card.notes, !notes.isEmpty {
+                    ContentSection("メモ") {
+                        Text(notes)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
                 if !card.tagArray.isEmpty || card.createdAt != nil {
-                    titledSurface("タグ・登録情報") {
+                    ContentSection("タグ・登録情報") {
                         if !card.tagArray.isEmpty {
                             FlowLayout(spacing: 6) {
                                 ForEach(card.tagArray) { tag in
@@ -108,11 +91,15 @@ struct CardDetailView: View {
                             }
                         }
                         if let createdAt = card.createdAt {
-                            InformationRow(
-                                title: "登録日時",
-                                value: createdAt.formatted(date: .abbreviated, time: .shortened),
-                                systemImage: "calendar"
-                            )
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                                Text("登録日時")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.body)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.top, card.tagArray.isEmpty ? 0 : AppTheme.Spacing.medium)
                         }
                     }
                 }
@@ -121,28 +108,62 @@ struct CardDetailView: View {
             .padding(.horizontal, AppTheme.Spacing.large)
             .padding(.vertical, AppTheme.Spacing.xLarge)
             .frame(maxWidth: .infinity)
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 0.18),
+                value: detailRevision
+            )
         }
         .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("名刺詳細")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) {
-                    Button {
-                        listViewModel.toggleFavorite(card)
-                    } label: {
-                        Image(systemName: card.isFavorite ? "star.fill" : "star")
-                            .foregroundStyle(card.isFavorite ? .yellow : .secondary)
-                    }
-                    .accessibilityLabel(card.isFavorite ? "お気に入り解除" : "お気に入りに追加")
-                    Button("編集") { isShowingEditForm = true }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    listViewModel.toggleFavorite(card)
+                } label: {
+                    Image(systemName: card.isFavorite ? "star.fill" : "star")
+                        .foregroundStyle(card.isFavorite ? .yellow : .secondary)
                 }
+                .accessibilityLabel(card.isFavorite ? "お気に入り解除" : "お気に入りに追加")
+                .sensoryFeedback(.selection, trigger: card.isFavorite)
+
+                Button("編集") { isShowingEditForm = true }
+                    .tint(Color.primary)
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button {
+                    Task { await exportToContacts() }
+                } label: {
+                    if isSavingToContacts {
+                        Label {
+                            Text("保存中")
+                        } icon: {
+                            ProgressView()
+                        }
+                    } else {
+                        Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
+                    }
+                }
+                .tint(Color.primary)
+                .disabled(isSavingToContacts)
+                .accessibilityIdentifier("saveToContactsButton")
+
+                Spacer()
+
+                Button {
+                    shareVCard()
+                } label: {
+                    Label("共有", systemImage: "square.and.arrow.up")
+                }
+                .tint(Color.primary)
+                .accessibilityIdentifier("shareCardButton")
             }
         }
-        .onAppear { navigationState.isRootBarHidden = true }
-        .onDisappear { navigationState.isRootBarHidden = false }
-        .sheet(isPresented: $isShowingEditForm, onDismiss: listViewModel.fetchCards) {
-            CardFormView(card: card, onSave: { isShowingEditForm = false })
+        .sheet(isPresented: $isShowingEditForm) {
+            CardFormView(card: card, onSave: {
+                listViewModel.fetchCards()
+                isShowingEditForm = false
+            })
         }
         .sheet(item: $exportItem) { item in
             ShareSheet(activityItems: [item.url])
@@ -170,10 +191,12 @@ struct CardDetailView: View {
             }
             Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
                 .font(.largeTitle.weight(.bold))
+                .contentTransition(.interpolate)
             if let company = card.company, !company.isEmpty {
                 Text(company)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .contentTransition(.interpolate)
             }
             let departmentAndTitle = [card.department, card.title]
                 .compactMap { $0 }
@@ -186,26 +209,7 @@ struct CardDetailView: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.xSmall)
-    }
-
-    private var detailActions: some View {
-        HStack(spacing: AppTheme.Spacing.medium) {
-            Button {
-                Task { await exportToContacts() }
-            } label: {
-                Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.glass)
-
-            Button {
-                shareVCard()
-            } label: {
-                Label("共有", systemImage: "square.and.arrow.up")
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.glass)
-        }
+        .textSelection(.enabled)
     }
 
     private var initials: String {
@@ -214,45 +218,109 @@ struct CardDetailView: View {
         return last + first
     }
 
-    private var hasOtherInformation: Bool {
-        !(card.address ?? "").isEmpty
-            || !(card.website ?? "").isEmpty
-            || !(card.notes ?? "").isEmpty
+    private var imageCacheIdentifier: String {
+        CardImageCacheKey.businessCard(card, dataCount: card.imageData?.count ?? 0)
     }
 
-    private func titledSurface<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, AppTheme.Spacing.xSmall)
-            ContentSurface(content: content)
+    private var contactItems: [ContactDetailItem] {
+        var items = card.phoneList.enumerated().map { index, phone in
+            ContactDetailItem(
+                id: "phone-\(index)-\(phone)",
+                title: "電話",
+                value: phone,
+                actionSystemImage: "phone.fill",
+                destination: telephoneURL(phone)
+            )
         }
+        if let email = card.email, !email.isEmpty {
+            items.append(
+                ContactDetailItem(
+                    id: "email-\(email)",
+                    title: "メール",
+                    value: email,
+                    actionSystemImage: "envelope.fill",
+                    destination: emailURL(email)
+                )
+            )
+        }
+        if let address = card.address, !address.isEmpty {
+            items.append(
+                ContactDetailItem(
+                    id: "address-\(address)",
+                    title: "住所",
+                    value: address,
+                    actionSystemImage: "arrow.triangle.turn.up.right.diamond.fill",
+                    destination: mapURL(address)
+                )
+            )
+        }
+        if let website = card.website, !website.isEmpty {
+            items.append(
+                ContactDetailItem(
+                    id: "website-\(website)",
+                    title: "Webサイト",
+                    value: website,
+                    actionSystemImage: "safari.fill",
+                    destination: ExternalURLNormalizer.websiteURL(from: website)
+                )
+            )
+        }
+        return items
     }
 
-    private func urlAction(_ url: URL?) -> (() -> Void)? {
-        guard let url else { return nil }
-        return { openURL(url) }
+    private var detailRevision: String {
+        [
+            card.fullName,
+            card.fullNameReading,
+            card.company ?? "",
+            card.department ?? "",
+            card.title ?? "",
+            card.phoneList.joined(separator: "|"),
+            card.email ?? "",
+            card.address ?? "",
+            card.website ?? "",
+            card.notes ?? "",
+            card.isFavorite.description,
+            card.tagArray.map(\.tagName).sorted().joined(separator: "|")
+        ].joined(separator: "\u{1F}")
     }
 
-    private func telephoneAction(_ phone: String) -> (() -> Void)? {
+    private func telephoneURL(_ phone: String) -> URL? {
         let digits = phone.filter { $0.isNumber || $0 == "+" }
-        return urlAction(URL(string: "tel:\(digits)"))
+        guard !digits.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "tel"
+        components.path = digits
+        return components.url
     }
 
-    private func mapAction(_ address: String) -> (() -> Void)? {
-        guard let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            return nil
+    private func emailURL(_ email: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = email
+        return components.url
+    }
+
+    private func mapURL(_ address: String) -> URL? {
+        var components = URLComponents(string: "maps://")
+        components?.queryItems = [URLQueryItem(name: "q", value: address)]
+        return components?.url
+    }
+
+    private func open(_ destination: URL, label: String) {
+        openURL(destination) { accepted in
+            guard !accepted else { return }
+            alertMessage = "\(label)を開けませんでした。"
+            isShowingAlert = true
         }
-        return urlAction(URL(string: "maps://?q=\(encoded)"))
     }
 
     // MARK: - アクション
 
     private func exportToContacts() async {
+        guard !isSavingToContacts else { return }
+        isSavingToContacts = true
+        defer { isSavingToContacts = false }
         let dto = card.toExportDTO()
         do {
             try await contactsService.export(card: dto)
@@ -275,129 +343,13 @@ struct CardDetailView: View {
     }
 }
 
-// MARK: - 名刺画像の全画面表示
+private struct ContactDetailItem: Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let actionSystemImage: String
+    let destination: URL?
 
-private struct FullScreenCardImageView: View {
-    let image: UIImage
-    let onDismiss: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black
-                .ignoresSafeArea()
-
-            ZoomableCardImageScrollView(image: image)
-                .ignoresSafeArea()
-                .accessibilityLabel("名刺画像")
-                .accessibilityHint("ピンチ操作で拡大、ダブルタップで拡大と元のサイズを切り替えます")
-                .accessibilityIdentifier("fullScreenCardImage")
-
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.glass)
-                    .tint(.white)
-                    .accessibilityLabel("閉じる")
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-
-                Spacer()
-            }
-        }
-        .statusBarHidden()
-    }
-}
-
-/// UIScrollView標準のズームとパンを使い、ピンチ中心と慣性を自然に保つ。
-private struct ZoomableCardImageScrollView: UIViewRepresentable {
-    let image: UIImage
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
-        scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1
-        scrollView.maximumZoomScale = 5
-        scrollView.bouncesZoom = true
-        scrollView.decelerationRate = .fast
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .clear
-
-        let imageView = UIImageView(image: image)
-        imageView.contentMode = .scaleAspectFit
-        imageView.clipsToBounds = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.isAccessibilityElement = true
-        imageView.accessibilityLabel = "名刺画像"
-        scrollView.addSubview(imageView)
-
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
-        ])
-
-        context.coordinator.imageView = imageView
-
-        let doubleTap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleDoubleTap(_:))
-        )
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
-
-        return scrollView
-    }
-
-    func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = image
-    }
-
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        weak var imageView: UIImageView?
-
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-            imageView
-        }
-
-        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-            guard let scrollView = recognizer.view as? UIScrollView,
-                  let imageView else { return }
-
-            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
-                return
-            }
-
-            let targetScale = min(2.5, scrollView.maximumZoomScale)
-            let point = recognizer.location(in: imageView)
-            let targetSize = CGSize(
-                width: scrollView.bounds.width / targetScale,
-                height: scrollView.bounds.height / targetScale
-            )
-            let targetRect = CGRect(
-                x: point.x - targetSize.width / 2,
-                y: point.y - targetSize.height / 2,
-                width: targetSize.width,
-                height: targetSize.height
-            )
-            scrollView.zoom(to: targetRect, animated: true)
-        }
-    }
 }
 
 // FlowLayout, ShareSheet, ExportItem は Utilities/ に定義

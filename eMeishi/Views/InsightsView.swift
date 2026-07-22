@@ -1,4 +1,5 @@
 import Charts
+import CoreData
 import SwiftUI
 
 /// 名刺データの集計とAI解釈を、単一ScrollView内の安定したセクションで表示する。
@@ -8,9 +9,14 @@ struct InsightsView: View {
     @State private var isGeneratingNarrative = false
     @State private var narrativeError: String?
     @State private var isShowingPaywall = false
+    @State private var narrativeTask: Task<Void, Never>?
+    @State private var narrativeGenerationID: UUID?
+    @State private var selectedMonthKey: String?
+    @State private var loadedCardRevision: [String]?
 
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @EnvironmentObject private var navigationState: AppNavigationState
+    @EnvironmentObject private var cardListViewModel: CardListViewModel
     @Environment(\.managedObjectContext) private var managedObjectContext
 
     var body: some View {
@@ -60,10 +66,16 @@ struct InsightsView: View {
         .accessibilityIdentifier("insightsScrollView")
         .navigationTitle("インサイト")
         .navigationBarTitleDisplayMode(.large)
-        .task {
-            guard insights == nil else { return }
+        .task(id: cardRevision) {
+            let revision = cardRevision
+            guard loadedCardRevision != revision else { return }
+            cancelNarrativeGeneration()
             insights = InsightsService.shared.generateInsights(context: managedObjectContext)
+            narrative = nil
+            narrativeError = nil
+            loadedCardRevision = revision
         }
+        .onDisappear(perform: cancelNarrativeGeneration)
         .sheet(isPresented: $isShowingPaywall) {
             PaywallView(context: .insightsNarrative)
                 .environmentObject(entitlementStore)
@@ -85,7 +97,7 @@ struct InsightsView: View {
     }
 
     private func organizeSection(_ insights: InsightsService.Insights) -> some View {
-        insightCard(title: "次に整理する名刺") {
+        ContentSection("次に整理する名刺") {
             Text("集計を見るだけでなく、整理が必要な名刺へ直接移動できます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -118,19 +130,38 @@ struct InsightsView: View {
     }
 
     private func monthlySection(_ insights: InsightsService.Insights) -> some View {
-        insightCard(title: "月別推移") {
-            Chart(Array(insights.monthlyTrend.prefix(12).reversed())) { month in
+        let months = Array(insights.monthlyTrend.prefix(12).reversed())
+        let selectedMonth = months.first { $0.yearMonth == selectedMonthKey }
+        return ContentSection("月別推移") {
+            Text(monthlySummary(insights))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Chart(months) { month in
                 LineMark(
                     x: .value("年月", month.yearMonth),
                     y: .value("名刺数", month.count)
                 )
                 .foregroundStyle(AppTheme.monthlyBlue)
-                .interpolationMethod(.catmullRom)
+                .interpolationMethod(.linear)
                 PointMark(
                     x: .value("年月", month.yearMonth),
                     y: .value("名刺数", month.count)
                 )
                 .foregroundStyle(AppTheme.monthlyBlue)
+
+                if selectedMonthKey == month.yearMonth {
+                    RuleMark(x: .value("選択月", month.yearMonth))
+                        .foregroundStyle(.secondary.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
+                            Text("\(month.count)枚")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(AppTheme.auxiliarySurface, in: .capsule)
+                        }
+                }
             }
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 6)) { value in
@@ -142,24 +173,51 @@ struct InsightsView: View {
                     }
                 }
             }
+            .chartXSelection(value: $selectedMonthKey)
             .frame(height: 220)
+            .accessibilityLabel("月別の名刺登録数")
+            .sensoryFeedback(.selection, trigger: selectedMonthKey)
 
-            Divider()
-
-            ForEach(Array(insights.monthlyTrend.prefix(6))) { month in
-                destinationRow(
-                    title: month.label,
-                    countText: "\(month.count)枚を見る"
-                ) {
-                    navigationState.showCards(filteredBy: .month(month.yearMonth))
+            if let selectedMonth {
+                Divider()
+                HStack(spacing: AppTheme.Spacing.medium) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                        Text(selectedMonth.label)
+                            .font(.subheadline.weight(.semibold))
+                        Text("選択した月の名刺")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        navigationState.showCards(filteredBy: .month(selectedMonth.yearMonth))
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("\(selectedMonth.count)枚")
+                                .foregroundStyle(AppTheme.brandOrange)
+                            Text("を見る")
+                                .foregroundStyle(.primary)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
 
+    private func monthlySummary(_ insights: InsightsService.Insights) -> String {
+        if insights.previousMonthDelta == 0 {
+            return "今月は\(insights.currentMonthCount)枚。前月と同じ件数です。"
+        }
+        let comparison = insights.previousMonthDelta > 0 ? "多い" : "少ない"
+        return "今月は\(insights.currentMonthCount)枚。前月より\(abs(insights.previousMonthDelta))枚\(comparison)です。"
+    }
+
     private func companySection(_ insights: InsightsService.Insights) -> some View {
         let groups = Array(insights.companyGroups.prefix(8))
-        return insightCard(title: "会社別") {
+        return ContentSection("会社別") {
             Chart(groups) { group in
                 BarMark(
                     x: .value("人数", group.count),
@@ -169,11 +227,16 @@ struct InsightsView: View {
                 .cornerRadius(4)
             }
             .frame(height: CGFloat(max(180, groups.count * 34)))
+            .accessibilityLabel("会社別の名刺数")
 
             Divider()
 
             ForEach(Array(groups.prefix(5))) { group in
-                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
+                destinationRow(
+                    title: group.label,
+                    countText: "\(group.count)人",
+                    countColor: AppTheme.brandOrange
+                ) {
                     navigationState.showCards(filteredBy: .company(group.label))
                 }
             }
@@ -181,9 +244,13 @@ struct InsightsView: View {
     }
 
     private func areaSection(_ insights: InsightsService.Insights) -> some View {
-        insightCard(title: "エリア別") {
+        ContentSection("エリア別") {
             ForEach(Array(insights.areaGroups.prefix(10))) { group in
-                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
+                destinationRow(
+                    title: group.label,
+                    countText: "\(group.count)人",
+                    countColor: AppTheme.brandOrange
+                ) {
                     navigationState.showCards(filteredBy: .area(group.label))
                 }
             }
@@ -194,7 +261,7 @@ struct InsightsView: View {
         let groups = Array(insights.roleCategoryGroups.prefix(8))
         let domain = groups.map(\.label)
         let range = groups.indices.map { AppTheme.categoryColors[$0 % AppTheme.categoryColors.count] }
-        return insightCard(title: "職種カテゴリ別") {
+        return ContentSection("職種カテゴリ別") {
             Chart(groups) { group in
                 BarMark(
                     x: .value("人数", group.count),
@@ -206,11 +273,16 @@ struct InsightsView: View {
             .chartForegroundStyleScale(domain: domain, range: range)
             .chartLegend(.hidden)
             .frame(height: CGFloat(max(180, groups.count * 34)))
+            .accessibilityLabel("職種カテゴリ別の名刺数")
 
             Divider()
 
             ForEach(Array(groups.prefix(5))) { group in
-                destinationRow(title: group.label, countText: "\(group.count)人を見る") {
+                destinationRow(
+                    title: group.label,
+                    countText: "\(group.count)人",
+                    countColor: AppTheme.brandOrange
+                ) {
                     navigationState.showCards(filteredBy: .role(group.label))
                 }
             }
@@ -240,7 +312,7 @@ struct InsightsView: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InsightDestinationButtonStyle())
         .disabled(count == 0)
         .accessibilityIdentifier("insightAction_\(systemImage)")
     }
@@ -248,6 +320,7 @@ struct InsightsView: View {
     private func destinationRow(
         title: String,
         countText: String,
+        countColor: Color = .secondary,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -258,23 +331,32 @@ struct InsightsView: View {
                 Spacer()
                 Text(countText)
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(countColor)
             }
-            .frame(minHeight: 40)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InsightDestinationButtonStyle())
+    }
+
+    /// タブが保持されていても、名刺の追加・編集・削除後は集計を更新する。
+    private var cardRevision: [String] {
+        cardListViewModel.cards.map { card in
+            let id = card.objectID.uriRepresentation().absoluteString
+            let updatedAt = card.updatedAt?.timeIntervalSinceReferenceDate ?? 0
+            return "\(id)|\(updatedAt)"
+        }.sorted()
     }
 
     @ViewBuilder
     private func aiNarrativeCard(insights: InsightsService.Insights) -> some View {
-        insightCard(title: "AIで読み解く", accent: true) {
+        ContentSection("AIで読み解く", style: .accent) {
             if let narrative {
                 Text(narrative)
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
-                    Task { await generateNarrative(insights: insights) }
+                    startNarrativeGeneration(insights: insights)
                 } label: {
                     Label("もう一度生成", systemImage: "arrow.clockwise")
                 }
@@ -291,13 +373,13 @@ struct InsightsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {
-                    Task { await generateNarrative(insights: insights) }
+                    startNarrativeGeneration(insights: insights)
                 } label: {
                     Label("再試行", systemImage: "arrow.clockwise")
                 }
             } else {
                 Button {
-                    Task { await generateNarrative(insights: insights) }
+                    startNarrativeGeneration(insights: insights)
                 } label: {
                     HStack(spacing: AppTheme.Spacing.medium) {
                         Image(systemName: "sparkles")
@@ -320,40 +402,81 @@ struct InsightsView: View {
         }
     }
 
-    private func generateNarrative(insights: InsightsService.Insights) async {
+    private func startNarrativeGeneration(insights: InsightsService.Insights) {
         guard entitlementStore.hasAccess else {
             isShowingPaywall = true
             return
         }
-        guard !isGeneratingNarrative else { return }
+
+        narrativeTask?.cancel()
+        let generationID = UUID()
+        let revision = cardRevision
+        narrativeGenerationID = generationID
+        narrativeTask = Task {
+            await generateNarrative(
+                insights: insights,
+                generationID: generationID,
+                revision: revision
+            )
+        }
+    }
+
+    private func generateNarrative(
+        insights: InsightsService.Insights,
+        generationID: UUID,
+        revision: [String]
+    ) async {
         isGeneratingNarrative = true
         narrative = nil
         narrativeError = nil
-        defer { isGeneratingNarrative = false }
+        defer {
+            if narrativeGenerationID == generationID {
+                isGeneratingNarrative = false
+                narrativeTask = nil
+            }
+        }
         do {
-            narrative = try await InsightsService.shared.generateNarrative(insights: insights)
+            let generated = try await InsightsService.shared.generateNarrative(insights: insights)
+            guard !Task.isCancelled,
+                  narrativeGenerationID == generationID,
+                  revision == cardRevision else { return }
+            narrative = generated
+        } catch is CancellationError {
+            return
         } catch InsightsService.NarrativeError.unavailable {
+            guard narrativeGenerationID == generationID, revision == cardRevision else { return }
             narrativeError = "AI解釈はこの端末では利用できません。対応するAIモデルを設定してから再試行してください。"
         } catch {
+            guard !Task.isCancelled,
+                  narrativeGenerationID == generationID,
+                  revision == cardRevision else { return }
             narrativeError = "AI解釈の生成に失敗しました。しばらくしてから再試行してください。"
         }
     }
 
-    private func insightCard<Content: View>(
-        title: String,
-        accent: Bool = false,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.medium) {
-            Text(title)
-                .font(.headline)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(AppTheme.Spacing.large)
-        .background(
-            accent ? AppTheme.brandOrange.opacity(0.08) : AppTheme.contentSurface,
-            in: .rect(cornerRadius: AppTheme.contentCornerRadius, style: .continuous)
-        )
+    private func cancelNarrativeGeneration() {
+        narrativeTask?.cancel()
+        narrativeTask = nil
+        narrativeGenerationID = nil
+        isGeneratingNarrative = false
+    }
+
+}
+
+private struct InsightDestinationButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, configuration.isPressed ? AppTheme.Spacing.small : 0)
+            .background(
+                configuration.isPressed ? AppTheme.auxiliarySurface : Color.clear,
+                in: .rect(cornerRadius: 10, style: .continuous)
+            )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: 0.12),
+                value: configuration.isPressed
+            )
     }
 }

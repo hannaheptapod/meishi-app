@@ -3,6 +3,14 @@ import UIKit
 
 // MARK: - セクションインデックス
 
+nonisolated enum SectionIndexSelection {
+    static func adjustedIndex(current: Int, itemCount: Int, delta: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        let clampedCurrent = min(max(current, 0), itemCount - 1)
+        return min(max(clampedCurrent + delta, 0), itemCount - 1)
+    }
+}
+
 struct SectionIndexView: View {
 
     let sections: [CardSection]
@@ -10,6 +18,7 @@ struct SectionIndexView: View {
 
     @State private var feedbackGenerator = UISelectionFeedbackGenerator()
     @State private var lastChar: String?
+    @State private var accessibilityItemIndex = 0
 
     // あかさたなはまやらわ → A-Z → # （かなをアルファベットより上に配置）
     private static let allItems: [(char: String, sectionId: String)] = {
@@ -78,8 +87,8 @@ struct SectionIndexView: View {
                             .frame(width: 14, height: itemH)
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .center)
-                .padding(.leading, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                .padding(.trailing, 3)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -103,7 +112,42 @@ struct SectionIndexView: View {
                 )
             }
         }
-        .frame(width: 20)
+        // 文字は右端のまま、ジェスチャ領域だけ44pt確保する。
+        .frame(width: 44)
         .padding(.vertical, 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("セクション索引")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityHint("上下にスワイプしてセクションを移動します")
+        .accessibilityAdjustableAction { direction in
+            moveAccessibilitySelection(direction)
+        }
+    }
+
+    private var accessibilityValue: String {
+        guard filteredItems.indices.contains(accessibilityItemIndex) else { return "先頭" }
+        return filteredItems[accessibilityItemIndex].char
+    }
+
+    private func moveAccessibilitySelection(_ direction: AccessibilityAdjustmentDirection) {
+        let delta: Int
+        switch direction {
+        case .increment: delta = 1
+        case .decrement: delta = -1
+        @unknown default:
+            return
+        }
+        guard let nextIndex = SectionIndexSelection.adjustedIndex(
+            current: accessibilityItemIndex,
+            itemCount: filteredItems.count,
+            delta: delta
+        ) else { return }
+        accessibilityItemIndex = nextIndex
+
+        let item = filteredItems[accessibilityItemIndex]
+        if let id = nearestId(for: item.sectionId) {
+            feedbackGenerator.selectionChanged()
+            proxy.scrollTo(id, anchor: .top)
+        }
     }
 }

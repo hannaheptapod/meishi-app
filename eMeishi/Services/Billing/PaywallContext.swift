@@ -1,6 +1,7 @@
 import Foundation
 
-enum PaywallContext {
+enum PaywallContext: Hashable {
+    case general
     case aiSearch
     case bulkRetag
     case insightsNarrative
@@ -8,6 +9,7 @@ enum PaywallContext {
 
     var featureTitle: String {
         switch self {
+        case .general:            return "eMeishi Pro"
         case .aiSearch:           return "AI 自然言語検索"
         case .bulkRetag:          return "AI 一括リタグ"
         case .insightsNarrative:  return "Insights AI 解釈"
@@ -17,6 +19,8 @@ enum PaywallContext {
 
     var featureDescription: String {
         switch self {
+        case .general:
+            return "名刺整理とAI機能を、すべての対応端末で利用できます。"
         case .aiSearch:
             return "「先月会ったIT系の営業さん」など自然な言葉で名刺を検索できます。"
         case .bulkRetag:

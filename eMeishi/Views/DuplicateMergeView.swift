@@ -10,10 +10,12 @@ struct DuplicateMergeView: View {
     let onComplete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.managedObjectContext) private var context
     @State private var selections = FieldSelections()
     @State private var isShowingMergeConfirm = false
-
-    private let context = PersistenceController.shared.container.viewContext
+    @State private var mergeError: String?
+    @State private var isMerging = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// ID から解決した BusinessCard ペア。両方が non-nil の場合のみマージ UI を表示する。
     @State private var cardA: BusinessCard?
@@ -41,6 +43,7 @@ struct DuplicateMergeView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("マージ") { isShowingMergeConfirm = true }
                             .bold()
+                            .disabled(isMerging)
                     }
                 }
             }
@@ -56,10 +59,21 @@ struct DuplicateMergeView: View {
                     Text("「\(cardB.fullName.isEmpty ? "名前なし" : cardB.fullName)」は削除されます。この操作は取り消せません。")
                 }
             }
+            .alert("マージできませんでした", isPresented: Binding(
+                get: { mergeError != nil },
+                set: { if !$0 { mergeError = nil } }
+            )) {
+                Button("OK", role: .cancel) { mergeError = nil }
+            } message: {
+                Text(mergeError ?? "名刺をマージできませんでした。")
+            }
         }
         .task {
             cardA = context.businessCard(forURIString: pair.cardAIDURI)
             cardB = context.businessCard(forURIString: pair.cardBIDURI)
+            if let cardA, let cardB {
+                selections = FieldSelections(cardA: cardA, cardB: cardB)
+            }
             didResolve = true
         }
     }
@@ -87,22 +101,26 @@ struct DuplicateMergeView: View {
 
     private func headerSection(cardA: BusinessCard, cardB: BusinessCard) -> some View {
         Section {
-            HStack(spacing: 12) {
-                cardHeader(cardA, side: .a)
-                VStack(spacing: 4) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .foregroundStyle(.secondary)
-                    Text(pair.scoreText)
-                        .font(.caption2.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(scoreColor(pair.score), in: Capsule())
-                        .accessibilityLabel("類似度 \(pair.scoreText)")
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
+                        cardHeader(cardA, side: .a)
+                        DuplicateScoreBadge(scoreText: pair.scoreText)
+                        cardHeader(cardB, side: .b)
+                    }
+                } else {
+                    HStack(spacing: AppTheme.Spacing.medium) {
+                        cardHeader(cardA, side: .a)
+                        VStack(spacing: AppTheme.Spacing.xSmall) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .foregroundStyle(.secondary)
+                            DuplicateScoreBadge(scoreText: pair.scoreText)
+                        }
+                        cardHeader(cardB, side: .b)
+                    }
                 }
-                cardHeader(cardB, side: .b)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, AppTheme.Spacing.xSmall)
         } header: {
             Text("残したい値の行をタップしてください")
         }
@@ -241,74 +259,38 @@ struct DuplicateMergeView: View {
     // MARK: - マージ実行
 
     private func merge() {
+        guard !isMerging else { return }
         guard let a = cardA, let b = cardB else {
-            onComplete()
-            dismiss()
+            mergeError = "対象の名刺が見つかりません。"
             return
         }
 
         // cardB が既に削除済みの場合はスキップ
         guard !b.isDeleted, b.managedObjectContext != nil else {
-            onComplete()
-            dismiss()
+            mergeError = "削除対象の名刺が見つかりません。"
             return
         }
 
-        // 名前フィールドは名前マージ選択に従って両カードから取得
-        if selections.name == .b {
-            a.lastName        = b.lastName        ?? ""
-            a.lastNameReading = b.lastNameReading ?? ""
-            a.firstName       = b.firstName       ?? ""
-            a.firstNameReading = b.firstNameReading ?? ""
-        }
-        a.company    = selections.company    == .a ? (a.company    ?? "") : (b.company    ?? "")
-        a.department = selections.department == .a ? (a.department ?? "") : (b.department ?? "")
-        a.title      = selections.title      == .a ? (a.title      ?? "") : (b.title      ?? "")
-        a.phone      = selections.phone      == .a ? (a.phone      ?? "") : (b.phone      ?? "")
-        a.email      = selections.email      == .a ? (a.email      ?? "") : (b.email      ?? "")
-        a.address    = selections.address    == .a ? (a.address    ?? "") : (b.address    ?? "")
-        a.website    = selections.website    == .a ? (a.website    ?? "") : (b.website    ?? "")
-        a.notes      = selections.notes      == .a ? (a.notes      ?? "") : (b.notes      ?? "")
-        if a.imageData == nil { a.imageData = b.imageData }
-
-        // cardB のタグを cardA に転送（未保持のものだけ追加）
-        if let bTags = b.tags as? Set<Tag> {
-            for tag in bTags {
-                a.addToTags(tag)
-            }
-        }
-
-        a.updatedAt = Date()
-
-        context.delete(b)
+        isMerging = true
+        defer { isMerging = false }
 
         do {
-            try context.save()
+            try DuplicateMergeService.merge(
+                cardA: a,
+                cardB: b,
+                selection: selections,
+                in: context
+            )
+            onComplete()
+            dismiss()
         } catch {
             AppLogger.persistence.error("マージの保存に失敗しました: \(error)")
+            mergeError = "変更を保存できませんでした。入力内容を確認して、もう一度お試しください。"
         }
-
-        onComplete()
-        dismiss()
-    }
-
-    private func scoreColor(_ score: Double) -> Color {
-        score >= 0.9 ? .red : score >= 0.8 ? .orange : .mint
     }
 }
 
 // MARK: - 選択状態
 
-private enum Side { case a, b }
-
-private struct FieldSelections {
-    var name:       Side = .a
-    var company:    Side = .a
-    var department: Side = .a
-    var title:      Side = .a
-    var phone:      Side = .a
-    var email:      Side = .a
-    var address:    Side = .a
-    var website:    Side = .a
-    var notes:      Side = .a
-}
+private typealias Side = DuplicateMergeSelection.Source
+private typealias FieldSelections = DuplicateMergeSelection
