@@ -26,7 +26,7 @@ nonisolated enum OCRProcessingPhase: String, Codable, CaseIterable, Sendable {
         case .textRecognition: "文字を認識中"
         case .fieldAnalysis: "項目を解析中"
         case .aiAssistance: "AIで補完中"
-        case .saving: "保存中"
+        case .saving: "結果を準備中"
         case .completed: "完了"
         case .cancelled: "キャンセルしました"
         case .failed: "処理に失敗しました"

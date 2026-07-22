@@ -12,15 +12,6 @@ enum CardSortKey: String, CaseIterable, Identifiable {
     case updatedAt = "更新日時"
 
     var id: String { rawValue }
-
-    var systemImage: String {
-        switch self {
-        case .name:      return "person.text.rectangle"
-        case .company:   return "building.2"
-        case .createdAt: return "calendar.badge.plus"
-        case .updatedAt: return "calendar.badge.clock"
-        }
-    }
 }
 
 // セクション（グループ）単位
@@ -34,6 +25,11 @@ struct CardSection: Identifiable {
 @MainActor
 class CardListViewModel: ObservableObject {
 
+    enum TagMutationResult: Equatable {
+        case success
+        case failure(String)
+    }
+
     @Published var cards: [BusinessCard] = []
     @Published var duplicatePairs: [DuplicatePair] = []
     @Published var exportItem: ExportItem? = nil
@@ -41,9 +37,15 @@ class CardListViewModel: ObservableObject {
     @Published var isImporting = false
     @Published var importResultMessage: String? = nil
     @Published var searchText: String = "" {
-        didSet { updateFilteredCards() }
+        didSet {
+            invalidateSemanticSearchIfNeeded()
+            updateFilteredCards()
+        }
     }
     @Published var filteredCards: [BusinessCard] = []
+    @Published private(set) var isSemanticSearchInProgress = false
+    @Published private(set) var semanticSearchMessage: String?
+    @Published private(set) var recentSearches: [String] = []
     @Published var groupedCards: [CardSection] = []
     @Published var allTags: [Tag] = []
     @Published var selectedTagIDs: Set<UUID> = []
@@ -66,21 +68,39 @@ class CardListViewModel: ObservableObject {
         showFavoritesOnly || !selectedTagIDs.isEmpty || externalFilter != nil
     }
 
-    // タップでキー選択 or 昇降順トグル
+    /// メニューからソートキーを選択する。
+    /// キー変更時だけ、その種類に適した既定方向へ切り替える。
+    func selectSortKey(_ key: CardSortKey) {
+        guard sortKey != key else { return }
+        sortKey = key
+        sortAscending = (key == .name || key == .company)
+        fetchCards()
+    }
+
+    /// メニュー上部の方向選択を反映する。
+    func setSortAscending(_ ascending: Bool) {
+        guard sortAscending != ascending else { return }
+        sortAscending = ascending
+        fetchCards()
+    }
+
+    // 既存呼び出しとの互換用：同じキーなら方向を反転する
     func toggleSort(key: CardSortKey) {
         if sortKey == key {
-            sortAscending.toggle()
+            setSortAscending(!sortAscending)
         } else {
-            sortKey = key
-            // デフォルト方向：名前・会社 → 昇順、日時系 → 降順（新しい順）
-            sortAscending = (key == .name || key == .company)
+            selectSortKey(key)
         }
-        fetchCards()
     }
 
     private let context: NSManagedObjectContext
     private var cancellables = Set<AnyCancellable>()
     private var duplicateDetectionGeneration = UUID()
+    private var lastDuplicateDetectionRevisions: Set<CardRevision>?
+    private var semanticSearchTask: Task<Void, Never>?
+    private var semanticSearchQuery: String?
+    private var semanticMatchedCardIDs: Set<UUID>?
+    private static let recentSearchesDefaultsKey = "cardSearchRecentQueries"
 
     private struct CardRevision: Hashable {
         let id: String
@@ -100,6 +120,9 @@ class CardListViewModel: ObservableObject {
         let settings = SettingsStore.shared
         self.sortKey = CardSortKey(rawValue: settings.sortKey) ?? .createdAt
         self.sortAscending = settings.sortAscending
+        self.recentSearches = UserDefaults.standard.stringArray(
+            forKey: Self.recentSearchesDefaultsKey
+        ) ?? []
 
         fetchCards()
         fetchTags()
@@ -157,8 +180,8 @@ class CardListViewModel: ObservableObject {
                 }
             }
             cards = fetched
-            detectDuplicates()
             updateFilteredCards()
+            detectDuplicatesIfCardsChanged()
         } catch {
             AppLogger.persistence.error("名刺の取得に失敗しました: \(error)")
         }
@@ -198,7 +221,8 @@ class CardListViewModel: ObservableObject {
         }
     }
 
-    func createTag(name: String, colorHex: String) {
+    @discardableResult
+    func createTag(name: String, colorHex: String) -> TagMutationResult {
         let tag = Tag(context: context)
         tag.id = UUID()
         tag.name = name
@@ -208,23 +232,26 @@ class CardListViewModel: ObservableObject {
         do {
             try context.save()
             fetchTags()
+            return .success
         } catch {
             context.rollback()
             fetchTags()
-            errorMessage = "タグの作成に失敗しました: \(error.localizedDescription)"
+            return .failure("タグの作成に失敗しました: \(error.localizedDescription)")
         }
     }
 
-    func updateTag(_ tag: Tag, name: String, colorHex: String) {
+    @discardableResult
+    func updateTag(_ tag: Tag, name: String, colorHex: String) -> TagMutationResult {
         tag.name = name
         tag.colorHex = colorHex
         do {
             try context.save()
             fetchTags()
+            return .success
         } catch {
             context.rollback()
             fetchTags()
-            errorMessage = "タグの更新に失敗しました: \(error.localizedDescription)"
+            return .failure("タグの更新に失敗しました: \(error.localizedDescription)")
         }
     }
 
@@ -270,20 +297,120 @@ class CardListViewModel: ObservableObject {
 
     func toggleTagFilter(_ tag: Tag) {
         guard let id = tag.id else { return }
-        if selectedTagIDs.contains(id) {
-            selectedTagIDs.remove(id)
-        } else {
+        setTagFilter(tag, enabled: !selectedTagIDs.contains(id))
+    }
+
+    func setTagFilter(_ tag: Tag, enabled: Bool) {
+        guard let id = tag.id else { return }
+        if enabled {
             selectedTagIDs.insert(id)
+        } else {
+            selectedTagIDs.remove(id)
         }
         updateFilteredCards()
     }
 
     func toggleFavoritesFilter() {
-        showFavoritesOnly.toggle()
+        setFavoritesFilter(!showFavoritesOnly)
+    }
+
+    func setFavoritesFilter(_ enabled: Bool) {
+        showFavoritesOnly = enabled
         updateFilteredCards()
     }
 
+    /// お気に入り・タグ・Insights由来の条件を一括解除する。
+    func clearAllFilters() {
+        showFavoritesOnly = false
+        selectedTagIDs.removeAll()
+        if externalFilter != nil {
+            externalFilter = nil
+        } else {
+            updateFilteredCards()
+        }
+    }
+
     // MARK: - 検索フィルタ
+
+    /// 現在の検索語を通常検索と意味検索の共通入力として確定する。
+    /// 単純語で通常検索がヒットしている場合は、不要なLLM推論を開始しない。
+    func submitUnifiedSearch() {
+        let query = normalizedSearchText
+        guard !query.isEmpty else {
+            cancelSemanticSearch()
+            return
+        }
+        recordRecentSearch(query)
+        guard shouldPerformSemanticSearch(for: query) else {
+            semanticSearchMessage = nil
+            return
+        }
+
+        semanticSearchTask?.cancel()
+        let candidateCards = cards
+        semanticSearchQuery = query
+        semanticMatchedCardIDs = nil
+        semanticSearchMessage = nil
+        isSemanticSearchInProgress = true
+        updateFilteredCards()
+
+        semanticSearchTask = Task { [weak self] in
+            guard let self else { return }
+            let result = await AISearchService.shared.search(query: query, cards: candidateCards)
+            guard !Task.isCancelled,
+                  self.semanticSearchQuery == query,
+                  self.normalizedSearchText == query else { return }
+
+            self.semanticMatchedCardIDs = Set(result.matchedCardIDs)
+            self.semanticSearchMessage = result.text
+            self.isSemanticSearchInProgress = false
+            self.updateFilteredCards()
+        }
+    }
+
+    /// 標準検索候補から選んだ語を通常検索と自然言語検索の共通入力へ反映する。
+    func applySearchSuggestion(_ suggestion: String, submit: Bool = false) {
+        searchText = suggestion
+        if submit {
+            submitUnifiedSearch()
+        }
+    }
+
+    var companySearchSuggestions: [String] {
+        uniqueNonEmptyValues(cards.compactMap(\.company), limit: 4)
+    }
+
+    var tagSearchSuggestions: [String] {
+        uniqueNonEmptyValues(allTags.map(\.tagName), limit: 4)
+    }
+
+    func clearRecentSearches() {
+        recentSearches = []
+        UserDefaults.standard.removeObject(forKey: Self.recentSearchesDefaultsKey)
+    }
+
+    func cancelSemanticSearch() {
+        semanticSearchTask?.cancel()
+        semanticSearchTask = nil
+        semanticSearchQuery = nil
+        semanticMatchedCardIDs = nil
+        semanticSearchMessage = nil
+        isSemanticSearchInProgress = false
+        updateFilteredCards()
+    }
+
+    /// 意味検索結果を現在の通常検索結果へ合流する。テストでも世代不一致を検証できるよう内部APIにする。
+    func applySemanticSearchResults(_ ids: Set<UUID>, for query: String, message: String? = nil) {
+        let normalizedQuery = normalize(query)
+        guard normalizedQuery == normalizedSearchText else { return }
+        semanticSearchTask?.cancel()
+        semanticSearchTask = nil
+        semanticSearchQuery = normalizedQuery
+        semanticMatchedCardIDs = ids
+        semanticSearchMessage = message
+        isSemanticSearchInProgress = false
+        updateFilteredCards()
+    }
 
     private func updateFilteredCards() {
         var result = cards
@@ -306,26 +433,87 @@ class CardListViewModel: ObservableObject {
         }
 
         // テキスト検索
-        let q = searchText.trimmingCharacters(in: .whitespaces)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let q = normalizedSearchText
         if !q.isEmpty {
             result = result.filter { card in
                 func match(_ s: String?) -> Bool {
                     s?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
                         .contains(q) ?? false
                 }
-                return match(card.fullName)
+                let lexicalMatch = match(card.fullName)
                     || match(card.fullNameReading)
                     || match(card.company)
                     || match(card.companyReading)
+                    || match(card.department)
                     || match(card.title)
                     || match(card.email)
                     || match(card.phone)
                     || match(card.address)
+                    || match(card.website)
+                    || match(card.notes)
+                    || card.tagArray.contains { match($0.tagName) }
+                let semanticMatch = card.id.map {
+                    semanticSearchQuery == q && semanticMatchedCardIDs?.contains($0) == true
+                } ?? false
+                return lexicalMatch || semanticMatch
             }
         }
         filteredCards = result
         updateGroupedCards()
+    }
+
+    private var normalizedSearchText: String {
+        normalize(searchText)
+    }
+
+    private func normalize(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+
+    private func recordRecentSearch(_ query: String) {
+        let displayQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayQuery.isEmpty else { return }
+        recentSearches.removeAll { normalize($0) == query }
+        recentSearches.insert(displayQuery, at: 0)
+        recentSearches = Array(recentSearches.prefix(6))
+        UserDefaults.standard.set(recentSearches, forKey: Self.recentSearchesDefaultsKey)
+    }
+
+    private func uniqueNonEmptyValues(_ values: [String], limit: Int) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = normalize(trimmed)
+            guard seen.insert(key).inserted else { continue }
+            result.append(trimmed)
+            if result.count == limit { break }
+        }
+        return result
+    }
+
+    private func invalidateSemanticSearchIfNeeded() {
+        let query = normalizedSearchText
+        guard semanticSearchQuery != nil, semanticSearchQuery != query else { return }
+        semanticSearchTask?.cancel()
+        semanticSearchTask = nil
+        semanticSearchQuery = nil
+        semanticMatchedCardIDs = nil
+        semanticSearchMessage = nil
+        isSemanticSearchInProgress = false
+    }
+
+    private func shouldPerformSemanticSearch(for query: String) -> Bool {
+        if filteredCards.isEmpty { return true }
+        let naturalLanguageCues = [
+            "の人", "関係", "関連", "系", "担当", "会った", "もらった", "交換した",
+            "先月", "今月", "去年", "未登録", "登録されていない", "がない", "お気に入り",
+            "探して", "見つけて", "教えて"
+        ]
+        return naturalLanguageCues.contains { query.localizedCaseInsensitiveContains($0) }
+            || query.split(whereSeparator: \.isWhitespace).count >= 2
     }
 
     func clearExternalFilter() {
@@ -441,6 +629,8 @@ class CardListViewModel: ObservableObject {
 
     /// 重複検出。ルールベースは常に実行、AI 二次判定は Pro 限定。
     func detectDuplicates() {
+        let revisions = cardRevisions
+        lastDuplicateDetectionRevisions = revisions
         let generation = UUID()
         duplicateDetectionGeneration = generation
         let checker = DuplicateChecker(threshold: SettingsStore.shared.duplicateThreshold)
@@ -449,24 +639,28 @@ class CardListViewModel: ObservableObject {
         // 非同期: AI 二次判定でボーダーライン候補を追加（Pro/Grandfather のみ）
         guard EntitlementStore.shared.hasAccess else { return }
         let snapshot = cards
-        let revisions = Set(snapshot.map {
+        Task {
+            let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
+            guard generation == self.duplicateDetectionGeneration,
+                  revisions == self.cardRevisions else { return }
+            self.duplicatePairs = enhanced
+        }
+    }
+
+    /// 並べ替えだけでは重複判定を再実行せず、カード集合または更新日時が変わった時だけ更新する。
+    private func detectDuplicatesIfCardsChanged() {
+        let revisions = cardRevisions
+        guard revisions != lastDuplicateDetectionRevisions else { return }
+        detectDuplicates()
+    }
+
+    private var cardRevisions: Set<CardRevision> {
+        Set(cards.map {
             CardRevision(
                 id: $0.objectID.uriRepresentation().absoluteString,
                 updatedAt: $0.updatedAt
             )
         })
-        Task {
-            let enhanced = await checker.findDuplicatesWithAI(in: snapshot)
-            let currentRevisions = Set(self.cards.map {
-                CardRevision(
-                    id: $0.objectID.uriRepresentation().absoluteString,
-                    updatedAt: $0.updatedAt
-                )
-            })
-            guard generation == self.duplicateDetectionGeneration,
-                  revisions == currentRevisions else { return }
-            self.duplicatePairs = enhanced
-        }
     }
 
     // MARK: - エクスポート

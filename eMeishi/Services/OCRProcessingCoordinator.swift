@@ -1,5 +1,36 @@
 import Foundation
 
+nonisolated enum OCRAIWorkloadBackend: String, Sendable {
+    case none
+    case foundationModels
+    case localLLM
+}
+
+/// 実際に処理する画像・OCR結果・AI入力の規模。
+nonisolated struct OCRProcessingWorkload: Equatable, Sendable {
+    var imageMegapixels: Double
+    var imageMegabytes: Double
+    var recognizedLineCount: Int
+    var recognizedCharacterCount: Int
+    var ambiguousSpanCount: Int
+    var aiInputTokenEstimate: Int
+    var aiOutputTokenEstimate: Int
+    var aiBackend: OCRAIWorkloadBackend
+    var aiRequired: Bool?
+
+    static let unknown = OCRProcessingWorkload(
+        imageMegapixels: 0,
+        imageMegabytes: 0,
+        recognizedLineCount: 0,
+        recognizedCharacterCount: 0,
+        ambiguousSpanCount: 0,
+        aiInputTokenEstimate: 0,
+        aiOutputTokenEstimate: 0,
+        aiBackend: .none,
+        aiRequired: false
+    )
+}
+
 /// OCR の進捗、実測ベース ETA、未処理画像の復元情報を管理する。
 actor OCRProcessingCoordinator {
     static let shared = OCRProcessingCoordinator()
@@ -9,22 +40,28 @@ actor OCRProcessingCoordinator {
 #endif
 
     private let defaults = UserDefaults.standard
-    private let durationKey = "ocrPhaseAverageDurations"
+    private let calibrationKey = "ocrPhaseWorkloadCalibration.v1"
     private var sessions: [OCRJobID: OCRJobSession] = [:]
     private var phaseStartedAt: [OCRJobID: ContinuousClock.Instant] = [:]
-    private var averages: [String: Double]
+    private var workloads: [OCRJobID: OCRProcessingWorkload] = [:]
+    private var calibrations: [String: Double]
 
     private init() {
-        averages = UserDefaults.standard.dictionary(forKey: durationKey) as? [String: Double] ?? [:]
+        calibrations = UserDefaults.standard.dictionary(forKey: calibrationKey) as? [String: Double] ?? [:]
     }
 
-    func start(jobID: OCRJobID, totalItems: Int) -> OCRProcessingState {
+    func start(
+        jobID: OCRJobID,
+        totalItems: Int,
+        workload: OCRProcessingWorkload = .unknown
+    ) -> OCRProcessingState {
+        workloads[jobID] = workload
         let state = OCRProcessingState(
             phase: .imagePreparation,
             completedItems: 0,
             totalItems: max(1, totalItems),
             progress: OCRProcessingPhase.imagePreparation.progressRange.lowerBound,
-            estimatedRemainingSeconds: estimateRemaining(from: .imagePreparation),
+            estimatedRemainingSeconds: estimateRemaining(jobID: jobID, from: .imagePreparation),
             errorMessage: nil
         )
         sessions[jobID] = OCRJobSession(
@@ -44,12 +81,13 @@ actor OCRProcessingCoordinator {
             return nil
         }
         recordCurrentPhaseDuration(jobID: jobID, state: session.state)
+        // 新しい段階の ETA から、直前段階の経過時間を誤って差し引かない。
+        phaseStartedAt[jobID] = .now
         session.state.phase = phase
         session.state.progress = max(session.state.progress, phase.progressRange.lowerBound)
-        session.state.estimatedRemainingSeconds = estimateRemaining(from: phase)
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: phase)
         session.state.errorMessage = nil
         sessions[jobID] = session
-        phaseStartedAt[jobID] = .now
         return session.state
     }
 
@@ -61,6 +99,69 @@ actor OCRProcessingCoordinator {
             session.state.progress,
             range.lowerBound + (range.upperBound - range.lowerBound) * bounded
         )
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: session.state.phase)
+        sessions[jobID] = session
+        return session.state
+    }
+
+    func updateImageMetrics(
+        jobID: OCRJobID,
+        megapixels: Double,
+        megabytes: Double
+    ) -> OCRProcessingState? {
+        guard var workload = workloads[jobID], var session = sessions[jobID], !session.isTerminal else {
+            return nil
+        }
+        workload.imageMegapixels = max(0, megapixels)
+        workload.imageMegabytes = max(0, megabytes)
+        workloads[jobID] = workload
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: session.state.phase)
+        sessions[jobID] = session
+        return session.state
+    }
+
+    func updateRecognitionMetrics(
+        jobID: OCRJobID,
+        lineCount: Int,
+        characterCount: Int
+    ) -> OCRProcessingState? {
+        guard var workload = workloads[jobID], var session = sessions[jobID], !session.isTerminal else {
+            return nil
+        }
+        workload.recognizedLineCount = max(0, lineCount)
+        workload.recognizedCharacterCount = max(0, characterCount)
+        workloads[jobID] = workload
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: session.state.phase)
+        sessions[jobID] = session
+        return session.state
+    }
+
+    func updateAIPlan(
+        jobID: OCRJobID,
+        backend: OCRAIWorkloadBackend,
+        required: Bool,
+        ambiguousSpanCount: Int,
+        inputTokenEstimate: Int,
+        outputTokenEstimate: Int
+    ) -> OCRProcessingState? {
+        guard var workload = workloads[jobID], var session = sessions[jobID], !session.isTerminal else {
+            return nil
+        }
+        workload.aiBackend = backend
+        workload.aiRequired = required && backend != .none
+        workload.ambiguousSpanCount = max(0, ambiguousSpanCount)
+        workload.aiInputTokenEstimate = max(0, inputTokenEstimate)
+        workload.aiOutputTokenEstimate = max(0, outputTokenEstimate)
+        workloads[jobID] = workload
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: session.state.phase)
+        sessions[jobID] = session
+        return session.state
+    }
+
+    /// 現在段階の経過時間を差し引き、画面とLive ActivityのETAを更新する。
+    func refreshEstimate(jobID: OCRJobID) -> OCRProcessingState? {
+        guard var session = sessions[jobID], !session.isTerminal else { return nil }
+        session.state.estimatedRemainingSeconds = estimateRemaining(jobID: jobID, from: session.state.phase)
         sessions[jobID] = session
         return session.state
     }
@@ -75,6 +176,7 @@ actor OCRProcessingCoordinator {
         session.finishedAt = Date()
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
+        workloads[jobID] = nil
         return session.state
     }
 
@@ -86,6 +188,7 @@ actor OCRProcessingCoordinator {
         session.finishedAt = Date()
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
+        workloads[jobID] = nil
         return session.state
     }
 
@@ -98,6 +201,7 @@ actor OCRProcessingCoordinator {
         session.finishedAt = Date()
         sessions[jobID] = session
         phaseStartedAt[jobID] = nil
+        workloads[jobID] = nil
         return session.state
     }
 
@@ -133,29 +237,89 @@ actor OCRProcessingCoordinator {
         // 人工遅延は端末性能の実測値ではないため、学習用平均には含めない。
         let measuredElapsed = max(0, elapsed - configuredTestDelay)
         guard measuredElapsed > 0 else { return }
-        let key = state.phase.rawValue
-        let previous = averages[key]
-        averages[key] = previous.map { $0 * 0.7 + measuredElapsed * 0.3 } ?? measuredElapsed
-        defaults.set(averages, forKey: durationKey)
+        guard let workload = workloads[jobID] else { return }
+        let baseline = Self.baselineDuration(for: state.phase, workload: workload)
+        guard baseline > 0 else { return }
+        let observedCalibration = min(max(measuredElapsed / baseline, 0.25), 4)
+        let key = calibrationKey(for: state.phase, workload: workload)
+        let previous = calibrations[key]
+        calibrations[key] = previous.map { $0 * 0.7 + observedCalibration * 0.3 }
+            ?? observedCalibration
+        defaults.set(calibrations, forKey: calibrationKey)
     }
 
-    private func estimateRemaining(from phase: OCRProcessingPhase) -> TimeInterval {
-        let defaultsByPhase: [OCRProcessingPhase: Double] = [
-            .imagePreparation: 1.5,
-            .textRecognition: 4,
-            .fieldAnalysis: 1.5,
-            .aiAssistance: 12,
-            .saving: 0.5,
-        ]
+    private func estimateRemaining(jobID: OCRJobID, from phase: OCRProcessingPhase) -> TimeInterval {
+        guard let workload = workloads[jobID] else { return 0 }
         let activePhases: [OCRProcessingPhase] = [
             .imagePreparation, .textRecognition, .fieldAnalysis, .aiAssistance, .saving,
         ]
         guard let startIndex = activePhases.firstIndex(of: phase) else { return 0 }
-        return activePhases[startIndex...].reduce(0) { total, item in
-            total
-                + (averages[item.rawValue] ?? defaultsByPhase[item] ?? 0)
-                + configuredTestDelay
+        let plannedPhases = activePhases[startIndex...].filter { item in
+            item != .aiAssistance || workload.aiRequired != false
         }
+        let elapsed = phaseElapsed(jobID: jobID)
+        return plannedPhases.reduce(0) { total, item in
+            let predicted = calibratedDuration(for: item, workload: workload) + configuredTestDelay
+            return total + (item == phase ? max(0, predicted - elapsed) : predicted)
+        }
+    }
+
+    /// 入力内容だけから算出する端末補正前の所要時間。
+    nonisolated static func baselineDuration(
+        for phase: OCRProcessingPhase,
+        workload: OCRProcessingWorkload
+    ) -> TimeInterval {
+        switch phase {
+        case .imagePreparation:
+            return 0.35 + workload.imageMegapixels * 0.07 + workload.imageMegabytes * 0.015
+        case .textRecognition:
+            return 0.8 + workload.imageMegapixels * 0.27
+        case .fieldAnalysis:
+            return 0.4
+                + Double(workload.recognizedLineCount) * 0.04
+                + Double(workload.recognizedCharacterCount) * 0.002
+        case .aiAssistance:
+            guard workload.aiRequired != false else { return 0 }
+            let input = Double(max(32, workload.aiInputTokenEstimate))
+            let output = Double(max(1, workload.aiOutputTokenEstimate))
+            let ambiguous = Double(max(1, workload.ambiguousSpanCount))
+            switch workload.aiBackend {
+            case .foundationModels:
+                return 0.8 + input * 0.008 + output * 0.025
+            case .localLLM:
+                // Qwenは曖昧spanごとに文脈付き推論を行うため、入力処理も件数分掛かる。
+                return 1.5 + ambiguous * (0.65 + input * 0.01) + output * 0.02
+            case .none:
+                return 0
+            }
+        case .saving:
+            return 0.15 + workload.imageMegabytes * 0.08
+        case .idle, .completed, .cancelled, .failed:
+            return 0
+        }
+    }
+
+    private func calibratedDuration(
+        for phase: OCRProcessingPhase,
+        workload: OCRProcessingWorkload
+    ) -> TimeInterval {
+        let baseline = Self.baselineDuration(for: phase, workload: workload)
+        return baseline * (calibrations[calibrationKey(for: phase, workload: workload)] ?? 1)
+    }
+
+    private func calibrationKey(
+        for phase: OCRProcessingPhase,
+        workload: OCRProcessingWorkload
+    ) -> String {
+        phase == .aiAssistance
+            ? "\(phase.rawValue).\(workload.aiBackend.rawValue)"
+            : phase.rawValue
+    }
+
+    private func phaseElapsed(jobID: OCRJobID) -> TimeInterval {
+        guard let started = phaseStartedAt[jobID] else { return 0 }
+        let components = started.duration(to: .now).components
+        return max(0, Double(components.seconds) + Double(components.attoseconds) / 1e18)
     }
 
     private var configuredTestDelay: TimeInterval {

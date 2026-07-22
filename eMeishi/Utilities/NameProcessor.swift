@@ -60,7 +60,7 @@ enum NameProcessor {
     /// 行が人名である可能性を 0.0〜1.0 で返す
     static func personNameScore(for line: RecognizedLine, candidates: [RecognizedLine]) -> Double {
         let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return 0 }
+        guard isPlausiblePersonNameText(text) else { return 0 }
 
         if isFuriganaLine(line) || isRomajiNameLine(line) { return 0 }
 
@@ -151,6 +151,61 @@ enum NameProcessor {
         return min(max(score, 0.0), 1.0)
     }
 
+    /// 位置や文字サイズでは救済できない、氏名として明白に不正な文字列を除外する。
+    /// 漢数字だけの管理番号やOCR記号断片を「短い漢字名」と誤認しないための前段ガード。
+    static func isPlausiblePersonNameText(_ text: String) -> Bool {
+        let compact = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard (2...12).contains(compact.count) else { return false }
+        return containsPlausibleNameCharacters(compact)
+    }
+
+    /// 縦書きで1文字ずつ認識された氏名列の部品判定。
+    static func isPlausiblePersonNameComponent(_ text: String) -> Bool {
+        let compact = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard (1...4).contains(compact.count) else { return false }
+        return containsPlausibleNameCharacters(compact)
+    }
+
+    private static func containsPlausibleNameCharacters(_ compact: String) -> Bool {
+        guard ContactPatternExtractor.extractEmail(from: compact) == nil,
+              ContactPatternExtractor.extractPhone(from: compact) == nil,
+              ContactPatternExtractor.extractURL(from: compact) == nil,
+              !FieldDetector.isAddress(compact),
+              !FieldDetector.isCompany(compact),
+              !FieldDetector.isDepartment(compact),
+              !FieldDetector.isJobTitle(compact) else {
+            return false
+        }
+
+        let japaneseNumerals = CharacterSet(charactersIn: "〇零一二三四五六七八九十百千万億兆壱弐参伍陸漆捌玖")
+        let ignored = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols)
+        var hasNameCharacter = false
+        for scalar in compact.unicodeScalars {
+            if ignored.contains(scalar) || CharacterSet.decimalDigits.contains(scalar) {
+                continue
+            }
+            if japaneseNumerals.contains(scalar) {
+                continue
+            }
+            if (0x3040...0x30FF).contains(scalar.value)
+                || (0x3400...0x4DBF).contains(scalar.value)
+                || (0x4E00...0x9FFF).contains(scalar.value)
+                || (0x41...0x5A).contains(scalar.value)
+                || (0x61...0x7A).contains(scalar.value) {
+                hasNameCharacter = true
+                continue
+            }
+            return false
+        }
+        return hasNameCharacter
+    }
+
     /// 未分類行から氏名候補を選び、ParsedCard に反映する。残った未分類行を返す。
     static func resolveNameFromUnclassified(_ result: inout CardFieldClassifier.ParsedCard,
                                             unclassified: [RecognizedLine]) -> [RecognizedLine] {
@@ -202,9 +257,6 @@ enum NameProcessor {
                 .filter { !indicesToRemove.contains($0) }
                 .map { remaining[$0] }
 
-        } else if let first = remaining.first {
-            rawName = first.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            remaining.removeFirst()
         } else {
             rawName = ""
         }

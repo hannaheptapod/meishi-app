@@ -41,6 +41,7 @@ private final class MockLLMService: LocalLLMServiceProtocol {
     var isModelAvailable: Bool
     var classifyResult: CardFieldClassifier.ParsedCard?
     var decisions: [CardFieldDecision] = []
+    var resolveCallCount = 0
 
     init(modelAvailable: Bool = false, classifyResult: CardFieldClassifier.ParsedCard? = nil) {
         self.isModelAvailable = modelAvailable
@@ -52,7 +53,8 @@ private final class MockLLMService: LocalLLMServiceProtocol {
     }
 
     func resolveFields(request: CardFieldResolutionRequest) async -> [CardFieldDecision] {
-        decisions
+        resolveCallCount += 1
+        return decisions
     }
 }
 
@@ -463,7 +465,7 @@ struct CardFormViewModelOCRTests {
         #expect(vm.isProcessingOCR == false)
     }
 
-    @Test func populateFromOCRDoesNotStoreAsciiOnlyReadingsAsFurigana() async {
+    @Test func populateFromOCRReplacesAsciiReadingsWithGeneratedKana() async {
         let ctx = makeContext()
         let mockOCR = MockOCRService()
         mockOCR.linesToReturn = [makeLine("田中 花子"), makeLine("TANAKA Hanako")]
@@ -485,8 +487,8 @@ struct CardFormViewModelOCRTests {
         await vm.populateFromOCR(image: UIImage())
         #expect(vm.lastName == "田中")
         #expect(vm.firstName == "花子")
-        #expect(vm.lastNameReading.isEmpty)
-        #expect(vm.firstNameReading.isEmpty)
+        #expect(vm.lastNameReading == "たなか")
+        #expect(vm.firstNameReading == "はなこ")
     }
 
     @Test func populateFromOCRLocalLLMNotAvailableSetsError() async {
@@ -592,7 +594,65 @@ struct CardFormViewModelOCRTests {
         #expect(vm.department.isEmpty)
     }
 
-    @Test func ocrReviewExposesEmailReadingAsCandidateWithoutAutoFill() async throws {
+    @Test func populateFromOCRSkipsAIForAlreadyResolvedField() async {
+        let ctx = makeContext()
+        let mockOCR = MockOCRService()
+        mockOCR.linesToReturn = [makeLine("山田 太郎")]
+
+        var parsed = CardFieldClassifier.ParsedCard()
+        parsed.lastName = "山田"
+        parsed.firstName = "太郎"
+        let span = CardTextSpan(
+            sourceLineIndex: 0, text: "別候補", boundingBox: .zero,
+            ocrConfidence: 0.8, textDirection: .leftToRight, readingOrder: 0
+        )
+        let duplicateNameCandidate = FieldCandidate(
+            spanIDs: [span.id], field: .personName, value: span.text,
+            score: 0.4, evidence: [.nameShape]
+        )
+        let structured = CardFieldClassifier.StructuredFieldsResult(
+            parsed: parsed,
+            unclassifiedLines: [span.text],
+            spans: [span],
+            candidates: [duplicateNameCandidate],
+            assignments: [],
+            ambiguousSpanIDs: [span.id]
+        )
+        let llm = MockLLMService(modelAvailable: true)
+        let vm = CardFormViewModel(
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: parsed, structuredResult: structured),
+            llmService: llm,
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await vm.populateFromOCR(image: UIImage())
+
+        #expect(llm.resolveCallCount == 0)
+        #expect(vm.lastName == "山田")
+        #expect(vm.firstName == "太郎")
+    }
+
+    @Test func populateFromOCRDoesNotCompleteWithAllFieldsEmpty() async {
+        let ctx = makeContext()
+        let mockOCR = MockOCRService()
+        mockOCR.linesToReturn = [makeLine("SAMPLE LOGO")]
+        let vm = CardFormViewModel(
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: CardFieldClassifier.ParsedCard()),
+            llmService: MockLLMService(modelAvailable: false),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await vm.populateFromOCR(image: UIImage())
+
+        #expect(vm.ocrProcessingState.phase == .failed)
+        #expect(vm.ocrErrorMessage != nil)
+    }
+
+    @Test func ocrReviewAutoFillsReliableEmailReadingAndKeepsItSelectable() async throws {
         let ctx = makeContext()
         let mockOCR = MockOCRService()
         mockOCR.linesToReturn = [
@@ -610,8 +670,8 @@ struct CardFormViewModelOCRTests {
 
         await vm.populateFromOCR(image: UIImage())
 
-        #expect(vm.lastNameReading.isEmpty)
         let candidate = try #require(vm.readingCandidates(for: .lastName).first(where: { $0.source == .email }))
+        #expect(vm.lastNameReading == candidate.reading)
         vm.selectReadingCandidate(candidate)
         #expect(vm.lastNameReading == candidate.reading)
     }

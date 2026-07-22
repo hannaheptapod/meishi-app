@@ -55,6 +55,18 @@ struct CardFieldClassifier {
         let assignments = resolver.resolve(spans: spans, candidates: candidates)
         let ambiguous = resolver.ambiguousSpanIDs(candidates: candidates, assignments: assignments)
         var parsed = makeParsedCard(assignments: assignments)
+        // Resolverは同一spanの二重利用を防ぐ一方、Visionが複数項目を一行へ
+        // 結合した場合や氏名スコアが境界付近の場合に、全項目を落とすことがある。
+        // 独立した確定ルールを再適用し、Resolverで未取得の値だけを補完する。
+        mergeMissing(into: &parsed, fallback: makeIndependentFallback(lines: lines))
+        if let corrected = NameReadingGenerator.correctedNameSplitUsingEmail(
+            lastName: parsed.lastName,
+            firstName: parsed.firstName,
+            email: parsed.email
+        ) {
+            parsed.lastName = corrected.lastName
+            parsed.firstName = corrected.firstName
+        }
         let readings = NameReadingGenerator.resolveReadings(
             parsed: parsed,
             spans: spans,
@@ -154,7 +166,68 @@ struct CardFieldClassifier {
                 result.append(candidate(span, field: .personName, value: text, score: nameScore, evidence: evidence))
             }
         }
+        result.append(contentsOf: makeVerticalNamePairCandidates(spans: spans, lines: lines))
         return result
+    }
+
+    /// 縦書きの姓・名が別 observation になった場合に、隣接する2列を1つの氏名候補として扱う。
+    /// 右から左の縦書き順で結合し、単独の短い列より少し高いスコアを与える。
+    private func makeVerticalNamePairCandidates(
+        spans: [CardTextSpan],
+        lines: [RecognizedLine]
+    ) -> [FieldCandidate] {
+        var result: [FieldCandidate] = []
+        for lhsIndex in spans.indices {
+            let lhs = spans[lhsIndex]
+            guard isShortVerticalNamePart(lhs) else { continue }
+            for rhsIndex in spans.indices where rhsIndex > lhsIndex {
+                let rhs = spans[rhsIndex]
+                guard isShortVerticalNamePart(rhs), verticalNameColumnsAreAdjacent(lhs, rhs) else { continue }
+
+                let ordered = [lhs, rhs].sorted { $0.boundingBox.midX > $1.boundingBox.midX }
+                let combined = ordered.map(\.text).joined(separator: " ")
+                guard NameProcessor.isPlausiblePersonNameText(combined) else { continue }
+                let lhsScore = NameProcessor.personNameScore(for: lines[lhsIndex], candidates: lines)
+                let rhsScore = NameProcessor.personNameScore(for: lines[rhsIndex], candidates: lines)
+                let score = min(max(lhsScore, rhsScore) + 0.12, 0.95)
+                guard score >= 0.48 else { continue }
+                result.append(FieldCandidate(
+                    spanIDs: ordered.map(\.id),
+                    field: .personName,
+                    value: combined,
+                    score: score,
+                    evidence: [.nameShape, .spatialContext]
+                ))
+            }
+        }
+        return result
+    }
+
+    private func isShortVerticalNamePart(_ span: CardTextSpan) -> Bool {
+        let compact = span.text
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard (1...3).contains(compact.count),
+              span.textDirection == .topToBottom || span.boundingBox.height > span.boundingBox.width * 1.4,
+              !FieldDetector.isCompany(compact),
+              !FieldDetector.isDepartment(compact),
+              !FieldDetector.isJobTitle(compact) else {
+            return false
+        }
+        return NameProcessor.isPlausiblePersonNameComponent(compact)
+    }
+
+    private func verticalNameColumnsAreAdjacent(_ lhs: CardTextSpan, _ rhs: CardTextSpan) -> Bool {
+        let overlap = min(lhs.boundingBox.maxY, rhs.boundingBox.maxY)
+            - max(lhs.boundingBox.minY, rhs.boundingBox.minY)
+        let overlapRatio = overlap / max(min(lhs.boundingBox.height, rhs.boundingBox.height), 0.001)
+        let width = max(lhs.boundingBox.width, rhs.boundingBox.width)
+        let horizontalDistance = abs(lhs.boundingBox.midX - rhs.boundingBox.midX)
+        let widthRatio = min(lhs.boundingBox.width, rhs.boundingBox.width) / max(width, 0.001)
+        return overlapRatio >= 0.55
+            && horizontalDistance > width * 0.65
+            && horizontalDistance <= width * 4.0
+            && widthRatio >= 0.55
     }
 
     private func makeParsedCard(assignments: [FieldAssignment]) -> ParsedCard {
@@ -177,6 +250,72 @@ struct CardFieldClassifier {
             }
         }
         return result
+    }
+
+    /// AIや候補競合に依存しない確定フィールドの安全網。
+    /// 会社・部署・役職・連絡先として確定した行は氏名候補から除外する。
+    private func makeIndependentFallback(lines: [RecognizedLine]) -> ParsedCard {
+        let expanded = expandCombinedNameCompanyLines(lines)
+        var result = ParsedCard()
+        var nameCandidates: [RecognizedLine] = []
+
+        for line in expanded {
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            var isNonNameField = false
+            if result.email.isEmpty, let email = ContactPatternExtractor.extractEmail(from: text) {
+                result.email = email
+                isNonNameField = true
+            }
+            if let phone = ContactPatternExtractor.extractPhone(from: text),
+               !result.phones.contains(phone) {
+                result.phones.append(phone)
+                isNonNameField = true
+            }
+            if result.website.isEmpty, let url = ContactPatternExtractor.extractURL(from: text) {
+                result.website = url
+                isNonNameField = true
+            }
+            if FieldDetector.isAddress(text) {
+                result.address = result.address.isEmpty ? text : result.address + " " + text
+                isNonNameField = true
+            }
+            if result.company.isEmpty, FieldDetector.isCompany(text) {
+                result.company = text
+                isNonNameField = true
+            } else if FieldDetector.isDepartment(text) {
+                result.department = result.department.isEmpty ? text : result.department + " " + text
+                isNonNameField = true
+            } else if result.title.isEmpty, FieldDetector.isJobTitle(text) {
+                result.title = text
+                isNonNameField = true
+            }
+
+            if !isNonNameField {
+                nameCandidates.append(line)
+            }
+        }
+
+        let plausibleNameCandidates = nameCandidates.filter { line in
+            NameProcessor.personNameScore(for: line, candidates: nameCandidates) > 0.35
+        }
+        _ = NameProcessor.resolveNameFromUnclassified(&result, unclassified: plausibleNameCandidates)
+        return result
+    }
+
+    private func mergeMissing(into parsed: inout ParsedCard, fallback: ParsedCard) {
+        if parsed.lastName.isEmpty { parsed.lastName = fallback.lastName }
+        if parsed.firstName.isEmpty { parsed.firstName = fallback.firstName }
+        if parsed.company.isEmpty { parsed.company = fallback.company }
+        if parsed.department.isEmpty { parsed.department = fallback.department }
+        if parsed.title.isEmpty { parsed.title = fallback.title }
+        if parsed.email.isEmpty { parsed.email = fallback.email }
+        if parsed.website.isEmpty { parsed.website = fallback.website }
+        if parsed.address.isEmpty { parsed.address = fallback.address }
+        for phone in fallback.phones where !parsed.phones.contains(phone) {
+            parsed.phones.append(phone)
+        }
     }
 
     private func candidate(

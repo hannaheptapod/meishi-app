@@ -61,11 +61,13 @@ class CardFormViewModel: ObservableObject {
     private let settings: SettingsProviding
     private(set) var ocrJobID = OCRJobID()
     private var ocrTask: Task<Void, Never>?
+    private var etaTickerTask: Task<Void, Never>?
     private var isApplyingReadingResolution = false
     private var editedReadingTargets = Set<ReadingTarget>()
 
     deinit {
         ocrTask?.cancel()
+        etaTickerTask?.cancel()
     }
 
     // MARK: - 初期化（新規作成）
@@ -108,12 +110,13 @@ class CardFormViewModel: ObservableObject {
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             do {
-                try await self.beginOCRProcessing()
+                try await self.beginOCRProcessing(image: image)
                 // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
                 let cardImage = await self.ocrService.detectAndCropCard(from: image)
                 try Task.checkCancellation()
                 // 補正済み画像で保存データを上書き
                 self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
+                await self.updateImageWorkload(cardImage)
                 try await self.setOCRPhase(.textRecognition)
                 await self.populateFromOCR(image: cardImage)
             } catch is CancellationError {
@@ -145,7 +148,7 @@ class CardFormViewModel: ObservableObject {
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             do {
-                try await self.beginOCRProcessing()
+                try await self.beginOCRProcessing(image: croppedImage)
                 try await self.setOCRPhase(.textRecognition)
                 await self.populateFromOCR(image: croppedImage)
             } catch is CancellationError {
@@ -200,7 +203,7 @@ class CardFormViewModel: ObservableObject {
 
         do {
             if ocrProcessingState == .idle {
-                try await beginOCRProcessing()
+                try await beginOCRProcessing(image: image)
                 try await setOCRPhase(.textRecognition)
             }
             let lines = try await ocrService.recognizeText(from: image)
@@ -210,6 +213,7 @@ class CardFormViewModel: ObservableObject {
                 return
             }
 
+            await updateRecognitionWorkload(lines)
             try await setOCRPhase(.fieldAnalysis)
 
             switch settings.readingMethod {
@@ -229,17 +233,22 @@ class CardFormViewModel: ObservableObject {
                     try await populateWithFoundationModelsOnly(lines: lines)
                 } else {
                     ocrErrorMessage = "Apple Intelligence は iOS 26 以降で利用できます。標準読み取りで処理しました。"
-                    populateWithClassifier(lines: lines)
+                    try await runUnifiedPipeline(lines: lines, llmBackend: .none)
                 }
                 #else
                 ocrErrorMessage = "Apple Intelligence は現在利用できません。標準読み取りで処理しました。"
-                populateWithClassifier(lines: lines)
+                try await runUnifiedPipeline(lines: lines, llmBackend: .none)
                 #endif
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
                 try await populateWithLocalLLMOnly(lines: lines)
             }
             try Task.checkCancellation()
+
+            guard hasAnyResolvedField else {
+                await finishOCRFailure(message: "名刺の項目を判別できませんでした。画像を確認して再試行してください。")
+                return
+            }
 
             try await setOCRPhase(.saving)
             try Task.checkCancellation()
@@ -251,6 +260,7 @@ class CardFormViewModel: ObservableObject {
             OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: true)
             canContinueOCRInBackground = false
             isProcessingOCR = false
+            stopETATicker()
 
             // 完了した同一ジョブだけがAIタグ提案を開始できる。
             requestTagSuggestions()
@@ -269,6 +279,7 @@ class CardFormViewModel: ObservableObject {
             }
             OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
             canContinueOCRInBackground = false
+            stopETATicker()
         }
 
         if didFail { isProcessingOCR = false }
@@ -283,6 +294,7 @@ class CardFormViewModel: ObservableObject {
         }
         OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
         canContinueOCRInBackground = false
+        stopETATicker()
     }
 
     func cancelOCR() {
@@ -316,16 +328,22 @@ class CardFormViewModel: ObservableObject {
         }
         OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
         canContinueOCRInBackground = false
+        stopETATicker()
     }
 
-    private func beginOCRProcessing() async throws {
+    private func beginOCRProcessing(image: UIImage) async throws {
         try Task.checkCancellation()
-        ocrProcessingState = await OCRProcessingCoordinator.shared.start(jobID: ocrJobID, totalItems: 1)
+        ocrProcessingState = await OCRProcessingCoordinator.shared.start(
+            jobID: ocrJobID,
+            totalItems: 1,
+            workload: makeInitialWorkload(image: image)
+        )
         ocrStage = ocrProcessingState.phase.title
         canContinueOCRInBackground = OCRBackgroundTaskManager.shared.begin(jobID: ocrJobID, totalItems: 1) { [weak self] in
             self?.cancelOCR()
         }
         OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: ocrProcessingState)
+        startETATicker()
 #if DEBUG
         try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
 #endif
@@ -344,6 +362,100 @@ class CardFormViewModel: ObservableObject {
         try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
 #endif
         try Task.checkCancellation()
+    }
+
+    private func updateImageWorkload(_ image: UIImage) async {
+        let metrics = Self.imageMetrics(image: image, data: capturedImageData)
+        if let state = await OCRProcessingCoordinator.shared.updateImageMetrics(
+            jobID: ocrJobID,
+            megapixels: metrics.megapixels,
+            megabytes: metrics.megabytes
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
+    }
+
+    private func updateRecognitionWorkload(_ lines: [RecognizedLine]) async {
+        let characterCount = lines.reduce(0) { $0 + $1.text.count }
+        if let state = await OCRProcessingCoordinator.shared.updateRecognitionMetrics(
+            jobID: ocrJobID,
+            lineCount: lines.count,
+            characterCount: characterCount
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
+    }
+
+    private func startETATicker() {
+        etaTickerTask?.cancel()
+        let jobID = ocrJobID
+        etaTickerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled,
+                      let self,
+                      self.isProcessingOCR,
+                      self.ocrJobID == jobID,
+                      let state = await OCRProcessingCoordinator.shared.refreshEstimate(jobID: jobID) else {
+                    return
+                }
+                self.ocrProcessingState = state
+                OCRBackgroundTaskManager.shared.update(jobID: jobID, state: state)
+            }
+        }
+    }
+
+    private func stopETATicker() {
+        etaTickerTask?.cancel()
+        etaTickerTask = nil
+    }
+
+    private func makeInitialWorkload(image: UIImage) -> OCRProcessingWorkload {
+        let metrics = Self.imageMetrics(image: image, data: capturedImageData)
+        let backend = expectedAIBackend
+        return OCRProcessingWorkload(
+            imageMegapixels: metrics.megapixels,
+            imageMegabytes: metrics.megabytes,
+            recognizedLineCount: 0,
+            recognizedCharacterCount: 0,
+            ambiguousSpanCount: 0,
+            aiInputTokenEstimate: 0,
+            aiOutputTokenEstimate: 0,
+            aiBackend: backend,
+            aiRequired: backend == .none ? false : nil
+        )
+    }
+
+    private static func imageMetrics(image: UIImage, data: Data?) -> (megapixels: Double, megabytes: Double) {
+        let pixelWidth = Double(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let pixelHeight = Double(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        return (
+            megapixels: max(0.01, pixelWidth * pixelHeight / 1_000_000),
+            megabytes: Double(data?.count ?? 0) / 1_048_576
+        )
+    }
+
+    private var expectedAIBackend: OCRAIWorkloadBackend {
+        switch settings.readingMethod {
+        case .automatic:
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
+                return .foundationModels
+            }
+            #endif
+            return llmService.isModelAvailable ? .localLLM : .none
+        case .appleIntelligence:
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
+                return .foundationModels
+            }
+            #endif
+            return .none
+        case .localLLM:
+            return llmService.isModelAvailable ? .localLLM : .none
+        }
     }
 
     // MARK: - AIタグ提案
@@ -411,12 +523,43 @@ class CardFormViewModel: ObservableObject {
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
         var result = ruleResult.parsed
         var assignments = ruleResult.assignments
+        let neededFields = missingSemanticFields(in: ruleResult.parsed)
+        let relevantAmbiguousSpanIDs = ruleResult.ambiguousSpanIDs.filter { spanID in
+            ruleResult.candidates.contains { candidate in
+                candidate.spanIDs.contains(spanID) && neededFields.contains(candidate.field)
+            }
+        }
         let request = CardFieldResolutionRequest(
             spans: ruleResult.spans,
             candidates: ruleResult.candidates,
             assignments: ruleResult.assignments,
-            ambiguousSpanIDs: ruleResult.ambiguousSpanIDs
+            ambiguousSpanIDs: relevantAmbiguousSpanIDs
         )
+        AppLogger.pipeline.info(
+            "項目解析: spans=\(ruleResult.spans.count, privacy: .public) assignments=\(ruleResult.assignments.count, privacy: .public) AI対象=\(relevantAmbiguousSpanIDs.count, privacy: .public)"
+        )
+
+        // ルール分類後に初めて確定するAI実行有無・入力規模をETAへ反映する。
+        // トークン数は日本語・英数字混在を考慮した文字数ベースの概算で、
+        // 実測時間から学習する端末補正により継続的に補正される。
+        let inputCharacterCount = request.spans.reduce(0) { $0 + $1.text.count }
+        let inputTokenEstimate = max(
+            32,
+            Int(ceil(Double(inputCharacterCount) / 2)) + request.ambiguousSpanIDs.count * 12
+        )
+        let outputTokenEstimate = max(1, request.ambiguousSpanIDs.count * 8)
+        let aiRequired = llmBackend != .none && !request.ambiguousSpanIDs.isEmpty
+        if let state = await OCRProcessingCoordinator.shared.updateAIPlan(
+            jobID: ocrJobID,
+            backend: llmBackend.workloadBackend,
+            required: aiRequired,
+            ambiguousSpanCount: request.ambiguousSpanIDs.count,
+            inputTokenEstimate: inputTokenEstimate,
+            outputTokenEstimate: outputTokenEstimate
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
 
         guard !request.ambiguousSpanIDs.isEmpty else {
             AppLogger.pipeline.info("全フィールドがルールベースで解決済み")
@@ -439,11 +582,37 @@ class CardFormViewModel: ObservableObject {
         applyResolved(result, spans: ruleResult.spans, assignments: assignments)
     }
 
+    private func missingSemanticFields(
+        in parsed: CardFieldClassifier.ParsedCard
+    ) -> Set<CardFieldKind> {
+        var fields = Set<CardFieldKind>()
+        if parsed.lastName.isEmpty && parsed.firstName.isEmpty { fields.insert(.personName) }
+        if parsed.company.isEmpty { fields.insert(.company) }
+        if parsed.department.isEmpty { fields.insert(.department) }
+        if parsed.title.isEmpty { fields.insert(.title) }
+        return fields
+    }
+
+    private var hasAnyResolvedField: Bool {
+        !lastName.isEmpty || !firstName.isEmpty || !company.isEmpty
+            || !department.isEmpty || !title.isEmpty || !email.isEmpty
+            || phones.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            || !address.isEmpty || !website.isEmpty
+    }
+
     /// LLM バックエンドの種別
     private enum LLMBackend: Equatable {
         case foundationModels
         case qwen
         case none  // Tier 3: ルールベースのみ
+
+        var workloadBackend: OCRAIWorkloadBackend {
+            switch self {
+            case .foundationModels: .foundationModels
+            case .qwen: .localLLM
+            case .none: .none
+            }
+        }
     }
 
     /// LLM バックエンド固有の推論を実行。ルールベース処理は呼び出し元で完了済み。
@@ -588,13 +757,22 @@ class CardFormViewModel: ObservableObject {
         spans: [CardTextSpan],
         assignments: [FieldAssignment]
     ) {
+        var correctedParsed = parsed
+        if let corrected = NameReadingGenerator.correctedNameSplitUsingEmail(
+            lastName: parsed.lastName,
+            firstName: parsed.firstName,
+            email: parsed.email
+        ) {
+            correctedParsed.lastName = corrected.lastName
+            correctedParsed.firstName = corrected.firstName
+        }
         let resolution = NameReadingGenerator.resolveReadings(
-            parsed: parsed,
+            parsed: correctedParsed,
             spans: spans,
             assignments: assignments
         )
         readingCandidates = resolution.candidates
-        var resolved = parsed
+        var resolved = correctedParsed
         resolved.lastNameReading = editedReadingTargets.contains(.lastName)
             ? lastNameReading
             : resolution.automaticValues[.lastName] ?? ""

@@ -63,11 +63,13 @@ struct FieldDetectorJobTitleTests {
         #expect(FieldDetector.isJobTitle("代表取締役社長") == true)
         #expect(FieldDetector.isJobTitle("営業部長") == true)
         #expect(FieldDetector.isJobTitle("シニアエンジニア") == true)
+        #expect(FieldDetector.isJobTitle("アソシエイト") == true)
     }
 
     @Test func detectsEnglishTitle() {
         #expect(FieldDetector.isJobTitle("CEO") == true)
         #expect(FieldDetector.isJobTitle("Software Engineer") == true)
+        #expect(FieldDetector.isJobTitle("Associate") == true)
     }
 
     @Test func returnsFalseForShortText() {

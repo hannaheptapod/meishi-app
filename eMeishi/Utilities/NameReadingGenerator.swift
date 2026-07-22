@@ -210,6 +210,47 @@ enum NameReadingGenerator {
         return resolution
     }
 
+    /// OCRで誤った位置に入った氏名境界を、メールのローマ字氏名と漢字の読みが
+    /// 両側とも一致する場合に限って補正する。
+    static func correctedNameSplitUsingEmail(
+        lastName: String,
+        firstName: String,
+        email: String
+    ) -> (lastName: String, firstName: String)? {
+        guard let atIndex = email.firstIndex(of: "@") else { return nil }
+        let localPart = String(email[..<atIndex]).lowercased()
+            .replacingOccurrences(of: #"\d+$"#, with: "", options: .regularExpression)
+        let segments = localPart.components(separatedBy: CharacterSet(charactersIn: "._-"))
+            .filter { !$0.isEmpty }
+        guard segments.count == 2,
+              segments.allSatisfy(isPlausibleEmailNameSegment) else { return nil }
+
+        let emailReadings = segments.map(romajiToHiragana)
+        let fullName = (lastName + firstName)
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        let characters = Array(fullName)
+        guard (2...8).contains(characters.count) else { return nil }
+
+        for boundary in 1..<characters.count {
+            let candidateLast = String(characters[..<boundary])
+            let candidateFirst = String(characters[boundary...])
+            let generatedLast = generateReading(from: candidateLast)
+            let generatedFirst = generateReading(from: candidateFirst)
+
+            if readingsMatch(generatedLast, emailReadings[0]),
+               readingsMatch(generatedFirst, emailReadings[1]) {
+                return (candidateLast, candidateFirst)
+            }
+            if readingsMatch(generatedLast, emailReadings[1]),
+               readingsMatch(generatedFirst, emailReadings[0]) {
+                return (candidateLast, candidateFirst)
+            }
+        }
+
+        return nil
+    }
+
     private static func appendPrintedNameCandidates(
         parsed: CardFieldClassifier.ParsedCard,
         nameSpan: CardTextSpan,
@@ -217,11 +258,14 @@ enum NameReadingGenerator {
         resolution: inout ReadingResolution
     ) {
         let nearby = available
-            .filter { spatiallyRelated($0.boundingBox, nameSpan.boundingBox) }
+            .filter { isLikelyReadingAnnotation($0, for: nameSpan) }
             .sorted { distance($0.boundingBox, nameSpan.boundingBox) < distance($1.boundingBox, nameSpan.boundingBox) }
 
-        if let kana = nearby.first(where: { isKanaReading($0.text) }) {
-            let split = NameProcessor.splitName(katakanaToHiragana(kana.text))
+        if let kana = nearby.first(where: {
+            isKanaReading($0.text)
+                && !isSemanticNonNameLine($0.text)
+                && plausiblePrintedReading($0.text, for: parsed) != nil
+        }), let split = plausiblePrintedReading(kana.text, for: parsed) {
             if !split.lastName.isEmpty {
                 appendAutomatic(.lastName, reading: split.lastName, source: .printedKana, spanID: kana.id, resolution: &resolution)
             }
@@ -251,12 +295,42 @@ enum NameReadingGenerator {
         parsed: CardFieldClassifier.ParsedCard,
         resolution: inout ReadingResolution
     ) {
+        let generatedLast = generateReading(from: parsed.lastName)
+        let generatedFirst = generateReading(from: parsed.firstName)
+
         if let email = inferReadingFromEmail(email: parsed.email, lastName: parsed.lastName, firstName: parsed.firstName) {
-            appendCandidate(.lastName, reading: email.lastNameReading, source: .email, confidence: .medium, spanIDs: [], resolution: &resolution)
-            appendCandidate(.firstName, reading: email.firstNameReading, source: .email, confidence: .medium, spanIDs: [], resolution: &resolution)
+            let validatesLastName = readingsMatch(email.lastNameReading, generatedLast)
+            let validatesFirstName = readingsMatch(email.firstNameReading, generatedFirst)
+            let validatesBothNames = validatesLastName && validatesFirstName
+            let validatesNamePair = validatesLastName || validatesFirstName
+            let confidence: FieldConfidence = validatesBothNames ? .high : .medium
+
+            // メールの姓名2要素の片方が漢字読みと一致すれば、対応関係を確定できる。
+            // もう片方は難読名でトークナイザーと一致しない場合があるため、候補止まりにしない。
+            if validatesNamePair {
+                if resolution.automaticValues[.lastName] == nil {
+                    resolution.automaticValues[.lastName] = sanitizedCandidate(email.lastNameReading)
+                }
+                if resolution.automaticValues[.firstName] == nil {
+                    resolution.automaticValues[.firstName] = sanitizedCandidate(email.firstNameReading)
+                }
+            }
+            appendCandidate(.lastName, reading: email.lastNameReading, source: .email, confidence: confidence, spanIDs: [], resolution: &resolution)
+            appendCandidate(.firstName, reading: email.firstNameReading, source: .email, confidence: confidence, spanIDs: [], resolution: &resolution)
         }
-        appendCandidate(.lastName, reading: generateReading(from: parsed.lastName), source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
-        appendCandidate(.firstName, reading: generateReading(from: parsed.firstName), source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
+
+        // 印字・メールで確定できない場合も、漢字から生成できた妥当なかな読みは初期値にする。
+        if resolution.automaticValues[.lastName] == nil,
+           isPlausibleGeneratedNameReading(generatedLast, for: parsed.lastName) {
+            resolution.automaticValues[.lastName] = sanitizedCandidate(generatedLast)
+        }
+        if resolution.automaticValues[.firstName] == nil,
+           isPlausibleGeneratedNameReading(generatedFirst, for: parsed.firstName) {
+            resolution.automaticValues[.firstName] = sanitizedCandidate(generatedFirst)
+        }
+
+        appendCandidate(.lastName, reading: generatedLast, source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
+        appendCandidate(.firstName, reading: generatedFirst, source: .tokenizer, confidence: .low, spanIDs: [], resolution: &resolution)
     }
 
     private static func appendCompanyCandidates(
@@ -271,7 +345,7 @@ enum NameReadingGenerator {
             return
         }
         if let printed = available
-            .filter({ isKanaReading($0.text) && spatiallyRelated($0.boundingBox, companySpan.boundingBox) })
+            .filter({ isKanaReading($0.text) && isLikelyReadingAnnotation($0, for: companySpan) })
             .min(by: { distance($0.boundingBox, companySpan.boundingBox) < distance($1.boundingBox, companySpan.boundingBox) }) {
             appendAutomatic(.company, reading: katakanaToHiragana(printed.text), source: .printedKana, spanID: printed.id, resolution: &resolution)
         }
@@ -331,6 +405,57 @@ enum NameReadingGenerator {
         }
     }
 
+    /// 近くにあるだけの部署名・役職名・会社名を、氏名の読みとして扱わない。
+    private static func isSemanticNonNameLine(_ text: String) -> Bool {
+        FieldDetector.isJobTitle(text)
+            || FieldDetector.isDepartment(text)
+            || FieldDetector.isCompany(text)
+    }
+
+    /// 印字された読みを姓名に分けた結果が、各漢字名に対して最低限妥当な長さか確認する。
+    /// 読みそのものの一致を必須にすると難読名を捨てるため、ここでは明白な誤対応だけを除外する。
+    private static func plausiblePrintedReading(
+        _ text: String,
+        for parsed: CardFieldClassifier.ParsedCard
+    ) -> (lastName: String, firstName: String)? {
+        let normalized = katakanaToHiragana(text)
+        let split = NameProcessor.splitName(normalized)
+        guard !split.lastName.isEmpty, !split.firstName.isEmpty else { return nil }
+        guard plausibleReadingLength(split.lastName, for: parsed.lastName),
+              plausibleReadingLength(split.firstName, for: parsed.firstName) else {
+            return nil
+        }
+        return split
+    }
+
+    private static func plausibleReadingLength(_ reading: String, for name: String) -> Bool {
+        let compactReading = reading.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        let compactName = name.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard !compactReading.isEmpty, !compactName.isEmpty else { return false }
+
+        let ideographCount = compactName.unicodeScalars.filter {
+            (0x3400...0x4DBF).contains($0.value) || (0x4E00...0x9FFF).contains($0.value)
+        }.count
+        let minimum = ideographCount >= 2 ? 2 : 1
+        let maximum = max(4, compactName.count * 4 + 2)
+        return (minimum...maximum).contains(compactReading.count)
+    }
+
+    /// トークナイザーが漢字を変換できず原文を返した場合は、自動入力へ使わない。
+    private static func isPlausibleGeneratedNameReading(_ reading: String, for name: String) -> Bool {
+        let compact = reading
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+        guard !compact.isEmpty,
+              compact.unicodeScalars.allSatisfy({ (0x3040...0x30FF).contains($0.value) }),
+              plausibleReadingLength(compact, for: name) else {
+            return false
+        }
+        return true
+    }
+
     private static func isRomajiName(_ text: String) -> Bool {
         let parts = text.split(separator: " ").filter { !$0.isEmpty }
         guard (2...3).contains(parts.count) else { return false }
@@ -354,6 +479,34 @@ enum NameReadingGenerator {
     private static func spatiallyRelated(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
         abs(lhs.midY - rhs.midY) <= max(lhs.height, rhs.height) * 3.2
             && abs(lhs.midX - rhs.midX) <= max(lhs.width, rhs.width) * 0.9 + 0.08
+    }
+
+    /// 印字された読みは、対象文字列と同じ向きで、より小さく、行または列が重なる注記に限定する。
+    /// 「近くにあるかな文字列」だけでは、縦書き名刺の別フィールドを読みとして誤採用するため。
+    private static func isLikelyReadingAnnotation(
+        _ candidate: CardTextSpan,
+        for anchor: CardTextSpan
+    ) -> Bool {
+        guard spatiallyRelated(candidate.boundingBox, anchor.boundingBox) else { return false }
+        let anchorIsVertical = anchor.textDirection == .topToBottom
+            || anchor.boundingBox.height > anchor.boundingBox.width * 1.4
+        let candidateIsVertical = candidate.textDirection == .topToBottom
+            || candidate.boundingBox.height > candidate.boundingBox.width * 1.4
+        guard anchorIsVertical == candidateIsVertical else { return false }
+
+        if anchorIsVertical {
+            let overlap = min(candidate.boundingBox.maxY, anchor.boundingBox.maxY)
+                - max(candidate.boundingBox.minY, anchor.boundingBox.minY)
+            let overlapRatio = overlap / max(min(candidate.boundingBox.height, anchor.boundingBox.height), 0.001)
+            return candidate.boundingBox.width <= anchor.boundingBox.width * 0.85
+                && overlapRatio >= 0.5
+        }
+
+        let overlap = min(candidate.boundingBox.maxX, anchor.boundingBox.maxX)
+            - max(candidate.boundingBox.minX, anchor.boundingBox.minX)
+        let overlapRatio = overlap / max(min(candidate.boundingBox.width, anchor.boundingBox.width), 0.001)
+        return candidate.boundingBox.height <= anchor.boundingBox.height * 0.85
+            && overlapRatio >= 0.5
     }
 
     private static func distance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
@@ -422,6 +575,15 @@ enum NameReadingGenerator {
                 return (lastNameReading: preferReading(romaji: readings[1], reference: refLast),
                         firstNameReading: readings[0])
             }
+
+            // OCRが氏名を誤分割すると参照読みとの一致だけではメール候補まで失われる。
+            // 2要素のローカルパートは一般的な「姓.名」順を補助候補として残し、
+            // 自動確定はせずOCR確認画面でユーザーが選択できるようにする。
+            if readings.count == 2,
+               isPlausibleEmailNameSegment(segments[0]),
+               isPlausibleEmailNameSegment(segments[1]) {
+                return (lastNameReading: readings[0], firstNameReading: readings[1])
+            }
         } else if readings.count == 1 {
             let single = readings[0]
             if !refLast.isEmpty && single.hasPrefix(refLast) {
@@ -446,6 +608,13 @@ enum NameReadingGenerator {
         }
 
         return nil
+    }
+
+    private static func isPlausibleEmailNameSegment(_ segment: String) -> Bool {
+        guard (2...32).contains(segment.count) else { return false }
+        return segment.unicodeScalars.allSatisfy {
+            (0x61...0x7A).contains($0.value)
+        }
     }
 
     /// Kunrei式ローマ字をHepburn式に正規化してからひらがなに変換する

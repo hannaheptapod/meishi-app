@@ -5,6 +5,18 @@ import CoreData
 // Swift Testing の Tag と CoreData の Tag エンティティが衝突するため別名を用意
 private typealias CardTag = eMeishi.Tag
 
+private enum IntentionalSaveError: Error {
+    case failed
+}
+
+/// CoreDataモデルとストアは実物を使い、保存処理だけを失敗させるテストダブル。
+@MainActor
+private final class FailingSaveContext: NSManagedObjectContext, @unchecked Sendable {
+    override func save() throws {
+        throw IntentionalSaveError.failed
+    }
+}
+
 // MARK: - テスト用ヘルパー（CardListViewModelTests 専用）
 // makeTestContext() は TestHelpers.swift の共有版を使用。
 // makeCard はお気に入り・登録日時など CardListViewModel 固有のパラメータを持つため個別定義。
@@ -55,6 +67,30 @@ private func makeTag(context: NSManagedObjectContext, name: String, colorHex: St
 
 @MainActor
 struct CardListViewModelSearchTests {
+    @Test func submittedQueryBecomesRecentSearchWithoutStartingSemanticSearch() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "検索対象", company: "サンプル会社")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.clearRecentSearches()
+        defer { vm.clearRecentSearches() }
+        vm.searchText = "サンプル会社"
+
+        vm.submitUnifiedSearch()
+
+        #expect(vm.recentSearches.first == "サンプル会社")
+        #expect(vm.isSemanticSearchInProgress == false)
+    }
+
+    @Test func applyingSearchSuggestionUsesUnifiedSearchField() {
+        let vm = CardListViewModel(context: makeTestContext())
+
+        vm.applySearchSuggestion("今月追加した名刺")
+
+        #expect(vm.searchText == "今月追加した名刺")
+    }
+
 
     @Test func searchByFullName() throws {
         let context = makeTestContext()
@@ -131,6 +167,47 @@ struct CardListViewModelSearchTests {
         #expect(vm.isSearchActive == true)
         vm.searchText = ""
         #expect(vm.isSearchActive == false)
+    }
+
+    @Test func semanticResultsJoinLexicalResultsInTheSameList() throws {
+        let context = makeTestContext()
+        let lexical = makeCard(context: context, lastName: "IT関係", company: "通常一致")
+        let semantic = makeCard(context: context, lastName: "佐藤", company: "テックラボ")
+        _ = makeCard(context: context, lastName: "鈴木", company: "食品")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "IT関係"
+        vm.applySemanticSearchResults([semantic.id!], for: "IT関係")
+
+        #expect(Set(vm.filteredCards.compactMap(\.id)) == Set([lexical.id!, semantic.id!]))
+    }
+
+    @Test func staleSemanticResultsAreIgnoredAfterQueryChanges() throws {
+        let context = makeTestContext()
+        let semantic = makeCard(context: context, lastName: "佐藤", company: "テックラボ")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "IT関係"
+        vm.searchText = "食品関係"
+        vm.applySemanticSearchResults([semantic.id!], for: "IT関係")
+
+        #expect(vm.filteredCards.isEmpty)
+    }
+
+    @Test func semanticResultsStillRespectFavoriteFilter() throws {
+        let context = makeTestContext()
+        let favorite = makeCard(context: context, lastName: "山田", company: "テック", isFavorite: true)
+        let regular = makeCard(context: context, lastName: "佐藤", company: "テック", isFavorite: false)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.searchText = "IT関係"
+        vm.setFavoritesFilter(true)
+        vm.applySemanticSearchResults([favorite.id!, regular.id!], for: "IT関係")
+
+        #expect(vm.filteredCards.compactMap(\.id) == [favorite.id!])
     }
 }
 
@@ -249,6 +326,29 @@ struct CardListViewModelFilterTests {
         #expect(vm.filteredCards.count == 2)
     }
 
+    @Test func clearAllFiltersRestoresEveryCard() throws {
+        let context = makeTestContext()
+        let tag = makeTag(context: context, name: "重要")
+        let matching = makeCard(context: context, lastName: "山田", company: "アルファ", isFavorite: true)
+        matching.addToTags(tag)
+        _ = makeCard(context: context, lastName: "佐藤", company: "ベータ", isFavorite: false)
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.setFavoritesFilter(true)
+        vm.setTagFilter(tag, enabled: true)
+        vm.externalFilter = .company("アルファ")
+        #expect(vm.filteredCards.count == 1)
+
+        vm.clearAllFilters()
+
+        #expect(vm.showFavoritesOnly == false)
+        #expect(vm.selectedTagIDs.isEmpty)
+        #expect(vm.externalFilter == nil)
+        #expect(vm.isFilterActive == false)
+        #expect(vm.filteredCards.count == 2)
+    }
+
     @Test func externalRoleAndAreaFiltersMatchInsightsDimensions() throws {
         let context = makeTestContext()
         _ = makeCard(
@@ -341,6 +441,21 @@ struct CardListViewModelSortTests {
         // 登録日時に切り替えたら降順（新しい順）がデフォルト
         vm.toggleSort(key: .createdAt)
         #expect(vm.sortKey == .createdAt)
+        #expect(vm.sortAscending == false)
+    }
+
+    @Test func menuSortDirectionChangesWithoutChangingKey() throws {
+        let context = makeTestContext()
+        _ = makeCard(context: context, lastName: "山田")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        vm.sortKey = .name
+        vm.sortAscending = true
+
+        vm.setSortAscending(false)
+
+        #expect(vm.sortKey == .name)
         #expect(vm.sortAscending == false)
     }
 
@@ -494,9 +609,27 @@ struct CardListViewModelTagTests {
         let vm = CardListViewModel(context: context)
         let before = vm.allTags.count
 
-        vm.createTag(name: "新規タグ", colorHex: "#00FF00")
+        let result = vm.createTag(name: "新規タグ", colorHex: "#00FF00")
+        #expect(result == .success)
         #expect(vm.allTags.count == before + 1)
         #expect(vm.allTags.contains { $0.name == "新規タグ" })
+    }
+
+    @Test func createTagFailureReturnsLocalErrorAndRollsBack() {
+        let backingContext = makeTestContext()
+        let context = FailingSaveContext(concurrencyType: .mainQueueConcurrencyType)
+        context.persistentStoreCoordinator = backingContext.persistentStoreCoordinator
+        let vm = CardListViewModel(context: context)
+
+        let result = vm.createTag(name: "保存失敗", colorHex: "#00FF00")
+
+        guard case .failure(let message) = result else {
+            Issue.record("保存失敗がfailureとして返りませんでした")
+            return
+        }
+        #expect(message.contains("タグの作成に失敗"))
+        #expect(vm.errorMessage == nil)
+        #expect(!context.hasChanges)
     }
 
     @Test func deleteTagRemovesFromList() throws {

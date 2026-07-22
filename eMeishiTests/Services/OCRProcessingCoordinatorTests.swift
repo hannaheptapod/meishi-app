@@ -47,4 +47,81 @@ struct OCRProcessingCoordinatorTests {
         #expect((advanced?.progress ?? 0) >= started.progress)
         #expect(regressed?.progress == advanced?.progress)
     }
+
+    @Test
+    func imageAndOCRBaselineScaleWithPixelCount() {
+        var small = OCRProcessingWorkload.unknown
+        small.imageMegapixels = 2
+        small.imageMegabytes = 1
+        var large = small
+        large.imageMegapixels = 48
+        large.imageMegabytes = 12
+
+        #expect(
+            OCRProcessingCoordinator.baselineDuration(for: .imagePreparation, workload: large)
+                > OCRProcessingCoordinator.baselineDuration(for: .imagePreparation, workload: small)
+        )
+        #expect(
+            OCRProcessingCoordinator.baselineDuration(for: .textRecognition, workload: large)
+                > OCRProcessingCoordinator.baselineDuration(for: .textRecognition, workload: small)
+        )
+    }
+
+    @Test
+    func analysisBaselineScalesWithRecognizedContent() {
+        var short = OCRProcessingWorkload.unknown
+        short.recognizedLineCount = 5
+        short.recognizedCharacterCount = 80
+        var long = short
+        long.recognizedLineCount = 30
+        long.recognizedCharacterCount = 700
+
+        #expect(
+            OCRProcessingCoordinator.baselineDuration(for: .fieldAnalysis, workload: long)
+                > OCRProcessingCoordinator.baselineDuration(for: .fieldAnalysis, workload: short)
+        )
+    }
+
+    @Test
+    func localAIBaselineScalesWithAmbiguityAndTokens() {
+        var light = OCRProcessingWorkload.unknown
+        light.aiRequired = true
+        light.aiBackend = .localLLM
+        light.ambiguousSpanCount = 1
+        light.aiInputTokenEstimate = 80
+        light.aiOutputTokenEstimate = 8
+        var heavy = light
+        heavy.ambiguousSpanCount = 4
+        heavy.aiInputTokenEstimate = 240
+        heavy.aiOutputTokenEstimate = 32
+
+        #expect(
+            OCRProcessingCoordinator.baselineDuration(for: .aiAssistance, workload: heavy)
+                > OCRProcessingCoordinator.baselineDuration(for: .aiAssistance, workload: light)
+        )
+    }
+
+    @Test
+    func resolvedFieldsRemoveUnusedAIFromEstimate() async {
+        let coordinator = OCRProcessingCoordinator.shared
+        let jobID = OCRJobID()
+        var workload = OCRProcessingWorkload.unknown
+        workload.imageMegapixels = 12
+        workload.imageMegabytes = 3
+        workload.aiBackend = .localLLM
+        workload.aiRequired = nil
+
+        let before = await coordinator.start(jobID: jobID, totalItems: 1, workload: workload)
+        let after = await coordinator.updateAIPlan(
+            jobID: jobID,
+            backend: .localLLM,
+            required: false,
+            ambiguousSpanCount: 0,
+            inputTokenEstimate: 0,
+            outputTokenEstimate: 0
+        )
+
+        #expect((after?.estimatedRemainingSeconds ?? .infinity) < (before.estimatedRemainingSeconds ?? 0))
+        _ = await coordinator.cancel(jobID: jobID)
+    }
 }

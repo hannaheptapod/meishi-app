@@ -43,8 +43,7 @@ class AISearchService {
 
     func search(
         query: String,
-        cards: [BusinessCard],
-        conversationHistory: [ChatMessage]
+        cards: [BusinessCard]
     ) async -> ChatMessage {
         let method = SettingsStore.shared.readingMethod
         AppLogger.search.info("検索開始: query=\(query, privacy: .private) method=\(method.rawValue, privacy: .public) cards=\(cards.count, privacy: .public)件")
@@ -114,6 +113,11 @@ class AISearchService {
     /// クエリの種別を判定（住所？名前？会社？概念的？）
     private func classifyQuery(_ query: String) -> QueryType {
         let cleaned = stripParticles(query)
+
+        // 複数条件を含む文章は、単一フィールド検索へ誤分類せず意味検索へ渡す。
+        if isCompoundNaturalLanguageQuery(query) {
+            return .conceptual(query: cleaned)
+        }
 
         // 住所・地名検索: 都道府県名 or 市区町村サフィックスを含む
         if containsLocationKeywords(query) {
@@ -218,16 +222,22 @@ class AISearchService {
         var allMatchedIDs: [UUID] = []
 
         for (batchIdx, batchCards) in batches.enumerated() {
+            guard !Task.isCancelled else { return nil }
             // 番号付きリスト（0-indexed）
             let cardList = batchCards.enumerated().map { (i, card) in
-                let parts = [card.company, card.department, card.title]
+                let tagNames = card.tagArray.map(\.tagName).joined(separator: ",")
+                let contactState = "電話:\(card.phone?.isEmpty == false ? "あり" : "なし"),メール:\(card.email?.isEmpty == false ? "あり" : "なし")"
+                let date = card.createdAt?.formatted(date: .numeric, time: .omitted) ?? "不明"
+                let parts = [card.fullName, card.company, card.department, card.title, card.address,
+                             tagNames, contactState, "登録:\(date)"]
                     .compactMap { $0 }.filter { !$0.isEmpty }
                 return "\(batchIdx * maxCardsPerBatch + i): \(parts.joined(separator: "/"))"
             }.joined(separator: "\n")
 
             let instructions = """
                 番号付きリストから検索クエリに該当する番号だけ出力せよ。
-                会社名・部署名・役職がクエリのテーマに直接属するもののみ選べ。
+                名前・会社・部署・役職・住所・タグ・連絡先状態・登録日を使って判定せよ。
+                クエリに複数条件がある場合は、すべてを満たすものだけ選べ。
                 外来語・略語・同義語も考慮（例: フード=食品、テック=技術）。
                 出力: 番号のみカンマ区切り。該当なしは none。
                 """
@@ -261,10 +271,11 @@ class AISearchService {
                 """
 
             AppLogger.search.debug("カードリスト: \(cardList, privacy: .private)")
-            let prompt = "\(fewShot)\(cardList)\n\n検索:「\(query)」\n回答:"
+            let prompt = "\(fewShot)今日:\(currentDateText)\n\(cardList)\n\n検索:「\(query)」\n回答:"
 
             do {
                 let response = try await session.respond(to: prompt, options: options)
+                guard !Task.isCancelled else { return nil }
                 let text = String(describing: response.content).trimmingCharacters(in: .whitespacesAndNewlines)
                 AppLogger.search.debug("Foundation Models 応答: \(text, privacy: .private)")
 
@@ -318,6 +329,15 @@ class AISearchService {
         var matchedIDs: [UUID] = []
 
         for card in cards {
+            guard !Task.isCancelled else { return nil }
+            let evidenceFields = searchEvidenceFields(card: card)
+            if AISearchEvidenceMatcher.matches(query: query, fields: evidenceFields) {
+                if let cardID = card.id {
+                    matchedIDs.append(cardID)
+                }
+                continue
+            }
+
             let summary = compactSummary(card: card)
             let isMatch = await classifyRelevance(
                 query: query,
@@ -339,8 +359,8 @@ class AISearchService {
         query: String,
         cardSummary: String
     ) async -> Bool {
-        let systemInstruction = "この名刺が検索クエリに直接関連するか判定。会社名・部署名・役職に検索テーマと直接関係する語が含まれる場合のみyes。間接的な関連はno。迷ったらno。yesかnoのみ回答。"
-        let prompt = "<|im_start|>system\n\(systemInstruction)<|im_end|>\n<|im_start|>user\n検索:「\(query)」\n名刺:\(cardSummary)\n関連する?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
+        let systemInstruction = "名前・会社・部署・役職・住所・タグ・電話とメールの有無・登録日を使い、この名刺が検索条件を満たすか判定。各条件は完全一致だけでなく同義語や近い業務も含める（営業には販売・顧客相談を含む）。条件を満たす根拠があればyes、明らかに無関係ならno。yesかnoのみ回答。"
+        let prompt = "<|im_start|>system\n\(systemInstruction)<|im_end|>\n<|im_start|>user\n今日:\(currentDateText)\n検索:「\(query)」\n名刺:\(cardSummary)\n条件を満たす?<|im_end|>\n<|im_start|>assistant\n/no_think\n"
 
         return await LocalLLMService.shared.yesNo(prompt: prompt)
     }
@@ -396,12 +416,90 @@ class AISearchService {
         return false
     }
 
+    private func isCompoundNaturalLanguageQuery(_ query: String) -> Bool {
+        let cues = [
+            "関係", "関連", "系", "担当", "会った", "もらった", "交換した",
+            "先月", "今月", "去年", "未登録", "登録されていない", "がない",
+            "お気に入り", "探して", "見つけて", "教えて"
+        ]
+        return cues.contains { query.contains($0) }
+            // 「東京の営業」のような地名と属性の組み合わせは、住所の文字列検索ではなく意味検索へ渡す。
+            || (query.contains("の") && containsLocationKeywords(query))
+            || query.split(whereSeparator: \.isWhitespace).count >= 2
+    }
+
+    private var currentDateText: String {
+        String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+    }
+
     // MARK: - カードサマリ生成
 
+    private func searchEvidenceFields(card: BusinessCard) -> [String] {
+        let tags = card.tagArray.map(\.tagName)
+        return [card.fullName, card.company, card.department, card.title, card.address, card.notes]
+            .compactMap { $0 }
+            + tags
+    }
+
     private func compactSummary(card: BusinessCard) -> String {
-        [card.fullName, card.company, card.department, card.title, card.address]
+        let tags = card.tagArray.map(\.tagName).joined(separator: ",")
+        let contactState = "電話:\(card.phone?.isEmpty == false ? "あり" : "なし"),メール:\(card.email?.isEmpty == false ? "あり" : "なし")"
+        let createdAt = card.createdAt?.formatted(date: .numeric, time: .omitted)
+        return [card.fullName, card.company, card.department, card.title, card.address,
+                tags, contactState, createdAt]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+/// 小型LLMが明示的な複合条件を取りこぼさないための、保守的な語彙照合。
+/// すべての有効語がカード内に存在する場合だけ一致とし、残りはLLMへ委ねる。
+nonisolated enum AISearchEvidenceMatcher {
+    private static let stopWords: Set<String> = [
+        "会社", "名刺", "人", "方", "担当", "担当者", "探して", "見つけて", "教えて"
+    ]
+
+    private static let aliases: [String: [String]] = [
+        "営業": ["営業", "販売", "セールス", "顧客相談", "お客様相談", "相談室", "コンサル"],
+        "it": ["it", "情報技術", "システム", "ソフトウェア", "開発", "エンジニア", "テック"],
+        "食品": ["食品", "フード", "飲食", "食料"]
+    ]
+
+    static func matches(query: String, fields: [String]) -> Bool {
+        let terms = significantTerms(in: query)
+        guard !terms.isEmpty else { return false }
+
+        let searchableText = normalize(fields.joined(separator: " "))
+        return terms.allSatisfy { term in
+            alternatives(for: term).contains { searchableText.contains($0) }
+        }
+    }
+
+    private static func significantTerms(in query: String) -> [String] {
+        var separated = query
+        for separator in ["という", "について", "探して", "見つけて", "教えて", "の", "に", "を", "は", "が", "で"] {
+            separated = separated.replacingOccurrences(of: separator, with: " ")
+        }
+
+        return separated
+            .components(separatedBy: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "、,・")))
+            .map(normalize)
+            .map { term in
+                for suffix in ["関係", "関連", "系"] where term.hasSuffix(suffix) && term.count > suffix.count {
+                    return String(term.dropLast(suffix.count))
+                }
+                return term
+            }
+            .filter { !$0.isEmpty && !stopWords.contains($0) }
+    }
+
+    private static func alternatives(for term: String) -> [String] {
+        aliases[term] ?? [term]
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
     }
 }
