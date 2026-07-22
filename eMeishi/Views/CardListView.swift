@@ -91,20 +91,6 @@ struct CardListView: View {
 
     private var interactionPresentations: some View {
         baseView
-            // 検索UIは一覧のnavigation item自身が所有する。外側のNavigationStackへ
-            // 注入すると、詳細からpopする途中でUISearchControllerが付け替わり、
-            // 枠だけが消える中間フレームが発生する。
-            .searchable(
-                text: $viewModel.searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "キーワード・自然な言葉で検索"
-            )
-            .searchSuggestions {
-                cardSearchSuggestions
-            }
-            .onSubmit(of: .search) {
-                submitCardSearch()
-            }
             // sheet / confirmationDialog / alert は同じ状態機械を共有し、同時表示を禁止する。
             .sheet(item: sheetPresentationBinding, onDismiss: {
                 completeCurrentPresentationDismissal()
@@ -171,65 +157,6 @@ struct CardListView: View {
             .onChange(of: viewModel.importResultMessage) { _, _ in
                 consumeImportResultPresentation()
             }
-    }
-
-    // MARK: - Search
-
-    @ViewBuilder
-    private var cardSearchSuggestions: some View {
-        if editMode == .inactive,
-           viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if !viewModel.recentSearches.isEmpty {
-                Section("最近の検索") {
-                    ForEach(viewModel.recentSearches, id: \.self) { query in
-                        cardSearchSuggestion(query, systemImage: "clock.arrow.circlepath")
-                    }
-                    Button("検索履歴を消去", systemImage: "trash") {
-                        viewModel.clearRecentSearches()
-                    }
-                }
-            }
-
-            Section("自然な言葉で検索") {
-                cardSearchSuggestion("今月追加した名刺", systemImage: "sparkles")
-                cardSearchSuggestion("お気に入りの営業担当", systemImage: "sparkles")
-            }
-
-            if !viewModel.companySearchSuggestions.isEmpty {
-                Section("会社") {
-                    ForEach(viewModel.companySearchSuggestions, id: \.self) { company in
-                        cardSearchSuggestion(company, systemImage: "building.2")
-                    }
-                }
-            }
-
-            if !viewModel.tagSearchSuggestions.isEmpty {
-                Section("タグ") {
-                    ForEach(viewModel.tagSearchSuggestions, id: \.self) { tag in
-                        cardSearchSuggestion(tag, systemImage: "tag")
-                    }
-                }
-            }
-        }
-    }
-
-    private func cardSearchSuggestion(_ text: String, systemImage: String) -> some View {
-        Button {
-            viewModel.applySearchSuggestion(text)
-        } label: {
-            Label(text, systemImage: systemImage)
-        }
-        .searchCompletion(text)
-    }
-
-    private func submitCardSearch() {
-        guard editMode == .inactive,
-              viewModel.isSearchActive else { return }
-        if entitlementStore.hasAccess {
-            viewModel.submitUnifiedSearch()
-        } else if viewModel.filteredCardItems.isEmpty {
-            navigationState.requestAISearchPaywall()
-        }
     }
 
     // MARK: - Presentation state

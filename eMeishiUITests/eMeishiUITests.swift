@@ -47,17 +47,23 @@ final class EMeishiUITests: XCTestCase {
     /// iPhoneではXCUIElementTypeTabBar、iPadの上部Tab Barでは通常のButtonとして
     /// 公開されるため、表示形式に依存せず同じ標準Tabを取得する。
     private func rootTabButton(identifier: String, named name: String) -> XCUIElement {
-        let identified = app.descendants(matching: .any)[identifier]
-        if identified.exists {
+        let identifiedMatches = app.descendants(matching: .any)
+            .matching(identifier: identifier)
+            .allElementsBoundByIndex
+        if let identified = identifiedMatches.first(where: \.isHittable) {
             return identified
         }
-        let tabBarButton = nativeTabBar.buttons[name]
-        if tabBarButton.exists {
+        let tabBarMatches = nativeTabBar.buttons
+            .matching(NSPredicate(format: "label == %@", name))
+            .allElementsBoundByIndex
+        if let tabBarButton = tabBarMatches.first(where: \.isHittable) {
             return tabBarButton
         }
-        return app.descendants(matching: .any)
+        let labelMatches = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", name))
-            .firstMatch
+            .allElementsBoundByIndex
+        return labelMatches.first(where: \.isHittable)
+            ?? app.descendants(matching: .any)[identifier]
     }
 
     private var addButton: XCUIElement {
@@ -173,20 +179,18 @@ final class EMeishiUITests: XCTestCase {
         let navigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
         XCTAssertLessThan(navigationTabsFrame.maxX, addButton.frame.minX)
         XCTAssertGreaterThan(addButton.frame.maxX, app.frame.width * 0.8)
-        XCTAssertEqual(
-            navigationTabsFrame.height,
-            addButton.frame.height,
-            accuracy: 1,
-            "展開時の追加ボタンと標準タブ操作面の高さを揃える"
+        XCTAssertEqual(addButton.frame.width, addButton.frame.height, accuracy: 1)
+        XCTAssertLessThanOrEqual(
+            abs(navigationTabsFrame.height - addButton.frame.height),
+            4,
+            "標準Tab項目のアクセシビリティ余白を除き、標準Glass Buttonの寸法を維持する"
         )
         XCTAssertEqual(
-            navigationTabsFrame.midY,
-            addButton.frame.midY,
+            navigationTabsFrame.maxY,
+            addButton.frame.maxY,
             accuracy: 1,
-            "追加ボタンと標準タブ操作面の中心Yを揃える"
+            "追加ボタンと標準Tab Barの下端を揃える"
         )
-        XCTAssertEqual(navigationTabsFrame.minY, addButton.frame.minY, accuracy: 1)
-        XCTAssertEqual(navigationTabsFrame.maxY, addButton.frame.maxY, accuracy: 1)
 
         // 通常検索と自然言語検索は1つの標準検索欄を共有し、独立ボタンを置かない
         XCTAssertTrue(cardSearchField.waitForExistence(timeout: Self.shortTimeout))
@@ -375,20 +379,18 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(addButton.isHittable, "スクロール後も独立追加ボタンが操作できる")
         let navigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
         XCTAssertLessThan(navigationTabsFrame.maxX, addButton.frame.minX)
-        XCTAssertEqual(
-            navigationTabsFrame.height,
-            addButton.frame.height,
-            accuracy: 1,
-            "スクロール後も追加ボタンと標準タブ操作面の高さを揃える"
+        XCTAssertEqual(addButton.frame.width, addButton.frame.height, accuracy: 1)
+        XCTAssertLessThanOrEqual(
+            abs(navigationTabsFrame.height - addButton.frame.height),
+            4,
+            "スクロール後も標準Glass Buttonの寸法を維持する"
         )
         XCTAssertEqual(
-            navigationTabsFrame.midY,
-            addButton.frame.midY,
+            navigationTabsFrame.maxY,
+            addButton.frame.maxY,
             accuracy: 1,
-            "スクロール後も追加ボタンと標準タブ操作面の中心Yを揃える"
+            "スクロール後も追加ボタンと標準Tab Barの下端を揃える"
         )
-        XCTAssertEqual(navigationTabsFrame.minY, addButton.frame.minY, accuracy: 1)
-        XCTAssertEqual(navigationTabsFrame.maxY, addButton.frame.maxY, accuracy: 1)
         let navigationTop = min(nativeTabBar.frame.minY, addButton.frame.minY)
 
         let visibleRows = app.descendants(matching: .any)
@@ -472,10 +474,7 @@ final class EMeishiUITests: XCTestCase {
             XCTAssertEqual(app.searchFields.count, 1)
             XCTAssertTrue(cardSearchField.isHittable)
             XCTAssertTrue(cardsTab.isHittable)
-            XCTAssertFalse(
-                addButton.exists,
-                "Split Viewでも詳細表示中は追加操作を詳細の共有操作と競合させない"
-            )
+            XCTAssertTrue(addButton.isHittable, "Split Viewでは一覧側の追加操作を維持する")
         } else {
             XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
             XCTAssertFalse(nativeTabBar.isHittable)
@@ -505,7 +504,7 @@ final class EMeishiUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
             XCTAssertTrue(cardSearchField.isHittable)
             XCTAssertTrue(cardsTab.isHittable)
-            XCTAssertFalse(addButton.exists)
+            XCTAssertTrue(addButton.isHittable)
             return
         }
 
@@ -671,7 +670,7 @@ final class EMeishiUITests: XCTestCase {
             XCTAssertEqual(app.searchFields.count, 1)
             XCTAssertTrue(cardSearchField.isHittable, "Split Viewの一覧列は設定表示中も操作可能に保つ")
             XCTAssertTrue(cardsTab.isHittable)
-            XCTAssertFalse(addButton.exists, "設定の操作と追加アクションを同時表示しない")
+            XCTAssertTrue(addButton.isHittable, "Split Viewでは一覧側の追加操作を維持する")
 
             let card = cardRow("山田 太郎")
             XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))

@@ -43,11 +43,6 @@ if rg -n '@State private var (cardForDetail|isShowingSettings|isShowingDuplicate
   fail "ルート遷移を画面ローカルBoolへ戻さないでください"
 fi
 
-if rg -n 'rootAddButtonOverlay|SystemTabBarFrameReader|tabBarAnchorFrame|addButtonCenterY' \
-    eMeishi --glob '*.swift' >/dev/null; then
-  fail "Tab Bar座標を推測する独自オーバーレイは禁止です。標準TabPlacementを使用してください"
-fi
-
 if rg -n 'selectedCardForSplit:[[:space:]]*BusinessCard' \
     eMeishi/Models/AppNavigationState.swift >/dev/null; then
   fail "Split Viewの選択状態へNSManagedObjectを長期保持せず、永続IDを保持してください"
@@ -68,22 +63,35 @@ if [[ "$compact_add_button_owners" != "eMeishi/ContentView.swift" ]]; then
   fail "ルート追加アクションはContentViewだけが所有してください。現在: ${compact_add_button_owners:-なし}"
 fi
 
-if ! rg -q '\.tabPlacement\(\.pinned\)' eMeishi/ContentView.swift; then
-  fail "追加アクションは標準Tab Barのpinned配置を使用してください"
+if rg -q '\.tabPlacement\(\.pinned\)' eMeishi/ContentView.swift \
+    || rg -q 'RootTabSelection\.add' eMeishi/ContentView.swift \
+    || ! rg -q 'rootAddButtonOverlay' eMeishi/ContentView.swift \
+    || ! rg -q '\.buttonStyle\(\.glassProminent\)' eMeishi/ContentView.swift; then
+  fail "追加アクションをTabへ戻さず、右端の独立した標準Glass Buttonとして維持してください"
+fi
+
+if rg -n -U 'resultType[[:space:]]*=[[:space:]]*\.dictionaryResultType(.|\n){0,500}fetchBatchSize[[:space:]]*=[[:space:]]*[1-9]' \
+    eMeishi --glob '*.swift' >/dev/null; then
+  fail "NSDictionaryResultTypeへ非ゼロfetchBatchSizeを指定しないでください。実機でCore DataがSIGTRAPします"
+fi
+
+if ! rg -q -U 'NotificationCenter\.default\.publisher\(for: \.NSManagedObjectContextObjectsDidChange\)(.|\n){0,250}\.receive\(on: RunLoop\.main\)(.|\n){0,250}\.filter' \
+    eMeishi/ViewModels/CardListViewModel.swift; then
+  fail "Core Dataの全context通知は@MainActorへ触れるfilterより前にMain RunLoopへ移してください"
 fi
 
 if rg -n '\.tabBarMinimizeBehavior\(\.never\)' eMeishi/ContentView.swift >/dev/null; then
   fail "標準Tab Barのスクロール連動縮小を無効化しないでください"
 fi
 
-if ! rg -q '\.searchable\(' eMeishi/Views/CardListView.swift \
+if ! rg -q '\.searchable\(' eMeishi/ContentView.swift \
     || ! rg -q 'placement: \.navigationBarDrawer\(displayMode: \.always\)' \
-        eMeishi/Views/CardListView.swift; then
-  fail "一覧検索は一覧Navigation Itemと同じ寿命を持つCardListViewの標準searchableで維持してください"
+        eMeishi/ContentView.swift; then
+  fail "一覧検索は詳細遷移でも生存するcardsRootの標準searchableで維持してください"
 fi
 
-if rg -n '\.searchable\(' eMeishi/ContentView.swift >/dev/null; then
-  fail "Navigationコンテナ外のContentViewへsearchableを置かないでください"
+if rg -n '\.searchable\(' eMeishi/Views/CardListView.swift >/dev/null; then
+  fail "詳細遷移で破棄されるCardListViewへsearchableを置かないでください"
 fi
 
 if rg -n 'isSettingsRequested|presentRequestedSettingsIfNeeded|consumeSettingsRequest' \

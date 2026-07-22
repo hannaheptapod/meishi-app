@@ -5,27 +5,22 @@ import SwiftUI
 struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.managedObjectContext) private var viewContext
+    @EnvironmentObject private var entitlementStore: EntitlementStore
     @StateObject private var cardListViewModel = CardListViewModel()
     @StateObject private var navigationState = AppNavigationState()
-
-    /// 追加は画面を持つタブではなく、標準Tab Bar上のpinnedアクションとして扱う。
-    /// 選択値へ反映せず、現在のタブと各NavigationPathをそのまま維持する。
-    private enum RootTabSelection: Hashable {
-        case cards
-        case insights
-        case add
-    }
+    @State private var tabBarAnchorFrame = CGRect.zero
+    @State private var addButtonSize = CGSize(width: 58, height: 58)
 
     var body: some View {
-        TabView(selection: rootTabSelection) {
-            Tab(value: RootTabSelection.cards) {
+        TabView(selection: $navigationState.selectedTab) {
+            Tab(value: AppTab.cards) {
                 cardsRoot
             } label: {
                 Label("名刺", systemImage: "person.text.rectangle")
                     .accessibilityIdentifier("cardsRootTab")
             }
 
-            Tab(value: RootTabSelection.insights) {
+            Tab(value: AppTab.insights) {
                 NavigationStack(path: $navigationState.insightsPath) {
                     InsightsView()
                 }
@@ -34,31 +29,29 @@ struct ContentView: View {
                     .accessibilityIdentifier("insightsRootTab")
             }
 
-            Tab(value: RootTabSelection.add) {
-                Color.clear
-            } label: {
-                Label("追加", systemImage: "plus")
-                    .foregroundStyle(AppTheme.brandOrange)
-                    .accessibilityIdentifier("cardAddButton")
-            }
-            .tabPlacement(.pinned)
         }
         .tabViewStyle(.tabBarOnly)
         .tint(AppTheme.brandOrange)
-        // Tab Barのvisibilityはルートだけが所有する。遷移元と遷移先が別々に
-        // 指定すると、popの途中でどちらの指定を採用するかが変わり表示が遅れる。
-        .toolbar(rootTabBarVisibility, for: .tabBar)
         .background(AppTheme.background.ignoresSafeArea())
+        .background {
+            SystemTabBarFrameReader(itemFrame: $tabBarAnchorFrame)
+                .frame(width: 0, height: 0)
+        }
         .cardAdditionFlow()
         .environmentObject(cardListViewModel)
         .environmentObject(navigationState)
         .overlay {
-            if navigationState.isCardListBackgroundInteractionBlocked {
-                Color.clear
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { }
-                    .accessibilityHidden(true)
+            ZStack {
+                if shouldShowRootAddButton {
+                    rootAddButtonOverlay
+                }
+                if navigationState.isCardListBackgroundInteractionBlocked {
+                    Color.clear
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { }
+                        .accessibilityHidden(true)
+                }
             }
         }
         .onAppear {
@@ -95,6 +88,73 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // Tab BarのvisibilityはContentViewだけが所有し、現在表示中のcards tabの
+        // navigation環境へ適用する。TabView自身への指定ではcompact詳細で反映されない。
+        .toolbar(rootTabBarVisibility, for: .tabBar)
+        // 検索コントローラを一覧行ではなく、詳細遷移でも生存するルートが所有する。
+        .searchable(
+            text: $cardListViewModel.searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "キーワード・自然な言葉で検索"
+        )
+        .searchSuggestions {
+            cardSearchSuggestions
+        }
+        .onSubmit(of: .search, submitCardSearch)
+    }
+
+    @ViewBuilder
+    private var cardSearchSuggestions: some View {
+        if !navigationState.isRootChromeSuppressed,
+           cardListViewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !cardListViewModel.recentSearches.isEmpty {
+                Section("最近の検索") {
+                    ForEach(cardListViewModel.recentSearches, id: \.self) { query in
+                        cardSearchSuggestion(query, systemImage: "clock.arrow.circlepath")
+                    }
+                    Button("検索履歴を消去", systemImage: "trash") {
+                        cardListViewModel.clearRecentSearches()
+                    }
+                }
+            }
+            Section("自然な言葉で検索") {
+                cardSearchSuggestion("今月追加した名刺", systemImage: "sparkles")
+                cardSearchSuggestion("お気に入りの営業担当", systemImage: "sparkles")
+            }
+            if !cardListViewModel.companySearchSuggestions.isEmpty {
+                Section("会社") {
+                    ForEach(cardListViewModel.companySearchSuggestions, id: \.self) { company in
+                        cardSearchSuggestion(company, systemImage: "building.2")
+                    }
+                }
+            }
+            if !cardListViewModel.tagSearchSuggestions.isEmpty {
+                Section("タグ") {
+                    ForEach(cardListViewModel.tagSearchSuggestions, id: \.self) { tag in
+                        cardSearchSuggestion(tag, systemImage: "tag")
+                    }
+                }
+            }
+        }
+    }
+
+    private func cardSearchSuggestion(_ text: String, systemImage: String) -> some View {
+        Button {
+            cardListViewModel.applySearchSuggestion(text)
+        } label: {
+            Label(text, systemImage: systemImage)
+        }
+        .searchCompletion(text)
+    }
+
+    private func submitCardSearch() {
+        guard !navigationState.isRootChromeSuppressed,
+              cardListViewModel.isSearchActive else { return }
+        if entitlementStore.hasAccess {
+            cardListViewModel.submitUnifiedSearch()
+        } else if cardListViewModel.filteredCardItems.isEmpty {
+            navigationState.requestAISearchPaywall()
+        }
     }
 
     @ViewBuilder
@@ -147,31 +207,65 @@ struct ContentView: View {
         )
     }
 
-    private var rootTabSelection: Binding<RootTabSelection> {
-        Binding(
-            get: {
-                switch navigationState.selectedTab {
-                case .cards: .cards
-                case .insights: .insights
-                }
-            },
-            set: { selection in
-                switch selection {
-                case .cards:
-                    navigationState.selectedTab = .cards
-                case .insights:
-                    navigationState.selectedTab = .insights
-                case .add:
-                    navigationState.requestCardAddition()
-                }
-            }
-        )
-    }
-
     private var rootTabBarVisibility: Visibility {
         navigationState.shouldHideRootTabBar(
             isCompactWidth: horizontalSizeClass != .regular
         ) ? .hidden : .visible
+    }
+
+    /// 追加はTabの選択肢ではなく、右端に独立した標準Glass Buttonとして置く。
+    private var rootAddButtonOverlay: some View {
+        GeometryReader { proxy in
+            Button {
+                navigationState.requestCardAddition()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.title2.weight(.medium))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
+            .tint(AppTheme.brandOrange)
+            .accessibilityLabel("名刺を追加")
+            .accessibilityIdentifier("cardAddButton")
+            .onGeometryChange(for: CGSize.self) { buttonProxy in
+                buttonProxy.size
+            } action: { size in
+                guard size.width > 0, size.height > 0 else { return }
+                addButtonSize = size
+            }
+            .position(
+                x: proxy.size.width - AppTheme.Spacing.large - addButtonSize.width / 2,
+                y: addButtonCenterY(in: proxy)
+            )
+        }
+    }
+
+    private func addButtonCenterY(in proxy: GeometryProxy) -> CGFloat {
+        guard !tabBarAnchorFrame.isEmpty else {
+            return proxy.size.height
+                - proxy.safeAreaInsets.bottom
+                - addButtonSize.height / 2
+                + AppTheme.Spacing.small
+        }
+        // 標準Tab項目のアクセシビリティ領域は標準Glass Buttonより数pt高い。
+        // 独自拡大せず双方の下端を揃え、見た目の基準線を一致させる。
+        return tabBarAnchorFrame.maxY
+            - addButtonSize.height / 2
+            - proxy.frame(in: .global).minY
+    }
+
+    private var shouldShowRootAddButton: Bool {
+        guard !navigationState.isRootChromeSuppressed else { return false }
+        switch navigationState.selectedTab {
+        case .cards:
+            // iPhoneの詳細遷移では隠すが、iPadの2カラムでは詳細表示中も
+            // 一覧側のルート操作として追加ボタンを維持する。
+            return horizontalSizeClass == .regular
+                || navigationState.activeCardsRoute == nil
+        case .insights:
+            return navigationState.insightsPath.isEmpty
+        }
     }
 
     private func clearStaleSplitSelectionIfNeeded() {
