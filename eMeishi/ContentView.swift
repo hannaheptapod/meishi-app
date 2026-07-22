@@ -1,3 +1,4 @@
+import Combine
 import CoreData
 import SwiftUI
 
@@ -68,6 +69,9 @@ struct ContentView: View {
                 for: .NSManagedObjectContextObjectsDidChange,
                 object: viewContext
             )
+            // Core Data通知の発行元queueに依存せず、Navigation状態の更新は
+            // 必ずMain RunLoop上で行う。
+            .receive(on: RunLoop.main)
         ) { notification in
             clearDeletedSplitSelectionIfNeeded(notification)
         }

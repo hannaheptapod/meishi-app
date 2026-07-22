@@ -6,8 +6,8 @@
 
 | ID | 重大度 | 問題 | 根因 | 恒久対応 | 回帰確認 |
 |---|---|---|---|---|---|
-| UI-001 | Critical | 一覧へ戻る途中に検索枠が消える | 幅ごとにNavigationルートを差し替え、検索UIの所有Viewまで作り直していた | 単一`NavigationSplitView`を全幅で維持し、一覧Navigation Itemと同じ寿命の`CardListView`が標準`searchable`を所有 | 戻る遷移の開始・中間・終了を動画とUIテストで確認 |
-| UI-002 | Critical | Tab Barと追加ボタンが遅れて表示され、位置と高さもずれる | Tab Bar座標をアクセシビリティ階層から非同期探索し、実測値を再びレイアウトへ反映 | 座標探索を削除し、標準Tab配置だけで構成 | iPhone各表示状態で位置とタップ領域を確認 |
+| UI-001 | Critical | 一覧へ戻る途中に検索枠が消える | 幅ごとにNavigationルートを差し替え、検索UIを遷移で破棄される一覧Viewが所有していた | 単一`NavigationSplitView`を全幅で維持し、そのコンテナ自体へ標準`searchable`を付与して詳細往復中も同じ検索コントローラを保持 | 戻る遷移の開始・中間・終了を動画とUIテストで確認 |
+| UI-002 | Critical | Tab Barと追加ボタンが遅れて表示され、位置と高さもずれる | 追加を通常Tabとして混在させる実装と、端末固有の固定座標で置く実装が往復していた | 選択対象は標準`TabView`の2項目だけとし、追加は独立した標準Glass Buttonに固定。システムが確定したTab項目frameの下端だけを読んで整列し、固定寸法・固定Y座標を持たない | iPhoneの初期表示・スクロール後・タブ切替後に真円、寸法差4pt以内、下端一致、タップ領域をUIテストで確認 |
 | UI-003 | High | 追加フローでシートが競合し、カメラが即閉じる | 複数Booleanとdismiss開始直後の次presentation、Window直present | 単一の型付き状態機械と単一presentation ownerへ集約し、dismiss要求と実完了を別状態にする | カメラ・写真・手入力・未完了OCRを連続実行 |
 | UI-004 | High | コンテキストメニュー終了時に背面カードが光る | preview消失や固定時間をUIKitのdismiss完了と誤認 | session ID付きgateで実dismiss完了まで背面入力とメニュー起点の次操作を保留 | 同じ位置と別カード上でdismiss |
 | UI-005 | High | 戻る際にカードやツールバーが別々に再描画される | 画面全体への暗黙アニメーションと広すぎるrevision | 変更要素だけの局所アニメーションへ限定 | 詳細・設定・重複確認からの連続復帰 |
@@ -66,7 +66,7 @@
 
 ## 実装上の禁止事項
 
-- Tab BarやNavigation Barの座標をWindow階層・アクセシビリティ階層から探索しない。
+- Tab Barの座標を端末別の固定値で推測しない。独立追加ボタンの整列に使う場合も、`SystemTabBarFrameReader`だけが表示中の標準Tab項目の下端を読み、選択・外観・タップ処理は変更しない。
 - presentation制御や誤タップ防止に固定時間待機を使わない。
 - 同じ画面階層で複数のsheet用Booleanを独立管理しない。
 - Navigationコンテナの外側へ、そのコンテナに属する`searchable`を置かない。

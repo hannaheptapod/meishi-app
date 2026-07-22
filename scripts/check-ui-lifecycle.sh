@@ -80,6 +80,11 @@ if ! rg -q -U 'NotificationCenter\.default\.publisher\(for: \.NSManagedObjectCon
   fail "Core Dataの全context通知は@MainActorへ触れるfilterより前にMain RunLoopへ移してください"
 fi
 
+if ! rg -q -U 'NotificationCenter\.default\.publisher\((.|\n){0,180}for: \.NSManagedObjectContextObjectsDidChange(.|\n){0,220}\.receive\(on: RunLoop\.main\)' \
+    eMeishi/ContentView.swift; then
+  fail "選択中詳細の削除通知はNavigation状態へ触れる前にMain RunLoopへ移してください"
+fi
+
 if rg -n '\.tabBarMinimizeBehavior\(\.never\)' eMeishi/ContentView.swift >/dev/null; then
   fail "標準Tab Barのスクロール連動縮小を無効化しないでください"
 fi
