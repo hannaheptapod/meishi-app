@@ -72,7 +72,7 @@ meishi-app/
 │   │   ├── eMeishiApp.swift
 │   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
 │   ├── Models/
-│   │   ├── AppNavigationState.swift              # 一覧・めくる・インサイト・設定のNavigationPathと中央追加要求
+│   │   ├── AppNavigationState.swift              # 名刺・インサイトのNavigationPathと追加・設定遷移要求
 │   │   ├── CardFieldResolution.swift              # OCR span・フィールド候補・読み候補の共通DTO
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
@@ -80,10 +80,9 @@ meishi-app/
 │   │   ├── Tag+CoreDataProperties.swift
 │   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
 │   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
-│   ├── ContentView.swift                        # 標準TabViewによる一覧・めくる・中央追加・インサイト・設定
+│   ├── ContentView.swift                        # 名刺・インサイト＋右端追加の標準TabViewナビゲーション
 │   ├── Views/
 │   │   ├── CardListView.swift
-│   │   ├── CardBrowseView.swift                # 名刺画像を左右にめくるリッチ閲覧モード
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
 │   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
@@ -101,12 +100,20 @@ meishi-app/
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
 │   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
 │   │   ├── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
+│   │   ├── AdvancedSettingsView.swift          # 読み取り・AI・CloudKit等の高度な設定
+│   │   ├── ModelManagementView.swift           # ローカルAIモデルの状態・更新・削除
 │   │   └── Components/
 │   │       ├── CardRowView.swift               # 一覧行セル
 │   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
-│   │       ├── DesignSystemComponents.swift    # 共通サーフェス・情報行・画像・OCR進捗・メトリクス
+│   │       ├── CardListControls.swift           # 並べ替え・検索アクセサリ・追加シートの一覧操作部品
+│   │       ├── CardAdditionFlowModifier.swift   # 選択中タブを維持する共通追加フロー
+│   │       ├── DesignSystemComponents.swift    # 共通サーフェス・詳細値行・画像・OCR進捗・メトリクス
 │   │       ├── CardPeekView.swift              # コンテキストメニュー専用の読み取り専用プレビュー
 │   │       ├── ReadingCandidatePicker.swift     # OCR確認で根拠付き読み候補を選択する部品
+│   │       ├── FullScreenCardImageView.swift    # UIScrollViewベースの全画面画像表示
+│   │       ├── DuplicateScoreBadge.swift       # 重複候補の類似度を示す共通バッジ
+│   │       ├── TagSelectionChip.swift           # フォーム共通のタグ選択チップ
+│   │       ├── SystemTabBarFrameReader.swift    # 標準Tab Bar操作面の実座標を追加ボタンへ同期
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
 │   │   ├── CardListViewModel.swift
@@ -120,19 +127,21 @@ meishi-app/
 │   │   │   ├── AppTransactionProviding.swift   # AppTransaction / iCloud KVS の Protocol 抽象化（テスト用差替え対応）
 │   │   │   ├── ExistingUserDetector.swift      # 既存ユーザー痕跡（CoreData 名刺有無 / SettingsStore 書き込みキー）の判定
 │   │   │   ├── ProductIdentifier.swift         # SKU 定数（proMonthly / proYearly）
-│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative / duplicateAI）
+│   │   │   └── PaywallContext.swift            # 汎用・AI検索・一括タグ・インサイト等のPaywall表示コンテキスト
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
 │   │   ├── PhotoImportService.swift             # PhotosPicker画像の順次ロード・正規化
-│   │   ├── OCRProcessingCoordinator.swift       # OCR進捗・実測ETA・中断画像管理
+│   │   ├── OCRProcessingCoordinator.swift       # OCR進捗・入力規模＋端末実測補正ETA・中断画像管理
 │   │   ├── OCRBackgroundTaskManager.swift       # BGContinuedProcessingTask連携
 │   │   ├── PendingOCRStore.swift                 # OCR再開キューの原子的な保存・復元
 │   │   ├── CardThumbnailService.swift           # 64pt長辺基準の表示寸法計算
+│   │   ├── DuplicateMergeService.swift          # 重複名刺の選択値統合・保存・rollback
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
 │   │   ├── CloudKitModelUploader.swift         # #if DEBUG 限定のモデルアップローダ（開発者向け）
 │   │   ├── CloudKitEntitlementChecker.swift    # 署名entitlementとテスト環境のCloudKit利用可否判定
+│   │   ├── CardImageDecodingService.swift      # 一覧・詳細画像の縮小デコードとキャッシュ
 │   │   ├── ModelInstallService.swift            # 検証済みモデルの原子的置換・ロールバック
 │   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
 │   │   ├── LocalLLMInferenceWorker.swift        # Core MLモデル状態と推論を直列化するactor
@@ -181,6 +190,7 @@ meishi-app/
 ├── Configuration.storekit                          # StoreKit Configuration（Xcode テスト用・proMonthly/proYearly・Family Sharing 有効）
 ├── scripts/
 │   ├── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
+│   ├── run-selected-ui-tests.sh                # UIテスト識別子検証・0件実行防止ラッパー
 │   ├── cloudkit-models.sh                      # 10MiB分割・再開・stable/rollback CLI
 │   └── tests/cloudkit-models-test.sh           # CLIマニフェスト・チャンク検証
 ├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
