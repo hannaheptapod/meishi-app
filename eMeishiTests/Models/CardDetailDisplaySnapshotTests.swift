@@ -1,5 +1,6 @@
-import Testing
+import CoreData
 import Foundation
+import Testing
 @testable import eMeishi
 
 @MainActor
