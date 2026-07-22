@@ -160,6 +160,5 @@ struct FieldDetectorNLTaggerTests {
         // 環境依存のため crash しないことを確認し、true の場合も受け入れる
         let result = FieldDetector.nlTaggerDetectsPersonalName(in: "John Smith")
         _ = result // true/false どちらも許容
-        #expect(true) // クラッシュしなければ PASS
     }
 }

@@ -5,6 +5,20 @@ import Testing
 @Suite(.serialized)
 struct OCRProcessingCoordinatorTests {
     @Test
+    func cancellationBeforeStartRemainsTerminal() async {
+        let coordinator = OCRProcessingCoordinator.shared
+        let jobID = OCRJobID()
+
+        let cancelled = await coordinator.cancel(jobID: jobID)
+        let attemptedStart = await coordinator.start(jobID: jobID, totalItems: 4)
+
+        #expect(cancelled?.phase == .cancelled)
+        #expect(attemptedStart.phase == .cancelled)
+        #expect(await coordinator.transition(jobID: jobID, to: .textRecognition) == nil)
+        #expect(await coordinator.currentState(jobID: jobID)?.phase == .cancelled)
+    }
+
+    @Test
     func terminalStateRejectsLaterTransitionsAndCompletion() async {
         let coordinator = OCRProcessingCoordinator.shared
         let jobID = OCRJobID()
@@ -123,5 +137,26 @@ struct OCRProcessingCoordinatorTests {
 
         #expect((after?.estimatedRemainingSeconds ?? .infinity) < (before.estimatedRemainingSeconds ?? 0))
         _ = await coordinator.cancel(jobID: jobID)
+    }
+
+    @Test
+    func terminalSessionRetentionIsBoundedAndKeepsNewestCancellation() async throws {
+        let coordinator = OCRProcessingCoordinator.shared
+        let jobIDs = (0..<(OCRProcessingCoordinator.terminalSessionRetentionLimit + 16)).map { _ in
+            OCRJobID()
+        }
+        let firstJobID = try #require(jobIDs.first)
+        let lastJobID = try #require(jobIDs.last)
+
+        for jobID in jobIDs {
+            _ = await coordinator.cancel(jobID: jobID)
+        }
+
+        #expect(
+            await coordinator.retainedTerminalSessionCount()
+                <= OCRProcessingCoordinator.terminalSessionRetentionLimit
+        )
+        #expect(await coordinator.currentState(jobID: firstJobID) == nil)
+        #expect(await coordinator.currentState(jobID: lastJobID)?.phase == .cancelled)
     }
 }

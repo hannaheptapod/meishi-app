@@ -37,19 +37,35 @@ final class EMeishiUITests: XCTestCase {
     }
 
     private var cardsTab: XCUIElement {
-        nativeTabBar.buttons["名刺"]
+        rootTabButton(identifier: "cardsRootTab", named: "名刺")
     }
 
     private var insightsTab: XCUIElement {
-        nativeTabBar.buttons["インサイト"]
+        rootTabButton(identifier: "insightsRootTab", named: "インサイト")
+    }
+
+    /// iPhoneではXCUIElementTypeTabBar、iPadの上部Tab Barでは通常のButtonとして
+    /// 公開されるため、表示形式に依存せず同じ標準Tabを取得する。
+    private func rootTabButton(identifier: String, named name: String) -> XCUIElement {
+        let identified = app.descendants(matching: .any)[identifier]
+        if identified.exists {
+            return identified
+        }
+        let tabBarButton = nativeTabBar.buttons[name]
+        if tabBarButton.exists {
+            return tabBarButton
+        }
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", name))
+            .firstMatch
     }
 
     private var addButton: XCUIElement {
-        app.buttons["cardAddButton"]
-    }
-
-    private var splitAddButton: XCUIElement {
-        app.buttons["splitCardAddButton"]
+        app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR label == %@",
+            "cardAddButton",
+            "追加"
+        )).firstMatch
     }
 
     private var sortFilterMenu: XCUIElement {
@@ -351,12 +367,11 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(nativeTabBar.waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(cardsTab.waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
-        let initialNavigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
-        let initialAddButtonFrame = addButton.frame
 
         for _ in 0..<6 { app.swipeUp() }
 
-        // スクロール後もTab Barを縮小せず、独立追加ボタンとの配置を維持する。
+        // 標準Tab Barがスクロールに応じて縮小しても、pinned追加アクションは
+        // 同じシステムレイアウト内で高さと中心を追従する。
         XCTAssertTrue(addButton.isHittable, "スクロール後も独立追加ボタンが操作できる")
         let navigationTabsFrame = cardsTab.frame.union(insightsTab.frame)
         XCTAssertLessThan(navigationTabsFrame.maxX, addButton.frame.minX)
@@ -374,10 +389,6 @@ final class EMeishiUITests: XCTestCase {
         )
         XCTAssertEqual(navigationTabsFrame.minY, addButton.frame.minY, accuracy: 1)
         XCTAssertEqual(navigationTabsFrame.maxY, addButton.frame.maxY, accuracy: 1)
-        XCTAssertEqual(navigationTabsFrame.height, initialNavigationTabsFrame.height, accuracy: 2)
-        XCTAssertEqual(navigationTabsFrame.midY, initialNavigationTabsFrame.midY, accuracy: 2)
-        XCTAssertEqual(addButton.frame.height, initialAddButtonFrame.height, accuracy: 2)
-        XCTAssertEqual(addButton.frame.midY, initialAddButtonFrame.midY, accuracy: 2)
         let navigationTop = min(nativeTabBar.frame.minY, addButton.frame.minY)
 
         let visibleRows = app.descendants(matching: .any)
@@ -455,12 +466,19 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["saveToContactsButton"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(app.buttons["shareCardButton"].waitForExistence(timeout: Self.shortTimeout))
-        XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
-        XCTAssertFalse(nativeTabBar.isHittable)
-
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // Split Viewでは左の一覧が残るため、一覧所属の追加操作も維持する。
-            XCTAssertTrue(splitAddButton.exists)
+            // Split Viewでは検索欄とTabは一覧列の操作なので残す。詳細列へ複製されないことは、
+            // 検索欄が1件だけで一覧列内のまま操作可能なことから確認する。
+            XCTAssertEqual(app.searchFields.count, 1)
+            XCTAssertTrue(cardSearchField.isHittable)
+            XCTAssertTrue(cardsTab.isHittable)
+            XCTAssertFalse(
+                addButton.exists,
+                "Split Viewでも詳細表示中は追加操作を詳細の共有操作と競合させない"
+            )
+        } else {
+            XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
+            XCTAssertFalse(nativeTabBar.isHittable)
         }
 
         // 詳細自体は下スワイプでdismissせず、標準の戻る導線を使う。
@@ -478,7 +496,20 @@ final class EMeishiUITests: XCTestCase {
         // 詳細画面が表示される
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
 
-        // 戻る
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Split Viewには「一覧へ戻る」遷移がない。別の行へ切り替えても一覧列の
+            // 操作面が失われず、詳細列だけが更新されることを検証する。
+            let nextCard = cardRow("佐藤 誠")
+            XCTAssertTrue(nextCard.waitForExistence(timeout: Self.shortTimeout))
+            nextCard.tap()
+            XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+            XCTAssertTrue(cardSearchField.isHittable)
+            XCTAssertTrue(cardsTab.isHittable)
+            XCTAssertFalse(addButton.exists)
+            return
+        }
+
+        // compact幅では標準の戻る操作で一覧へ復帰する。
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // リスト画面に戻ったことを確認（選択ボタンが表示される）
@@ -636,6 +667,19 @@ final class EMeishiUITests: XCTestCase {
         settings.tap()
 
         XCTAssertTrue(app.navigationBars.staticTexts["設定"].waitForExistence(timeout: Self.shortTimeout))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertEqual(app.searchFields.count, 1)
+            XCTAssertTrue(cardSearchField.isHittable, "Split Viewの一覧列は設定表示中も操作可能に保つ")
+            XCTAssertTrue(cardsTab.isHittable)
+            XCTAssertFalse(addButton.exists, "設定の操作と追加アクションを同時表示しない")
+
+            let card = cardRow("山田 太郎")
+            XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))
+            card.tap()
+            XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+            return
+        }
+
         XCTAssertFalse(cardSearchField.exists, "検索欄を設定のNavigation Itemへ持ち越さない")
         XCTAssertFalse(nativeTabBar.isHittable)
 
@@ -800,6 +844,13 @@ final class EMeishiUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertFalse(app.navigationBars.staticTexts["名刺詳細"].exists)
+
+        // dismiss入力の終了後は通常のタップを取りこぼさず、同じカードを開ける。
+        XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))
+        card.tap()
+        XCTAssertTrue(
+            app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout)
+        )
     }
 
     @MainActor
@@ -815,6 +866,11 @@ final class EMeishiUITests: XCTestCase {
 
         let fullScreenImage = app.scrollViews["fullScreenCardImage"]
         XCTAssertTrue(fullScreenImage.waitForExistence(timeout: Self.shortTimeout))
+        fullScreenImage.swipeLeft()
+        XCTAssertTrue(
+            app.scrollViews["fullScreenCardImage"].exists,
+            "横方向のパンで全画面画像を閉じない"
+        )
         fullScreenImage.pinch(withScale: 2.0, velocity: 1.0)
         fullScreenImage.doubleTap()
         XCTAssertTrue(app.buttons["閉じる"].waitForExistence(timeout: Self.shortTimeout))

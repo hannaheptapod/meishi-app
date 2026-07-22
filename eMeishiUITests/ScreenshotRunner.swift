@@ -78,7 +78,7 @@ final class ScreenshotRunnerTests: XCTestCase {
 
     @MainActor
     func test03_UnifiedSearch() async throws {
-        launchApp(startScreen: "AIChat")
+        launchApp(startScreen: "UnifiedSearch")
         let searchField = app.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 8))
         await waitForUI(1.5)

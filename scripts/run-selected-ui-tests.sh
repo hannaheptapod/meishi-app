@@ -58,9 +58,14 @@ if [[ "$xcodebuild_status" -ne 0 ]]; then
     exit "$xcodebuild_status"
 fi
 
-if ! rg -q "Executed [1-9][0-9]* tests?, with 0 failures" "$log_file"; then
-    echo "✗ テスト実行件数を確認できません。0件実行は成功として扱いません" >&2
+expected_count="$#"
+executed_count="$({ rg -o 'Executed [0-9]+ tests?, with 0 failures' "$log_file" || true; } \
+    | sed -E 's/Executed ([0-9]+) tests?, with 0 failures/\1/' \
+    | awk '$1 > maximum { maximum = $1 } END { print maximum + 0 }')"
+
+if [[ "$executed_count" -ne "$expected_count" ]]; then
+    echo "✗ 指定${expected_count}件に対して実行${executed_count}件でした。未実行・重複実行を成功として扱いません" >&2
     exit 2
 fi
 
-echo "✓ 指定UIテストを1件以上実行し、失敗0件を確認しました"
+echo "✓ 指定UIテスト${expected_count}件をすべて実行し、失敗0件を確認しました"

@@ -62,7 +62,6 @@ func makeDTO(
     address: String? = nil,
     website: String? = nil,
     notes: String? = nil,
-    imageData: Data? = nil,
     createdAt: Date? = nil
 ) -> CardExportDTO {
     let phoneList: [String] = {
@@ -82,7 +81,6 @@ func makeDTO(
         address: address,
         website: website,
         notes: notes,
-        imageData: imageData,
         createdAt: createdAt
     )
 }

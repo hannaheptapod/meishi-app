@@ -80,4 +80,17 @@ struct ExportServiceCSVTests {
         #expect(fields[2] == "テスト株式会社")
         #expect(fields[3] == "営業部")
     }
+
+    @Test func backgroundExportWritesBOMPrefixedFile() async throws {
+        let card = makeDTO(
+            company: "例示商事株式会社",
+            email: "staff@example.com"
+        )
+        let url = try await service.exportCSVInBackground(from: [card])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let data = try Data(contentsOf: url)
+        #expect(data.starts(with: [0xEF, 0xBB, 0xBF]))
+        #expect(String(decoding: data.dropFirst(3), as: UTF8.self).contains("staff@example.com"))
+    }
 }

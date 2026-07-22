@@ -85,4 +85,35 @@ struct DuplicateCheckerFindTests {
         let b = makeCard(context: context, lastName: "山田", lastNameReading: "やまだ", firstName: "次郎", firstNameReading: "じろう")
         #expect(strictChecker.findDuplicates(in: [a, b]).isEmpty)
     }
+
+    @Test func backgroundSnapshotScanMatchesSynchronousResult() async {
+        let first = makeCard(
+            context: context,
+            lastName: "Fixture-A",
+            firstName: "Person",
+            company: "Example One株式会社"
+        )
+        let second = makeCard(
+            context: context,
+            lastName: "Fixture-A",
+            firstName: "Person",
+            company: "Example Two株式会社"
+        )
+        let unrelated = makeCard(
+            context: context,
+            lastName: "Fixture-Z",
+            firstName: "Other",
+            company: "Sample合同会社"
+        )
+        let cards = [first, second, unrelated]
+
+        let synchronous = checker.findDuplicates(in: cards)
+        let scan = await checker.scanRuleBased(
+            snapshots: checker.makeSnapshots(from: cards),
+            includeBorderline: true
+        )
+
+        #expect(scan?.confirmed.map(\.id) == synchronous.map(\.id))
+        #expect(scan?.confirmed.map(\.score) == synchronous.map(\.score))
+    }
 }

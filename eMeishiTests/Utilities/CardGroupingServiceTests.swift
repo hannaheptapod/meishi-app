@@ -15,6 +15,63 @@ struct SectionIndexSelectionTests {
     @Test func returnsNilWhenNoSectionsExist() {
         #expect(SectionIndexSelection.adjustedIndex(current: 4, itemCount: 0, delta: 1) == nil)
     }
+
+    @Test func nearestSectionUsesExistingRequestedSection() {
+        let ordered = ["section-a", "section-b", "section-c"]
+        let result = SectionIndexSelection.nearestSectionID(
+            to: "section-b",
+            orderedIDs: ordered,
+            existingIDs: ["section-b", "section-c"]
+        )
+
+        #expect(result == "section-b")
+    }
+
+    @Test func nearestSectionPrefersPreviousAtEqualDistance() {
+        let ordered = ["section-a", "section-b", "section-c"]
+        let result = SectionIndexSelection.nearestSectionID(
+            to: "section-b",
+            orderedIDs: ordered,
+            existingIDs: ["section-a", "section-c"]
+        )
+
+        #expect(result == "section-a")
+    }
+
+    @Test func nearestSectionReturnsNilForUnknownOrEmptyInput() {
+        #expect(
+            SectionIndexSelection.nearestSectionID(
+                to: "missing",
+                orderedIDs: ["section-a"],
+                existingIDs: ["section-a"]
+            ) == nil
+        )
+        #expect(
+            SectionIndexSelection.nearestSectionID(
+                to: "section-a",
+                orderedIDs: [],
+                existingIDs: []
+            ) == nil
+        )
+    }
+
+    @Test func thinningHandlesEmptyAndSingleSlotWithoutUnsafeEndpoints() {
+        #expect(SectionIndexSelection.thinnedIndices(itemCount: 0, maximumCount: 4) == [])
+        #expect(SectionIndexSelection.thinnedIndices(itemCount: 8, maximumCount: 1) == [0])
+    }
+
+    @Test func thinningPreservesBothEndpointsAndRequestedCount() {
+        let indices = SectionIndexSelection.thinnedIndices(
+            itemCount: 37,
+            maximumCount: 7
+        )
+
+        #expect(indices.count == 7)
+        #expect(indices.first == 0)
+        #expect(indices.last == 36)
+        #expect(Set(indices).count == indices.count)
+        #expect(indices.allSatisfy { (0..<37).contains($0) })
+    }
 }
 
 // MARK: - テスト用ヘルパー
@@ -81,6 +138,16 @@ struct CardGroupingServiceSectionKeyTests {
 
 @MainActor
 struct CardGroupingServiceGroupByNameTests {
+
+    @Test func emptyNameFieldsProduceOtherSectionWithoutUnsafeFallback() {
+        let ctx = makeContext()
+        let card = makeGroupCard(context: ctx, lastName: "", lastNameReading: "", firstName: nil)
+
+        let sections = CardGroupingService.groupByName([card], ascending: true)
+
+        #expect(sections.map(\.title) == ["その他"])
+        #expect(sections.first?.cards.count == 1)
+    }
 
     @Test func groupsUsingLastNameReading() {
         let ctx = makeContext()

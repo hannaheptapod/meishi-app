@@ -11,9 +11,11 @@ private final class MockOCRService: OCRServiceProtocol {
     var errorToThrow: Error? = nil
     var croppedImageToReturn: UIImage? = nil
     var recognitionDelayNanoseconds: UInt64 = 0
+    var detectAndCropCallCount = 0
 
     func detectAndCropCard(from image: UIImage) async -> UIImage {
-        croppedImageToReturn ?? image
+        detectAndCropCallCount += 1
+        return croppedImageToReturn ?? image
     }
 
     func recognizeText(from image: UIImage) async throws -> [RecognizedLine] {
@@ -22,6 +24,50 @@ private final class MockOCRService: OCRServiceProtocol {
         }
         if let error = errorToThrow { throw error }
         return linesToReturn
+    }
+}
+
+/// キャンセルを無視して遅れて通常Errorを返す外部処理を再現する。
+private actor AsyncTestGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let continuations = waiters
+        waiters.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+}
+
+private final class NonCooperativeFailingOCRService: OCRServiceProtocol, @unchecked Sendable {
+    private let recognitionStarted = AsyncTestGate()
+    private let allowFailure = AsyncTestGate()
+
+    func detectAndCropCard(from image: UIImage) async -> UIImage {
+        image
+    }
+
+    func recognizeText(from image: UIImage) async throws -> [RecognizedLine] {
+        await recognitionStarted.open()
+        await allowFailure.wait()
+        throw NSError(domain: "SyntheticOCR", code: 1)
+    }
+
+    func waitUntilRecognitionStarts() async {
+        await recognitionStarted.wait()
+    }
+
+    func resumeWithFailure() async {
+        await allowFailure.open()
     }
 }
 
@@ -61,8 +107,12 @@ private final class MockLLMService: LocalLLMServiceProtocol {
 /// 固定 UUID リストを返す AutoTag モック
 private final class MockAutoTagService: AutoTagServiceProtocol {
     var returnedIDs: [UUID] = []
+    var delayNanoseconds: UInt64 = 0
     func suggestTags(cardInfo: AutoTagService.CardInfo, tags: [AutoTagService.TagInfo]) async -> [UUID] {
-        returnedIDs
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
+        return returnedIDs
     }
 }
 
@@ -120,7 +170,7 @@ struct CardFormViewModelInitTests {
         #expect(vm.isEditing == false)
     }
 
-    @Test func cardInitRestoresFields() throws {
+    @Test func cardInitRestoresFields() async throws {
         let ctx = makeContext()
         let card = BusinessCard(context: ctx)
         card.id = UUID()
@@ -134,8 +184,19 @@ struct CardFormViewModelInitTests {
         card.imageData = imageData
         card.createdAt = Date()
         card.updatedAt = Date()
+        let tag = eMeishi.Tag(context: ctx)
+        let tagID = UUID()
+        tag.id = tagID
+        tag.name = "合成タグ"
+        tag.colorHex = "#007AFF"
+        tag.createdAt = Date()
+        card.addToTags(tag)
+        try ctx.save()
 
         let vm = CardFormViewModel(card: card, context: ctx)
+        #expect(vm.isLoadingEditSnapshot)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
         #expect(vm.lastName == "山田")
         #expect(vm.firstName == "太郎")
         #expect(vm.company == "テスト株式会社")
@@ -143,31 +204,57 @@ struct CardFormViewModelInitTests {
         #expect(vm.phones.count == 2)
         #expect(vm.notes == "備考")
         #expect(vm.capturedImageData == imageData)
+        #expect(vm.selectedTags == [tagID])
         #expect(vm.isEditing == true)
+        #expect(vm.isLoadingEditSnapshot == false)
     }
 
-    @Test func cardInitWithSinglePhoneSetsOneEntry() {
+    @Test func cardInitWithSinglePhoneSetsOneEntry() async throws {
         let ctx = makeContext()
         let card = BusinessCard(context: ctx)
         card.id = UUID()
         card.phone = "03-1234-5678"
         card.createdAt = Date()
         card.updatedAt = Date()
+        try ctx.save()
 
         let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
         #expect(vm.phones == ["03-1234-5678"])
     }
 
-    @Test func cardInitWithNilPhoneDefaultsToEmptyEntry() {
+    @Test func cardInitWithNilPhoneDefaultsToEmptyEntry() async throws {
         let ctx = makeContext()
         let card = BusinessCard(context: ctx)
         card.id = UUID()
         card.phone = nil
         card.createdAt = Date()
         card.updatedAt = Date()
+        try ctx.save()
 
         let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
         #expect(vm.phones == [""])
+    }
+
+    @Test func cardInitDoesNotFireFaultForImageOrTags() throws {
+        let ctx = makeContext()
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "架空"
+        card.imageData = Data(repeating: 0x7A, count: 4_096)
+        card.createdAt = Date()
+        card.updatedAt = Date()
+        try ctx.save()
+        let objectID = card.objectID
+        ctx.reset()
+
+        let fault = try ctx.existingObject(with: objectID) as! BusinessCard
+        #expect(fault.isFault)
+        _ = CardFormViewModel(card: fault, context: ctx)
+        #expect(fault.isFault)
     }
 }
 
@@ -176,14 +263,13 @@ struct CardFormViewModelInitTests {
 @MainActor
 struct CardFormViewModelSaveTests {
 
-    @Test func saveNewCardSetsIdAndCreatedAt() throws {
+    @Test func saveNewCardSetsIdAndCreatedAt() async throws {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)
         vm.lastName = "佐藤"
         vm.firstName = "花子"
         vm.company = "株式会社テスト"
-        try vm.save()
-        try ctx.save()
+        try await vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -194,7 +280,7 @@ struct CardFormViewModelSaveTests {
         #expect(saved.lastName == "佐藤")
     }
 
-    @Test func saveUpdatesExistingCardUpdatedAt() throws {
+    @Test func saveUpdatesExistingCardUpdatedAt() async throws {
         let ctx = makeContext()
         let card = BusinessCard(context: ctx)
         card.id = UUID()
@@ -205,19 +291,21 @@ struct CardFormViewModelSaveTests {
         try ctx.save()
 
         let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
         vm.lastName = "新姓"
-        try vm.save()
+        try await vm.save()
 
         #expect(card.lastName == "新姓")
         #expect(card.updatedAt! > oldDate)
     }
 
-    @Test func saveTrimesWhitespace() throws {
+    @Test func saveTrimesWhitespace() async throws {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)
         vm.lastName = "  山田  "
         vm.email = " test@example.com "
-        try vm.save()
+        try await vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -226,11 +314,11 @@ struct CardFormViewModelSaveTests {
         #expect(saved.email == "test@example.com")
     }
 
-    @Test func saveJoinsPhonesWithNewline() throws {
+    @Test func saveJoinsPhonesWithNewline() async throws {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)
         vm.phones = ["03-1234-5678", "090-0000-0001", ""]
-        try vm.save()
+        try await vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -239,7 +327,7 @@ struct CardFormViewModelSaveTests {
         #expect(saved.phone == "03-1234-5678\n090-0000-0001")
     }
 
-    @Test func saveAppliesSelectedTags() throws {
+    @Test func saveAppliesSelectedTags() async throws {
         let ctx = makeContext()
         let tag = eMeishi.Tag(context: ctx)
         tag.id = UUID()
@@ -251,7 +339,7 @@ struct CardFormViewModelSaveTests {
 
         let vm = CardFormViewModel(context: ctx)
         vm.selectedTags = [tag.id!]
-        try vm.save()
+        try await vm.save()
 
         let request = BusinessCard.fetchRequest()
         let cards = try ctx.fetch(request)
@@ -260,7 +348,7 @@ struct CardFormViewModelSaveTests {
         #expect(tags.contains(tag))
     }
 
-    @Test func saveExistingCardPreservesImageWhenImageWasNotChanged() throws {
+    @Test func saveExistingCardPreservesImageWhenImageWasNotChanged() async throws {
         let ctx = makeContext()
         let originalImageData = Data((0..<128).map(UInt8.init))
         let card = BusinessCard(context: ctx)
@@ -272,23 +360,100 @@ struct CardFormViewModelSaveTests {
         try ctx.save()
 
         let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
         vm.lastName = "佐藤"
-        try vm.save()
+        try await vm.save()
 
         #expect(card.lastName == "佐藤")
         #expect(card.imageData == originalImageData)
     }
 
-    @Test func saveKeepsUncertainCompanyReadingBlank() throws {
+    @Test func saveKeepsUncertainCompanyReadingBlank() async throws {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)
         vm.company = "SONY"
         vm.companyReading = ""
 
-        try vm.save()
+        try await vm.save()
 
         let saved = try #require(ctx.fetch(BusinessCard.fetchRequest()).first)
         #expect(saved.companyReading?.isEmpty == true)
+    }
+
+    @Test func saveRejectsStaleEditAndKeepsFormInput() async throws {
+        let ctx = makeContext()
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "初期値"
+        card.createdAt = Date(timeIntervalSinceReferenceDate: 100)
+        card.updatedAt = Date(timeIntervalSinceReferenceDate: 100)
+        try ctx.save()
+
+        let firstEditor = CardFormViewModel(card: card, context: ctx)
+        firstEditor.beginEditSnapshotLoading()
+        firstEditor.applyEditSnapshot(try await firstEditor.loadEditSnapshot())
+
+        let competingEditor = CardFormViewModel(card: card, context: ctx)
+        competingEditor.beginEditSnapshotLoading()
+        competingEditor.applyEditSnapshot(try await competingEditor.loadEditSnapshot())
+        competingEditor.lastName = "別更新"
+        try await competingEditor.save()
+
+        firstEditor.lastName = "入力保持"
+        do {
+            try await firstEditor.save()
+            Issue.record("競合した編集が保存されました")
+        } catch {
+            #expect(error as? CardFormPersistenceError == .cardChangedSinceEditingBegan)
+        }
+        #expect(firstEditor.lastName == "入力保持")
+        #expect(firstEditor.saveErrorMessage?.isEmpty == false)
+    }
+
+    @Test func saveCanContinueAfterSuccessfulEditGenerationUpdate() async throws {
+        let ctx = makeContext()
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "初期値"
+        card.createdAt = Date(timeIntervalSinceReferenceDate: 200)
+        card.updatedAt = Date(timeIntervalSinceReferenceDate: 200)
+        try ctx.save()
+
+        let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
+        vm.lastName = "一回目"
+        try await vm.save()
+        vm.lastName = "二回目"
+        try await vm.save()
+
+        #expect(card.lastName == "二回目")
+    }
+
+    @Test func saveRejectsCardDeletedAfterEditLoaded() async throws {
+        let ctx = makeContext()
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "削除前"
+        card.createdAt = Date(timeIntervalSinceReferenceDate: 300)
+        card.updatedAt = Date(timeIntervalSinceReferenceDate: 300)
+        try ctx.save()
+
+        let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
+        ctx.delete(card)
+        try ctx.save()
+
+        do {
+            try await vm.save()
+            Issue.record("削除済みの名刺が保存されました")
+        } catch {
+            #expect(error as? CardFormPersistenceError == .cardNoLongerExists)
+        }
+        #expect(vm.lastName == "削除前")
+        #expect(vm.saveErrorMessage?.isEmpty == false)
     }
 }
 
@@ -344,6 +509,29 @@ struct CardFormViewModelTagSuggestionTests {
         #expect(!vm.suggestedTagIDs.contains(id))
         #expect(!vm.selectedTags.contains(id))
     }
+
+    @Test func cancelledSuggestionDoesNotWriteBackAfterFormCloses() async {
+        let ctx = makeContext()
+        let tagID = UUID()
+        let tag = Tag(context: ctx)
+        tag.id = tagID
+        tag.name = "合成タグ"
+        tag.sortOrder = 0
+
+        let service = MockAutoTagService()
+        service.returnedIDs = [tagID]
+        service.delayNanoseconds = 500_000_000
+        let vm = CardFormViewModel(context: ctx, autoTagService: service)
+        vm.company = "架空商事"
+
+        vm.requestTagSuggestions()
+        #expect(vm.isLoadingTagSuggestions)
+        vm.cancelTagSuggestions()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+
+        #expect(!vm.isLoadingTagSuggestions)
+        #expect(vm.suggestedTagIDs.isEmpty)
+    }
 }
 
 // MARK: - OCR パイプライン（populateFromOCR）
@@ -351,14 +539,18 @@ struct CardFormViewModelTagSuggestionTests {
 @MainActor
 struct CardFormViewModelOCRTests {
 
-    @Test func cancelOCRAndWaitFinishesWithCancelledState() async {
+    @Test func cancelOCRAndWaitFinishesWithCancelledState() async throws {
         let ctx = makeContext()
         let mockOCR = MockOCRService()
         mockOCR.recognitionDelayNanoseconds = 5_000_000_000
         mockOCR.linesToReturn = [makeLine("山田太郎")]
+        let imageData = try #require(
+            makeTestImage(size: CGSize(width: 120, height: 60), color: .white)
+                .jpegData(compressionQuality: 0.9)
+        )
 
         let vm = CardFormViewModel(
-            croppedImage: makeTestImage(size: CGSize(width: 120, height: 60), color: .white),
+            normalizedImageData: imageData,
             context: ctx,
             ocrService: mockOCR,
             classifier: MockClassifier(result: CardFieldClassifier.ParsedCard()),
@@ -375,20 +567,61 @@ struct CardFormViewModelOCRTests {
         #expect(coordinatorState?.phase == .cancelled)
     }
 
-    @Test func imageInitStoresCroppedImageData() async throws {
+    @Test func nonCooperativeErrorAfterCancellationKeepsCancelledStateAndClearsError() async throws {
         let ctx = makeContext()
-        let originalImage = makeTestImage(size: CGSize(width: 120, height: 60), color: .red)
-        let croppedImage = makeTestImage(size: CGSize(width: 40, height: 80), color: .blue)
+        let mockOCR = NonCooperativeFailingOCRService()
+        let imageData = try #require(
+            makeTestImage(size: CGSize(width: 120, height: 60), color: .white)
+                .jpegData(compressionQuality: 0.9)
+        )
+        let vm = CardFormViewModel(
+            normalizedImageData: imageData,
+            context: ctx,
+            ocrService: mockOCR,
+            classifier: MockClassifier(result: CardFieldClassifier.ParsedCard()),
+            llmService: MockLLMService(),
+            settings: MockSettings(readingMethod: .localLLM)
+        )
+
+        await mockOCR.waitUntilRecognitionStarts()
+        vm.ocrErrorMessage = "以前のエラー"
+        let cancellation = Task { @MainActor in
+            await vm.cancelOCRAndWait()
+        }
+        for _ in 0..<100 {
+            if await OCRProcessingCoordinator.shared.currentState(jobID: vm.ocrJobID)?.phase == .cancelled {
+                break
+            }
+            await Task.yield()
+        }
+        #expect(
+            await OCRProcessingCoordinator.shared.currentState(jobID: vm.ocrJobID)?.phase == .cancelled
+        )
+        await mockOCR.resumeWithFailure()
+        await cancellation.value
+
+        #expect(vm.isProcessingOCR == false)
+        #expect(vm.ocrErrorMessage == nil)
+        #expect(vm.ocrProcessingState.phase == .cancelled)
+        let coordinatorState = await OCRProcessingCoordinator.shared.currentState(jobID: vm.ocrJobID)
+        #expect(coordinatorState?.phase == .cancelled)
+    }
+
+    @Test func normalizedDataInitPreservesInputWithoutRecroppingOrReencoding() async throws {
+        let ctx = makeContext()
+        let normalizedData = try #require(
+            makeTestImage(size: CGSize(width: 120, height: 60), color: .orange)
+                .jpegData(compressionQuality: 0.91)
+        )
         let mockOCR = MockOCRService()
-        mockOCR.croppedImageToReturn = croppedImage
-        mockOCR.linesToReturn = [makeLine("山田太郎")]
+        mockOCR.linesToReturn = [makeLine("架空 一郎")]
 
         var parsed = CardFieldClassifier.ParsedCard()
-        parsed.lastName = "山田"
-        parsed.firstName = "太郎"
+        parsed.lastName = "架空"
+        parsed.firstName = "一郎"
 
         let vm = CardFormViewModel(
-            image: originalImage,
+            normalizedImageData: normalizedData,
             context: ctx,
             ocrService: mockOCR,
             classifier: MockClassifier(result: parsed),
@@ -396,13 +629,12 @@ struct CardFormViewModelOCRTests {
             settings: MockSettings(readingMethod: .localLLM)
         )
 
+        #expect(vm.capturedImageData == normalizedData)
         await waitForOCRCompletion(vm)
 
         #expect(vm.isProcessingOCR == false)
-        let data = try #require(vm.capturedImageData)
-        let savedImage = try #require(UIImage(data: data))
-        #expect(Int(savedImage.size.width.rounded()) == 40)
-        #expect(Int(savedImage.size.height.rounded()) == 80)
+        #expect(vm.capturedImageData == normalizedData)
+        #expect(mockOCR.detectAndCropCallCount == 0)
     }
 
     @Test func populateFromOCRSetsErrorOnThrow() async {
