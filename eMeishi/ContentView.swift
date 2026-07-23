@@ -11,6 +11,7 @@ struct ContentView: View {
     @StateObject private var navigationState = AppNavigationState()
     @State private var tabBarAnchorFrame = CGRect.zero
     @State private var addButtonSize = CGSize(width: 58, height: 58)
+    @State private var addButtonLabelSide: CGFloat = 44
 
     var body: some View {
         TabView(selection: $navigationState.selectedTab) {
@@ -225,7 +226,7 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.title2.weight(.medium))
-                    .frame(width: 44, height: 44)
+                    .frame(width: addButtonLabelSide, height: addButtonLabelSide)
             }
             .buttonStyle(.glassProminent)
             .buttonBorderShape(.circle)
@@ -237,7 +238,14 @@ struct ContentView: View {
             } action: { size in
                 guard size.width > 0, size.height > 0 else { return }
                 addButtonSize = size
+                guard horizontalSizeClass != .regular,
+                      !tabBarAnchorFrame.isEmpty else { return }
+                let heightDifference = tabBarAnchorFrame.height - size.height
+                guard abs(heightDifference) > 0.5 else { return }
+                addButtonLabelSide = min(max(addButtonLabelSide + heightDifference, 36), 72)
             }
+            .opacity(isRootAddButtonGeometryReady ? 1 : 0)
+            .allowsHitTesting(isRootAddButtonGeometryReady)
             .position(
                 x: proxy.size.width - AppTheme.Spacing.large - addButtonSize.width / 2,
                 y: addButtonCenterY(in: proxy)
@@ -246,17 +254,20 @@ struct ContentView: View {
     }
 
     private func addButtonCenterY(in proxy: GeometryProxy) -> CGFloat {
-        guard !tabBarAnchorFrame.isEmpty else {
-            return proxy.size.height
-                - proxy.safeAreaInsets.bottom
-                - addButtonSize.height / 2
-                + AppTheme.Spacing.small
+        if horizontalSizeClass != .regular {
+            guard !tabBarAnchorFrame.isEmpty else { return proxy.size.height }
+            return tabBarAnchorFrame.midY - proxy.frame(in: .global).minY
         }
-        // 標準Tab項目のアクセシビリティ領域は標準Glass Buttonより数pt高い。
-        // 独自拡大せず双方の下端を揃え、見た目の基準線を一致させる。
-        return tabBarAnchorFrame.maxY
+        return proxy.size.height
+            - proxy.safeAreaInsets.bottom
             - addButtonSize.height / 2
-            - proxy.frame(in: .global).minY
+            - AppTheme.Spacing.large
+    }
+
+    private var isRootAddButtonGeometryReady: Bool {
+        horizontalSizeClass == .regular
+            || (!tabBarAnchorFrame.isEmpty
+                && abs(tabBarAnchorFrame.height - addButtonSize.height) <= 1)
     }
 
     private var shouldShowRootAddButton: Bool {
