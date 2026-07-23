@@ -4,7 +4,7 @@ import UIKit
 
 @MainActor
 struct NavigationItemSearchPlacementConfiguratorTests {
-    @Test func keepsSearchFieldSurfaceStableOnRootNavigationItem() {
+    @Test func keepsSearchFieldSurfaceStableOnRootNavigationItem() throws {
         let rootViewController = UIViewController()
         rootViewController.navigationItem.searchController = UISearchController()
         let navigationController = UINavigationController(
@@ -25,7 +25,12 @@ struct NavigationItemSearchPlacementConfiguratorTests {
         #expect(rootViewController.navigationItem.hidesSearchBarWhenScrolling == false)
         #expect(
             rootViewController.navigationItem.searchController?.searchBar
-                .searchTextField.backgroundColor == .secondarySystemGroupedBackground
+                .searchTextField.backgroundColor != .secondarySystemGroupedBackground
         )
+        let searchTextField = try #require(
+            rootViewController.navigationItem.searchController?.searchBar.searchTextField
+        )
+        #expect(searchTextField.layer.borderWidth > 0)
+        #expect(searchTextField.layer.borderColor != nil)
     }
 }
