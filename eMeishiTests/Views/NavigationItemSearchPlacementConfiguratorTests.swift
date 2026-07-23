@@ -4,8 +4,9 @@ import UIKit
 
 @MainActor
 struct NavigationItemSearchPlacementConfiguratorTests {
-    @Test func disablesToolbarIntegrationOnRootNavigationItem() {
+    @Test func keepsSearchFieldSurfaceStableOnRootNavigationItem() {
         let rootViewController = UIViewController()
+        rootViewController.navigationItem.searchController = UISearchController()
         let navigationController = UINavigationController(
             rootViewController: rootViewController
         )
@@ -19,6 +20,12 @@ struct NavigationItemSearchPlacementConfiguratorTests {
         #expect(
             navigationController.viewControllers.first?.navigationItem
                 .searchBarPlacementAllowsToolbarIntegration == false
+        )
+        #expect(rootViewController.navigationItem.preferredSearchBarPlacement == .stacked)
+        #expect(rootViewController.navigationItem.hidesSearchBarWhenScrolling == false)
+        #expect(
+            rootViewController.navigationItem.searchController?.searchBar
+                .searchTextField.backgroundColor == .secondarySystemGroupedBackground
         )
     }
 }

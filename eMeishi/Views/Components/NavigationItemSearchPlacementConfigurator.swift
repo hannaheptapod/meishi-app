@@ -1,11 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// SwiftUIが生成するNavigation Itemへ、iOS 26の標準検索配置設定を適用する。
-///
-/// iOS 26では検索欄をiPhoneのToolbarへ統合する既定挙動により、Navigationの
-/// 復帰時に検索欄が遅れて組み直される場合がある。Appleの回避策（156174227）に
-/// 従い、一覧のNavigation ItemだけToolbar統合を無効にする。
+/// SwiftUIが生成する一覧のNavigation Itemへ、常時表示の標準検索配置を適用する。
 struct NavigationItemSearchPlacementConfigurator: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> Controller {
         Controller()
@@ -28,14 +24,20 @@ struct NavigationItemSearchPlacementConfigurator: UIViewControllerRepresentable 
         }
 
         func configureNavigationItem() {
-            guard let navigationController,
-                  let rootViewController = navigationController.viewControllers.first else {
+            guard let navigationController else {
                 return
             }
-            guard rootViewController.navigationItem.searchBarPlacementAllowsToolbarIntegration else {
-                return
+            let items = navigationController.navigationBar.items ?? []
+            for item in items where item.searchController != nil {
+                Self.configureSearchItem(item)
             }
-            rootViewController.navigationItem.searchBarPlacementAllowsToolbarIntegration = false
+        }
+
+        static func configureSearchItem(_ item: UINavigationItem) {
+            item.searchBarPlacementAllowsToolbarIntegration = false
+            item.preferredSearchBarPlacement = .stacked
+            item.hidesSearchBarWhenScrolling = false
+            item.searchController?.searchBar.searchTextField.backgroundColor = .secondarySystemGroupedBackground
         }
     }
 }
