@@ -8,6 +8,7 @@ struct CardDetailView: View {
     @EnvironmentObject private var listViewModel: CardListViewModel
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.openURL) private var openURL
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var presentationState = CardDetailPresentationState()
     @State private var isSavingToContacts = false
     @State private var viewLifetimeID: UUID?
@@ -132,43 +133,7 @@ struct CardDetailView: View {
                 }
                     .tint(Color.primary)
             }
-            ToolbarItemGroup(placement: .bottomBar) {
-                Button {
-                    startContactsExport()
-                } label: {
-                    if isSavingToContacts {
-                        Label {
-                            Text("保存中")
-                        } icon: {
-                            ProgressView()
-                        }
-                    } else {
-                        Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
-                    }
-                }
-                .tint(Color.primary)
-                .disabled(isSavingToContacts)
-                .accessibilityIdentifier("saveToContactsButton")
-
-                Spacer()
-
-                Button {
-                    shareVCard()
-                } label: {
-                    if shareExportRequestID != nil {
-                        Label {
-                            Text("準備中")
-                        } icon: {
-                            ProgressView()
-                        }
-                    } else {
-                        Label("共有", systemImage: "square.and.arrow.up")
-                    }
-                }
-                .tint(Color.primary)
-                .disabled(shareExportRequestID != nil)
-                .accessibilityIdentifier("shareCardButton")
-            }
+            detailBottomToolbarContent
         }
         .sheet(item: sheetPresentationBinding, onDismiss: {
             completeCurrentPresentationDismissal()
@@ -381,6 +346,58 @@ struct CardDetailView: View {
     }
 
     private var displaySnapshot: CardDetailDisplaySnapshot { item.detail }
+
+    @ToolbarContentBuilder
+    private var detailBottomToolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .bottomBar) {
+            saveToContactsButton
+            if horizontalSizeClass != .regular {
+                Spacer()
+            }
+            shareCardButton
+            if horizontalSizeClass == .regular {
+                Spacer()
+            }
+        }
+    }
+
+    private var saveToContactsButton: some View {
+        Button {
+            startContactsExport()
+        } label: {
+            Label {
+                Text("連絡先に保存")
+            } icon: {
+                if isSavingToContacts {
+                    ProgressView()
+                } else {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                }
+            }
+        }
+        .tint(Color.primary)
+        .disabled(isSavingToContacts)
+        .accessibilityIdentifier("saveToContactsButton")
+    }
+
+    private var shareCardButton: some View {
+        Button {
+            shareVCard()
+        } label: {
+            Label {
+                Text("共有")
+            } icon: {
+                if shareExportRequestID != nil {
+                    ProgressView()
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+        }
+        .tint(Color.primary)
+        .disabled(shareExportRequestID != nil)
+        .accessibilityIdentifier("shareCardButton")
+    }
 
     private var profileSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
