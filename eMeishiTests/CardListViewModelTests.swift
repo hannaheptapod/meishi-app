@@ -101,7 +101,7 @@ struct CardListViewModelSearchTests {
         vm.searchText = "山田"
         await vm.waitForPendingListUpdate()
         #expect(vm.filteredCardItems.count == 1)
-        #expect(vm.filteredCardItems.first?.row.displayName == "山田")
+        #expect(vm.filteredCardItems.first?.row.displayName == "山田 太郎")
     }
 
     @Test func searchByCompany() async throws {

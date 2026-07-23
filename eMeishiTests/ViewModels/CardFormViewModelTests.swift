@@ -251,7 +251,7 @@ struct CardFormViewModelInitTests {
         let objectID = card.objectID
         ctx.reset()
 
-        let fault = try ctx.existingObject(with: objectID) as! BusinessCard
+        let fault = ctx.object(with: objectID) as! BusinessCard
         #expect(fault.isFault)
         _ = CardFormViewModel(card: fault, context: ctx)
         #expect(fault.isFault)

@@ -1048,16 +1048,14 @@ class CardListViewModel: ObservableObject {
             .sink { [weak self] _ in self?.detectDuplicates() }
             .store(in: &cancellables)
 
-        // CloudKitマージや別コンテキスト保存も、同じ表示スナップショットへ反映する。
-        // Main Queue Contextの変更だけを受け、短時間の連続通知は1回の再取得へまとめる。
-        NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange)
-            // private contextのreset通知も投稿元queueで同期配信される。
-            // @MainActorのselfへ触れるfilterより前にMain RunLoopへ移す。
+        // CloudKitマージを含むMain Queue Context自身の変更だけを購読する。
+        // Core Data通知は保存元contextのqueueで同期配信されるため、対象を限定した場合も
+        // @MainActorのselfへ触れるsinkより前にMain RunLoopへ配送する。
+        NotificationCenter.default.publisher(
+            for: .NSManagedObjectContextObjectsDidChange,
+            object: context
+        )
             .receive(on: RunLoop.main)
-            .filter { [weak self] notification in
-                guard let self else { return false }
-                return (notification.object as? NSManagedObjectContext) === self.context
-            }
             .sink { [weak self] notification in
                 self?.scheduleContextRefresh(for: notification)
             }
@@ -1921,7 +1919,7 @@ class CardListViewModel: ObservableObject {
     }
 
     private func cards(for objectURIs: Set<URL>) -> [BusinessCard] {
-        cards.filter { objectURIs.contains($0.objectID.uriRepresentation()) }
+        objectURIs.compactMap(card(for:))
     }
 
     /// 一括タグ画面用に、private contextで作成済みのtag IDスナップショットから集計する。

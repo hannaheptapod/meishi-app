@@ -75,9 +75,11 @@ if rg -n -U 'resultType[[:space:]]*=[[:space:]]*\.dictionaryResultType(.|\n){0,5
   fail "NSDictionaryResultTypeへ非ゼロfetchBatchSizeを指定しないでください。実機でCore DataがSIGTRAPします"
 fi
 
-if ! rg -q -U 'NotificationCenter\.default\.publisher\(for: \.NSManagedObjectContextObjectsDidChange\)(.|\n){0,250}\.receive\(on: RunLoop\.main\)(.|\n){0,250}\.filter' \
-    eMeishi/ViewModels/CardListViewModel.swift; then
-  fail "Core Dataの全context通知は@MainActorへ触れるfilterより前にMain RunLoopへ移してください"
+if ! rg -q -U 'NotificationCenter\.default\.publisher\((.|\n){0,160}for: \.NSManagedObjectContextObjectsDidChange,(.|\n){0,100}object: context(.|\n){0,160}\.receive\(on: RunLoop\.main\)(.|\n){0,160}\.sink' \
+    eMeishi/ViewModels/CardListViewModel.swift \
+    || rg -q 'NotificationCenter\.default\.publisher\(for: \.NSManagedObjectContextObjectsDidChange\)' \
+        eMeishi/ViewModels/CardListViewModel.swift; then
+  fail "一覧更新通知はMain Queue Contextへ限定し、sinkより前にMain RunLoopへ配送してください"
 fi
 
 if ! rg -q -U 'NotificationCenter\.default\.publisher\((.|\n){0,180}for: \.NSManagedObjectContextObjectsDidChange(.|\n){0,220}\.receive\(on: RunLoop\.main\)' \
