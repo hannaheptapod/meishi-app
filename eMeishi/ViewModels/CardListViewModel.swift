@@ -1837,6 +1837,13 @@ class CardListViewModel: ObservableObject {
 
     /// テストから外部変更の反映完了を待つ。
     func waitForPendingContextRefresh() async {
+        // receive(on:)でMain RunLoopへ予約済みのCore Data通知を先に処理する。
+        // ここを待たずにcontextRefreshTaskだけを見ると、通知配送前のnilを完了と誤認する。
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform {
+                continuation.resume()
+            }
+        }
         await contextRefreshTask?.value
         await waitForPendingListUpdate()
     }
