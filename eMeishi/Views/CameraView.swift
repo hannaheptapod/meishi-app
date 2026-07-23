@@ -1,643 +1,352 @@
 import AVFoundation
-import Combine
-import os
 import SwiftUI
 import UIKit
 
-/// 1つのfullScreenCover内で撮影セッションを維持する連続撮影画面。
-/// 撮影ごとのdismiss/presentを行わないため、SwiftUIのpresentationと競合しない。
+/// Apple標準カメラUIを使い、最大10枚まで連続撮影する画面。
+/// SwiftUIはfullScreenCoverを1つだけ所有し、撮影ごとの標準カメラ再表示は
+/// cover内の固定Host View Controllerだけが管理する。
 struct CameraCaptureView: View {
     let onComplete: ([CardImageInput]) -> Void
     let onCancel: () -> Void
 
-    @StateObject private var model = CameraCaptureViewModel()
-    @State private var rotationAngle: CGFloat = 90
-    @State private var isFinishing = false
-    @State private var finishTask: Task<Void, Never>?
     @Environment(\.openURL) private var openURL
-    @Environment(\.scenePhase) private var scenePhase
-
-    /// 権限ダイアログではsceneが一時的にinactiveになるが、これはカメラ画面の
-    /// 終了やbackground移行ではない。active/inactiveを同じTask IDへ正規化し、
-    /// `requestAccess`待機中の起動Taskをキャンセルしない。
-    private var cameraLifecycleActivity: CameraLifecycleActivity {
-        switch scenePhase {
-        case .active, .inactive:
-            .foreground
-        case .background:
-            .background
-        @unknown default:
-            .background
-        }
-    }
+    @State private var authorizationState: CameraAuthorizationState = .checking
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            if model.isPermissionDenied {
-                permissionDeniedContent
-            } else {
-                CameraPreviewView(
-                    session: model.session,
-                    rotationAngle: $rotationAngle
-                )
-                .ignoresSafeArea()
-
-                if !model.isReady {
+        Group {
+            switch authorizationState {
+            case .checking:
+                ZStack {
+                    Color.black.ignoresSafeArea()
                     ProgressView("カメラを準備中")
                         .tint(.white)
                         .foregroundStyle(.white)
                 }
-
-                cameraControls
-            }
-        }
-        // foreground/backgroundの2値をIDにした構造化Taskだけを起動経路にする。
-        // 権限ダイアログのinactiveではTaskを作り直さず、実backgroundだけで停止する。
-        .task(id: cameraLifecycleActivity) {
-            switch cameraLifecycleActivity {
-            case .foreground:
-                await model.start()
-            case .background:
-                model.stop()
-            }
-        }
-        .onDisappear {
-            finishTask?.cancel()
-            finishTask = nil
-            model.stop()
-        }
-        .alert(
-            "撮影できませんでした",
-            isPresented: Binding(
-                get: { model.errorMessage != nil },
-                set: { if !$0 { model.errorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {
-                model.errorMessage = nil
-            }
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
-        .statusBarHidden()
-    }
-
-    private var cameraControls: some View {
-        VStack {
-            HStack(spacing: AppTheme.Spacing.medium) {
-                Button(action: cancelCapture) {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.glass)
-                .tint(.white)
-                .disabled(isFinishing)
-                .accessibilityLabel("撮影をキャンセル")
-
-                Spacer()
-
-                if model.captureCount > 0 {
-                    Button {
-                        finishCapture()
-                    } label: {
-                        Text("完了（\(model.captureCount)枚）")
-                            .font(.headline)
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(.white)
-                    .foregroundStyle(.black)
-                    .disabled(isFinishing || model.isCapturing)
-                    .accessibilityLabel("撮影完了、\(model.captureCount)枚撮影済み")
-                }
-            }
-            .padding(.horizontal, AppTheme.Spacing.large)
-            .padding(.top, AppTheme.Spacing.medium)
-
-            Spacer()
-
-            VStack(spacing: AppTheme.Spacing.medium) {
-                if model.isCapturing {
-                    ProgressView("画像を準備中")
-                        .tint(.white)
-                        .foregroundStyle(.white)
-                } else if model.captureCount > 0 {
-                    Text("\(model.captureCount) / \(CameraCaptureViewModel.maximumCaptureCount)枚")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, AppTheme.Spacing.medium)
-                        .padding(.vertical, AppTheme.Spacing.small)
-                        .background(.black.opacity(0.45), in: .capsule)
-                }
-
-                Button {
-                    model.capture(rotationAngle: rotationAngle)
-                } label: {
-                    ZStack {
-                        Circle()
-                            .stroke(.white, lineWidth: 4)
-                            .frame(width: 76, height: 76)
-                        Circle()
-                            .fill(.white)
-                            .frame(width: 64, height: 64)
-                    }
-                    .frame(width: 88, height: 88)
-                    .contentShape(.circle)
-                }
-                .buttonStyle(.plain)
-                .disabled(
-                    !model.isReady
-                        || model.isCapturing
-                        || isFinishing
-                        || model.captureCount >= CameraCaptureViewModel.maximumCaptureCount
+            case .authorized:
+                SystemCameraBatchView(
+                    maximumCaptureCount: 10,
+                    onComplete: onComplete,
+                    onCancel: onCancel
                 )
-                .opacity(model.isReady && !model.isCapturing && !isFinishing ? 1 : 0.55)
-                .accessibilityLabel("撮影")
-                .accessibilityHint("名刺を1枚撮影します")
+                .ignoresSafeArea()
+            case .denied:
+                cameraUnavailableContent(
+                    title: "カメラを使用できません",
+                    description: "設定でカメラへのアクセスを許可してください。",
+                    showsSettingsButton: true
+                )
+            case .unavailable:
+                cameraUnavailableContent(
+                    title: "カメラを使用できません",
+                    description: "この端末ではカメラを利用できません。",
+                    showsSettingsButton: false
+                )
             }
-            .padding(.bottom, AppTheme.Spacing.xLarge)
+        }
+        .task {
+            await resolveAuthorization()
         }
     }
 
-    private var permissionDeniedContent: some View {
-        ContentUnavailableView {
-            Label("カメラを使用できません", systemImage: "camera.fill")
-                .foregroundStyle(.white)
-        } description: {
-            Text("設定でカメラへのアクセスを許可してください。")
-                .foregroundStyle(.white.opacity(0.8))
-        } actions: {
-            HStack(spacing: AppTheme.Spacing.medium) {
-                Button("閉じる", action: cancelCapture)
-                    .buttonStyle(.glass)
-                    .tint(.white)
-                    .disabled(isFinishing)
-                Button("設定を開く") {
-                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                    openURL(url)
+    private func cameraUnavailableContent(
+        title: String,
+        description: String,
+        showsSettingsButton: Bool
+    ) -> some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            ContentUnavailableView {
+                Label(title, systemImage: "camera.fill")
+                    .foregroundStyle(.white)
+            } description: {
+                Text(description)
+                    .foregroundStyle(.white.opacity(0.8))
+            } actions: {
+                HStack(spacing: AppTheme.Spacing.medium) {
+                    Button("閉じる", action: onCancel)
+                        .buttonStyle(.glass)
+                        .tint(.white)
+                    if showsSettingsButton {
+                        Button("設定を開く") {
+                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                            openURL(url)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(.white)
+                        .foregroundStyle(.black)
+                    }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
-                .disabled(isFinishing)
             }
         }
     }
 
-    private func finishCapture() {
-        guard !isFinishing, !model.isCapturing, model.captureCount > 0 else { return }
-        let inputs = model.capturedInputs
-        isFinishing = true
-        finishTask = Task {
-            await model.stopAndWait()
-            guard !Task.isCancelled else { return }
-            onComplete(inputs)
-            finishTask = nil
-        }
-    }
-
-    private func cancelCapture() {
-        guard !isFinishing else { return }
-        isFinishing = true
-        finishTask = Task {
-            await model.stopAndWait()
-            guard !Task.isCancelled else { return }
-            onCancel()
-            finishTask = nil
-        }
-    }
-}
-
-nonisolated enum CameraLifecycleActivity: Hashable, Sendable {
-    case foreground
-    case background
-}
-
-@MainActor
-private final class CameraCaptureViewModel: ObservableObject {
-    static let maximumCaptureCount = 10
-
-    @Published private(set) var capturedInputs: [CardImageInput] = []
-    @Published private(set) var isReady = false
-    @Published private(set) var isCapturing = false
-    @Published private(set) var isPermissionDenied = false
-    @Published var errorMessage: String?
-
-    let session: AVCaptureSession
-
-    private let worker: CameraSessionWorker
-    private let imageProcessor = CardImageProcessingService.shared
-    private var lifecycleID: UUID?
-    private var isStarting = false
-    private var stopTask: Task<Void, Never>?
-    private var stopID: UUID?
-    private var captureTask: Task<Void, Never>?
-    private var captureID: UUID?
-
-    init() {
-        let handle = CameraSessionHandle()
-        session = handle.session
-        worker = CameraSessionWorker(handle: handle)
-    }
-
-    var captureCount: Int { capturedInputs.count }
-
-    func start() async {
-        guard !Task.isCancelled, !isReady, !isStarting else { return }
-        isStarting = true
-        let currentLifecycleID = UUID()
-        lifecycleID = currentLifecycleID
-        defer {
-            if lifecycleID == currentLifecycleID {
-                isStarting = false
-            }
+    private func resolveAuthorization() async {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            authorizationState = .unavailable
+            return
         }
 
-        if let stopTask {
-            await stopTask.value
-            self.stopTask = nil
-            self.stopID = nil
-            guard !Task.isCancelled,
-                  lifecycleID == currentLifecycleID else { return }
-        }
-
-        let isAuthorized: Bool
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            isAuthorized = true
+            authorizationState = .authorized
         case .notDetermined:
-            isAuthorized = await AVCaptureDevice.requestAccess(for: .video)
+            authorizationState = await AVCaptureDevice.requestAccess(for: .video)
+                ? .authorized
+                : .denied
         case .denied, .restricted:
-            isAuthorized = false
+            authorizationState = .denied
         @unknown default:
-            isAuthorized = false
-        }
-
-        guard isAuthorized else {
-            guard lifecycleID == currentLifecycleID else { return }
-            isPermissionDenied = true
-            return
-        }
-
-        guard !Task.isCancelled,
-              lifecycleID == currentLifecycleID else { return }
-
-        do {
-            try await worker.start()
-            guard !Task.isCancelled,
-                  lifecycleID == currentLifecycleID else {
-                await worker.stop()
-                return
-            }
-            isReady = true
-            isPermissionDenied = false
-            errorMessage = nil
-            AppLogger.camera.info("カメラ起動")
-        } catch {
-            guard lifecycleID == currentLifecycleID else { return }
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func capture(rotationAngle: CGFloat) {
-        guard isReady,
-              !isCapturing,
-              capturedInputs.count < Self.maximumCaptureCount else {
-            return
-        }
-
-        guard let currentLifecycleID = lifecycleID else { return }
-        let currentCaptureID = UUID()
-        captureID = currentCaptureID
-        isCapturing = true
-        captureTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if captureID == currentCaptureID {
-                    captureID = nil
-                    captureTask = nil
-                    isCapturing = false
-                }
-            }
-            do {
-                let data = try await worker.capturePhoto(rotationAngle: rotationAngle)
-                try Task.checkCancellation()
-                guard lifecycleID == currentLifecycleID else { return }
-                let input = try await imageProcessor.prepareInput(
-                    from: data,
-                    source: .camera
-                )
-                try Task.checkCancellation()
-                guard lifecycleID == currentLifecycleID else { return }
-                capturedInputs.append(input)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            } catch is CancellationError {
-                return
-            } catch {
-                if case CameraCaptureError.captureCancelled = error {
-                    return
-                }
-                guard lifecycleID == currentLifecycleID,
-                      captureID == currentCaptureID else { return }
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    func stop() {
-        lifecycleID = nil
-        isStarting = false
-        isReady = false
-        captureID = nil
-        captureTask?.cancel()
-        captureTask = nil
-        isCapturing = false
-        if stopTask == nil {
-            let currentStopID = UUID()
-            stopID = currentStopID
-            stopTask = Task {
-                await worker.stop()
-            }
-        }
-    }
-
-    /// 次のカメラ画面を開く前にAVCaptureSessionの停止完了を保証する。
-    func stopAndWait() async {
-        stop()
-        guard let task = stopTask else { return }
-        let currentStopID = stopID
-        await task.value
-        if stopID == currentStopID {
-            stopTask = nil
-            stopID = nil
+            authorizationState = .denied
         }
     }
 }
 
-/// AVCaptureSessionはSendableではないが、変更はCameraSessionWorkerだけが行う。
-/// MainActor側ではAVCaptureVideoPreviewLayerへの参照設定だけを行う。
-nonisolated private final class CameraSessionHandle: @unchecked Sendable {
-    let session = AVCaptureSession()
-    let photoOutput = AVCapturePhotoOutput()
+private enum CameraAuthorizationState: Sendable {
+    case checking
+    case authorized
+    case denied
+    case unavailable
 }
 
-private actor CameraSessionWorker {
-    nonisolated let handle: CameraSessionHandle
+/// UIKitの標準カメラを、SwiftUIの単一presentation内へ閉じ込める橋渡し。
+private struct SystemCameraBatchView: UIViewControllerRepresentable {
+    let maximumCaptureCount: Int
+    let onComplete: ([CardImageInput]) -> Void
+    let onCancel: () -> Void
 
-    private var isConfigured = false
-    private var photoDelegates: [UUID: CameraPhotoDelegate] = [:]
-
-    init(handle: CameraSessionHandle) {
-        self.handle = handle
+    func makeUIViewController(context: Context) -> SystemCameraBatchHostViewController {
+        SystemCameraBatchHostViewController(
+            maximumCaptureCount: maximumCaptureCount,
+            onComplete: onComplete,
+            onCancel: onCancel
+        )
     }
 
-    func start() throws {
-        if !isConfigured {
-            try configure()
-            isConfigured = true
-        }
-        if !handle.session.isRunning {
-            handle.session.startRunning()
-        }
-    }
-
-    func stop() {
-        if handle.session.isRunning {
-            handle.session.stopRunning()
-        }
-        let delegates = Array(photoDelegates.values)
-        photoDelegates.removeAll()
-        for delegate in delegates {
-            delegate.cancel()
-        }
-    }
-
-    func capturePhoto(rotationAngle: CGFloat) async throws -> Data {
-        guard handle.session.isRunning else {
-            throw CameraCaptureError.sessionNotRunning
-        }
-
-        if let connection = handle.photoOutput.connection(with: .video),
-           connection.isVideoRotationAngleSupported(rotationAngle) {
-            connection.videoRotationAngle = rotationAngle
-        }
-
-        let identifier = UUID()
-        let settings = AVCapturePhotoSettings()
-        settings.photoQualityPrioritization = .quality
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let delegate = CameraPhotoDelegate { [weak self] result in
-                continuation.resume(with: result)
-                Task {
-                    await self?.releasePhotoDelegate(identifier: identifier)
-                }
-            }
-            photoDelegates[identifier] = delegate
-            handle.photoOutput.capturePhoto(with: settings, delegate: delegate)
-        }
-    }
-
-    private func configure() throws {
-        let session = handle.session
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
-
-        do {
-            session.sessionPreset = .photo
-            guard let camera = AVCaptureDevice.default(
-                .builtInWideAngleCamera,
-                for: .video,
-                position: .back
-            ) else {
-                throw CameraCaptureError.cameraUnavailable
-            }
-
-            let input = try AVCaptureDeviceInput(device: camera)
-            guard session.canAddInput(input) else {
-                throw CameraCaptureError.cannotConfigureInput
-            }
-            session.addInput(input)
-
-            guard session.canAddOutput(handle.photoOutput) else {
-                throw CameraCaptureError.cannotConfigureOutput
-            }
-            session.addOutput(handle.photoOutput)
-            handle.photoOutput.maxPhotoQualityPrioritization = .quality
-        } catch {
-            // 入力だけ追加された途中状態を残すと、次回start()の再試行も失敗する。
-            session.inputs.forEach(session.removeInput)
-            session.outputs.forEach(session.removeOutput)
-            throw error
-        }
-    }
-
-    private func releasePhotoDelegate(identifier: UUID) {
-        photoDelegates[identifier] = nil
-    }
-}
-
-nonisolated private final class CameraPhotoDelegate: NSObject, AVCapturePhotoCaptureDelegate, @unchecked Sendable {
-    private let completion: @Sendable (Result<Data, Error>) -> Void
-    private let lock = NSLock()
-    private var hasCompleted = false
-
-    init(completion: @escaping @Sendable (Result<Data, Error>) -> Void) {
-        self.completion = completion
-    }
-
-    func photoOutput(
-        _ output: AVCapturePhotoOutput,
-        didFinishProcessingPhoto photo: AVCapturePhoto,
-        error: Error?
+    func updateUIViewController(
+        _ controller: SystemCameraBatchHostViewController,
+        context: Context
     ) {
-        if let error {
-            finish(with: .failure(error))
-            return
-        }
-        guard let data = photo.fileDataRepresentation() else {
-            finish(with: .failure(CameraCaptureError.invalidImage))
-            return
-        }
-        finish(with: .success(data))
+        controller.updateCallbacks(onComplete: onComplete, onCancel: onCancel)
     }
 
-    func cancel() {
-        finish(with: .failure(CameraCaptureError.captureCancelled))
-    }
-
-    private func finish(with result: Result<Data, Error>) {
-        lock.lock()
-        guard !hasCompleted else {
-            lock.unlock()
-            return
-        }
-        hasCompleted = true
-        lock.unlock()
-        completion(result)
+    static func dismantleUIViewController(
+        _ controller: SystemCameraBatchHostViewController,
+        coordinator: Void
+    ) {
+        controller.stopWithoutCallback()
     }
 }
 
-nonisolated private enum CameraCaptureError: LocalizedError, Sendable {
-    case cameraUnavailable
-    case cannotConfigureInput
-    case cannotConfigureOutput
-    case sessionNotRunning
-    case invalidImage
-    case captureCancelled
+/// 撮影ごとに変わらない固定Host。
+/// Windowや最前面View Controllerを探索せず、このHostだけが標準カメラを再提示する。
+private final class SystemCameraBatchHostViewController:
+    UIViewController,
+    UIImagePickerControllerDelegate,
+    UINavigationControllerDelegate {
 
-    var errorDescription: String? {
-        switch self {
-        case .cameraUnavailable:
-            "この端末ではカメラを使用できません。"
-        case .cannotConfigureInput, .cannotConfigureOutput:
-            "カメラを初期化できませんでした。"
-        case .sessionNotRunning:
-            "カメラの準備が完了していません。"
-        case .invalidImage:
-            "撮影した画像を読み込めませんでした。"
-        case .captureCancelled:
-            "撮影を中止しました。"
-        }
-    }
-}
+    private let maximumCaptureCount: Int
+    private var capturedInputs: [CardImageInput] = []
+    private var completion: ([CardImageInput]) -> Void
+    private var cancellation: () -> Void
+    private var isTransitioning = false
+    private var isFinishing = false
+    private weak var activePicker: UIImagePickerController?
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
 
-private struct CameraPreviewView: UIViewRepresentable {
-    let session: AVCaptureSession
-    @Binding var rotationAngle: CGFloat
-
-    func makeUIView(context: Context) -> CameraPreviewLayerView {
-        let view = CameraPreviewLayerView()
-        view.setSession(session)
-        view.onRotationAngleChanged = { angle in
-            if rotationAngle != angle {
-                rotationAngle = angle
-            }
-        }
-        return view
+    init(
+        maximumCaptureCount: Int,
+        onComplete: @escaping ([CardImageInput]) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.maximumCaptureCount = maximumCaptureCount
+        completion = onComplete
+        cancellation = onCancel
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
     }
 
-    func updateUIView(_ view: CameraPreviewLayerView, context: Context) {
-        view.setSession(session)
-        view.onRotationAngleChanged = { angle in
-            if rotationAngle != angle {
-                rotationAngle = angle
-            }
-        }
-        view.updateRotation()
-    }
-}
-
-@MainActor
-private final class CameraPreviewLayerView: UIView {
-    var onRotationAngleChanged: ((CGFloat) -> Void)?
-    private var lastRotationAngle: CGFloat?
-
-    override class var layerClass: AnyClass {
-        AVCaptureVideoPreviewLayer.self
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        configurePreviewLayer()
-    }
-
+    @available(*, unavailable)
     required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        configurePreviewLayer()
+        fatalError("init(coder:) is not supported")
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        updateRotation()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
     }
 
-    func updateRotation() {
-        guard let previewLayer = layer as? AVCaptureVideoPreviewLayer else {
-            AppLogger.camera.fault("カメラプレビューレイヤーの型が不正です")
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        presentCameraIfNeeded()
+    }
+
+    func updateCallbacks(
+        onComplete: @escaping ([CardImageInput]) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        completion = onComplete
+        cancellation = onCancel
+    }
+
+    func stopWithoutCallback() {
+        isFinishing = true
+        activePicker?.delegate = nil
+        activePicker?.dismiss(animated: false)
+        activePicker = nil
+    }
+
+    private func presentCameraIfNeeded() {
+        guard !isFinishing,
+              !isTransitioning,
+              presentedViewController == nil,
+              UIImagePickerController.isSourceTypeAvailable(.camera) else { return }
+
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.showsCameraControls = true
+        picker.delegate = self
+        picker.modalPresentationStyle = .fullScreen
+        picker.cameraOverlayView = makeCameraOverlay(capturedCount: capturedInputs.count)
+        activePicker = picker
+        present(picker, animated: capturedInputs.isEmpty)
+    }
+
+    func imagePickerController(
+        _ picker: UIImagePickerController,
+        didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+    ) {
+        guard !isFinishing else { return }
+        guard let image = info[.originalImage] as? UIImage,
+              let data = image.jpegData(compressionQuality: 0.92) else {
+            dismissPicker(picker) { [weak self] in
+                self?.showCaptureError()
+            }
             return
         }
 
-        let angle = switch window?.windowScene?.effectiveGeometry.interfaceOrientation {
-        case .portrait:
-            CGFloat(90)
-        case .portraitUpsideDown:
-            CGFloat(270)
-        case .landscapeLeft:
-            CGFloat(180)
-        case .landscapeRight:
-            CGFloat(0)
-        default:
-            CGFloat(90)
-        }
-
-        if let connection = previewLayer.connection,
-           connection.isVideoRotationAngleSupported(angle) {
-            connection.videoRotationAngle = angle
-        }
-        guard lastRotationAngle != angle else { return }
-        lastRotationAngle = angle
-        Task { @MainActor [weak self] in
-            self?.onRotationAngleChanged?(angle)
+        capturedInputs.append(CardImageInput(data: data, source: .camera))
+        haptic.impactOccurred()
+        dismissPicker(picker) { [weak self] in
+            guard let self else { return }
+            if capturedInputs.count >= maximumCaptureCount {
+                finishWithCapturedImages()
+            } else {
+                presentCameraIfNeeded()
+            }
         }
     }
 
-    func setSession(_ session: AVCaptureSession) {
-        guard let previewLayer = layer as? AVCaptureVideoPreviewLayer else {
-            AppLogger.camera.fault("カメラプレビューレイヤーへセッションを設定できません")
-            return
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        guard !isFinishing else { return }
+        dismissPicker(picker) { [weak self] in
+            guard let self else { return }
+            if capturedInputs.isEmpty {
+                finishByCancelling()
+            } else {
+                finishWithCapturedImages()
+            }
         }
-        previewLayer.session = session
     }
 
-    private func configurePreviewLayer() {
-        guard let previewLayer = layer as? AVCaptureVideoPreviewLayer else {
-            AppLogger.camera.fault("カメラプレビューレイヤーを初期化できません")
-            return
+    @objc private func finishButtonTapped() {
+        guard !capturedInputs.isEmpty, !isFinishing else { return }
+        if let activePicker {
+            dismissPicker(activePicker) { [weak self] in
+                self?.finishWithCapturedImages()
+            }
+        } else {
+            finishWithCapturedImages()
         }
-        previewLayer.videoGravity = .resizeAspectFill
+    }
+
+    private func dismissPicker(
+        _ picker: UIImagePickerController,
+        completion: @escaping () -> Void
+    ) {
+        isTransitioning = true
+        picker.delegate = nil
+        picker.dismiss(animated: false) { [weak self] in
+            guard let self else { return }
+            if activePicker === picker {
+                activePicker = nil
+            }
+            isTransitioning = false
+            completion()
+        }
+    }
+
+    private func finishWithCapturedImages() {
+        guard !isFinishing, !capturedInputs.isEmpty else { return }
+        isFinishing = true
+        let inputs = capturedInputs
+        capturedInputs = []
+        completion(inputs)
+    }
+
+    private func finishByCancelling() {
+        guard !isFinishing else { return }
+        isFinishing = true
+        capturedInputs = []
+        cancellation()
+    }
+
+    private func showCaptureError() {
+        guard !isFinishing else { return }
+        let alert = UIAlertController(
+            title: "撮影できませんでした",
+            message: "画像を保存できませんでした。もう一度お試しください。",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.presentCameraIfNeeded()
+        })
+        present(alert, animated: true)
+    }
+
+    private func makeCameraOverlay(capturedCount: Int) -> UIView {
+        let overlay = CameraPassthroughView()
+        overlay.backgroundColor = .clear
+
+        guard capturedCount > 0 else { return overlay }
+
+        let countLabel = UILabel()
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.text = "\(capturedCount) / \(maximumCaptureCount)枚"
+        countLabel.font = .preferredFont(forTextStyle: .subheadline)
+        countLabel.textColor = .white
+        countLabel.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        countLabel.textAlignment = .center
+        countLabel.layer.cornerRadius = 15
+        countLabel.clipsToBounds = true
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        let finishButton = UIButton(type: .system)
+        finishButton.translatesAutoresizingMaskIntoConstraints = false
+        var configuration = UIButton.Configuration.prominentGlass()
+        configuration.title = "完了"
+        configuration.baseForegroundColor = UIColor.white
+        finishButton.configuration = configuration
+        finishButton.addTarget(self, action: #selector(finishButtonTapped), for: .touchUpInside)
+
+        overlay.addSubview(countLabel)
+        overlay.addSubview(finishButton)
+        NSLayoutConstraint.activate([
+            countLabel.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 12),
+            countLabel.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            countLabel.heightAnchor.constraint(equalToConstant: 30),
+            countLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 88),
+            finishButton.centerYAnchor.constraint(equalTo: countLabel.centerYAnchor),
+            finishButton.trailingAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+        ])
+        return overlay
+    }
+}
+
+/// 標準カメラへのタッチを維持し、追加した完了ボタンだけが入力を受け取る。
+private final class CameraPassthroughView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hitView = super.hitTest(point, with: event)
+        return hitView === self ? nil : hitView
     }
 }

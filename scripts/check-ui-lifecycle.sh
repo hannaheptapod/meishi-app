@@ -145,9 +145,16 @@ if rg -n -U '\.toolbar[[:space:]]*\{[[:space:]]*if[[:space:]]+editMode' \
   fail "選択モードでToolbar item群を丸ごと差し替えず、固定スロット内の内容と有効状態だけを更新してください"
 fi
 
-if rg -n 'UIApplication\.shared\.connectedScenes|rootViewController|snapshotView|UIImagePickerController' \
+if rg -n 'UIApplication\.shared\.connectedScenes|rootViewController|snapshotView' \
     eMeishi/Views/CameraView.swift >/dev/null; then
-  fail "カメラ表示をWindow探索や外部ViewControllerの再提示で管理しないでください"
+  fail "カメラ表示をWindow探索や外部ViewControllerから管理しないでください"
+fi
+
+if ! rg -q 'SystemCameraBatchHostViewController' eMeishi/Views/CameraView.swift \
+    || ! rg -q 'UIImagePickerController' eMeishi/Views/CameraView.swift \
+    || ! rg -q 'showsCameraControls = true' eMeishi/Views/CameraView.swift \
+    || rg -q 'AVCaptureSession' eMeishi/Views/CameraView.swift; then
+  fail "連続撮影は固定HostがApple標準カメラUIを所有し、独自AVCaptureSessionを使用しないでください"
 fi
 
 if rg -n 'as![[:space:]]+AVCaptureVideoPreviewLayer' \
@@ -406,10 +413,10 @@ if rg -n 'let cards = try\? context\.fetch|let snapshots = cards\.map' \
   fail "InsightsService.generateInsightsで管理オブジェクトをMainActor上から全件走査しないでください"
 fi
 
-if ! rg -q 'cameraLifecycleActivity' eMeishi/Views/CameraView.swift \
-    || ! rg -Fq '.task(id: cameraLifecycleActivity)' eMeishi/Views/CameraView.swift \
-    || rg -Fq '.task(id: scenePhase)' eMeishi/Views/CameraView.swift; then
-  fail "カメラ権限dialogのinactiveで起動Taskをキャンセルしないよう、foreground/backgroundへ正規化してください"
+if rg -q 'scenePhase|\.task\(id: scenePhase\)|cameraLifecycleActivity' \
+    eMeishi/Views/CameraView.swift \
+    || ! rg -q 'resolveAuthorization' eMeishi/Views/CameraView.swift; then
+  fail "標準カメラの権限要求をscenePhase連動Taskで再起動しないでください"
 fi
 
 if ! rg -q '@State private var photoImportTask: Task<Void, Never>\?' \
