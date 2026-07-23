@@ -13,13 +13,10 @@ struct NavigationItemSearchPlacementConfigurator: UIViewControllerRepresentable 
 
     @MainActor
     final class Controller: UIViewController {
+        private weak var configuredSearchTextField: UISearchTextField?
+
         override func viewWillAppear(_ animated: Bool) {
             super.viewWillAppear(animated)
-            configureNavigationItem()
-        }
-
-        override func viewDidLayoutSubviews() {
-            super.viewDidLayoutSubviews()
             configureNavigationItem()
         }
 
@@ -29,27 +26,32 @@ struct NavigationItemSearchPlacementConfigurator: UIViewControllerRepresentable 
             }
             let items = navigationController.navigationBar.items ?? []
             for item in items where item.searchController != nil {
-                Self.configureSearchItem(item)
+                configureSearchItem(item)
             }
         }
 
-        static func configureSearchItem(_ item: UINavigationItem) {
-            item.searchBarPlacementAllowsToolbarIntegration = false
-            item.preferredSearchBarPlacement = .stacked
-            item.hidesSearchBarWhenScrolling = false
+        private func configureSearchItem(_ item: UINavigationItem) {
+            // `.searchable(.navigationBarDrawer(displayMode: .always))`が配置と寸法を
+            // 所有する。ここではiOS 26で検索欄がToolbarへ移されることだけを防ぐ。
+            // 同じ値を遷移ごとに再代入してNavigation Barを再レイアウトしない。
+            if item.searchBarPlacementAllowsToolbarIntegration {
+                item.searchBarPlacementAllowsToolbarIntegration = false
+            }
 
-            // 標準検索欄のLiquid GlassはUIKitへ任せる。遷移中も検索欄の輪郭だけは
-            // 欠落しないよう、素材を覆わない1px未満の境界を常時維持する。
             guard let searchController = item.searchController else { return }
             searchController.loadViewIfNeeded()
-            searchController.searchBar.sizeToFit()
-            searchController.searchBar.layoutIfNeeded()
             let searchTextField = searchController.searchBar.searchTextField
+
+            // iOS 26ではToolbar統合中にsearchTextFieldの実体が入れ替わる既知問題が
+            // ある。統合を無効化した後の同一インスタンスへ一度だけ輪郭を設定し、
+            // popアニメーション中の暫定寸法では再計算しない。
+            guard configuredSearchTextField !== searchTextField,
+                  searchTextField.bounds.height > 0 else { return }
             searchTextField.layer.cornerRadius = searchTextField.bounds.height / 2
             searchTextField.layer.cornerCurve = .continuous
             searchTextField.layer.borderWidth = 1 / searchTextField.traitCollection.displayScale
             searchTextField.layer.borderColor = UIColor.separator.withAlphaComponent(0.28).cgColor
-            searchTextField.layoutIfNeeded()
+            configuredSearchTextField = searchTextField
         }
     }
 }

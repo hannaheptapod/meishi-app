@@ -6,7 +6,10 @@ import UIKit
 struct NavigationItemSearchPlacementConfiguratorTests {
     @Test func keepsSearchFieldSurfaceStableOnRootNavigationItem() throws {
         let rootViewController = UIViewController()
-        rootViewController.navigationItem.searchController = UISearchController()
+        let searchController = UISearchController()
+        searchController.searchBar.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
+        searchController.searchBar.layoutIfNeeded()
+        rootViewController.navigationItem.searchController = searchController
         let navigationController = UINavigationController(
             rootViewController: rootViewController
         )
@@ -15,22 +18,30 @@ struct NavigationItemSearchPlacementConfiguratorTests {
         rootViewController.addChild(configurator)
         rootViewController.view.addSubview(configurator.view)
         configurator.didMove(toParent: rootViewController)
+        let searchTextField = try #require(
+            rootViewController.navigationItem.searchController?.searchBar.searchTextField
+        )
+        let originalSearchBarFrame = searchController.searchBar.frame
+        let originalTextFieldFrame = searchTextField.frame
+
         configurator.configureNavigationItem()
 
         #expect(
             navigationController.viewControllers.first?.navigationItem
                 .searchBarPlacementAllowsToolbarIntegration == false
         )
-        #expect(rootViewController.navigationItem.preferredSearchBarPlacement == .stacked)
-        #expect(rootViewController.navigationItem.hidesSearchBarWhenScrolling == false)
-        #expect(
-            rootViewController.navigationItem.searchController?.searchBar
-                .searchTextField.backgroundColor != .secondarySystemGroupedBackground
-        )
-        let searchTextField = try #require(
-            rootViewController.navigationItem.searchController?.searchBar.searchTextField
-        )
+        #expect(searchController.searchBar.frame == originalSearchBarFrame)
+        #expect(searchTextField.frame == originalTextFieldFrame)
         #expect(searchTextField.layer.borderWidth > 0)
         #expect(searchTextField.layer.borderColor != nil)
+
+        let configuredCornerRadius = searchTextField.layer.cornerRadius
+        let configuredBorderWidth = searchTextField.layer.borderWidth
+        configurator.configureNavigationItem()
+
+        #expect(searchController.searchBar.frame == originalSearchBarFrame)
+        #expect(searchTextField.frame == originalTextFieldFrame)
+        #expect(searchTextField.layer.cornerRadius == configuredCornerRadius)
+        #expect(searchTextField.layer.borderWidth == configuredBorderWidth)
     }
 }
