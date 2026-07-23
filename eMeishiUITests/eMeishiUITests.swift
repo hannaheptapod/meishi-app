@@ -32,6 +32,10 @@ final class EMeishiUITests: XCTestCase {
         app.searchFields.firstMatch
     }
 
+    private var cardImagePreview: XCUIElement {
+        app.descendants(matching: .any)["cardImagePreview"]
+    }
+
     private var nativeTabBar: XCUIElement {
         app.tabBars.firstMatch
     }
@@ -474,6 +478,8 @@ final class EMeishiUITests: XCTestCase {
 
         // 詳細画面のナビゲーションタイトルが表示される
         XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.staticTexts["cardDetailName"].label, "山田 太郎")
+        XCTAssertEqual(app.staticTexts["cardDetailCompany"].label, "株式会社テックビジョン")
         XCTAssertTrue(app.buttons["saveToContactsButton"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(app.buttons["shareCardButton"].waitForExistence(timeout: Self.shortTimeout))
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -495,6 +501,12 @@ final class EMeishiUITests: XCTestCase {
                 detailActionsFrame.intersects(addButton.frame),
                 "iPad詳細の左下アクションと右下追加ボタンを重ねない"
             )
+            XCTAssertEqual(
+                detailActionsFrame.maxY,
+                addButton.frame.maxY,
+                accuracy: 2,
+                "サイズが異なるiPad下部アクションは下端を揃える"
+            )
         } else {
             XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
             XCTAssertFalse(nativeTabBar.isHittable)
@@ -507,6 +519,7 @@ final class EMeishiUITests: XCTestCase {
 
     @MainActor
     func testNavigateBackNoHighlightPersistence() throws {
+        let searchFrameBeforeNavigation = cardSearchField.frame
         // カードをタップして詳細に遷移
         let card = cardRow("山田 太郎")
         XCTAssertTrue(card.waitForExistence(timeout: 5))
@@ -520,8 +533,16 @@ final class EMeishiUITests: XCTestCase {
             // 操作面が失われず、詳細列だけが更新されることを検証する。
             let nextCard = cardRow("佐藤 誠")
             XCTAssertTrue(nextCard.waitForExistence(timeout: Self.shortTimeout))
+            let firstImageIdentifier = cardImagePreview.value as? String
             nextCard.tap()
             XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
+            XCTAssertEqual(app.staticTexts["cardDetailName"].label, "佐藤 誠")
+            XCTAssertEqual(app.staticTexts["cardDetailCompany"].label, "グローバル商事株式会社")
+            XCTAssertNotEqual(
+                cardImagePreview.value as? String,
+                firstImageIdentifier,
+                "別の名刺を選択したら画像要求も切り替える"
+            )
             XCTAssertTrue(cardSearchField.isHittable)
             XCTAssertTrue(cardsTab.isHittable)
             XCTAssertTrue(addButton.isHittable)
@@ -536,6 +557,11 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(nativeTabBar.isHittable, "Tab Barは一覧への復帰と同時に操作可能になる")
         XCTAssertTrue(addButton.exists, "追加ボタンは一覧と同時に復帰する")
         XCTAssertTrue(cardSearchField.isHittable, "検索欄は一覧への復帰と同時に操作可能になる")
+        XCTAssertEqual(
+            cardSearchField.frame,
+            searchFrameBeforeNavigation,
+            "詳細から戻っても同じNavigation Itemの検索欄を同じ位置で維持する"
+        )
     }
 
     // MARK: - コンテキストメニュー（長押し）

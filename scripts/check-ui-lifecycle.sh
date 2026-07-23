@@ -97,11 +97,24 @@ fi
 if ! rg -q '\.searchable\(' eMeishi/ContentView.swift \
     || ! rg -q 'placement: \.navigationBarDrawer\(displayMode: \.always\)' \
         eMeishi/ContentView.swift; then
-  fail "一覧検索は詳細遷移でも生存するcardsRootの標準searchableで維持してください"
+  fail "一覧検索は一覧側Navigation Itemが所有する標準searchableで維持してください"
 fi
 
-if rg -n '\.searchable\(' eMeishi/Views/CardListView.swift >/dev/null; then
-  fail "詳細遷移で破棄されるCardListViewへsearchableを置かないでください"
+if rg -n 'searchableCardsRoot' eMeishi/ContentView.swift >/dev/null \
+    || ! rg -q 'private func cardsListRoot\(usesSidebarLayout: Bool\)' \
+        eMeishi/ContentView.swift \
+    || ! rg -q -U 'CardListView\(usesSidebarLayout: usesSidebarLayout\)(.|\n){0,120}\.searchable\(' \
+        eMeishi/ContentView.swift; then
+  fail "searchableをNavigationコンテナの外側へ付けず、iPhone一覧／iPad sidebarのルートViewへ固定してください"
+fi
+
+if ! rg -q 'final class RootAddButtonOverlayContainer: UIView' \
+        eMeishi/Views/Components/SystemTabBarAddButtonHost.swift \
+    || ! rg -q 'rootView\.addSubview\(container\)' \
+        eMeishi/Views/Components/SystemTabBarAddButtonHost.swift \
+    || rg -q 'tabBar\.addSubview\(container\)' \
+        eMeishi/Views/Components/SystemTabBarAddButtonHost.swift; then
+  fail "iPhone追加ボタン本体はUITabBar内へ入れず、UITabBarController.viewの兄弟として所有してください"
 fi
 
 if rg -n 'isSettingsRequested|presentRequestedSettingsIfNeeded|consumeSettingsRequest' \
