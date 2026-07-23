@@ -9,7 +9,6 @@ struct ContentView: View {
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @StateObject private var cardListViewModel = CardListViewModel()
     @StateObject private var navigationState = AppNavigationState()
-    @State private var addButtonSize = CGSize(width: 58, height: 58)
 
     var body: some View {
         TabView(selection: $navigationState.selectedTab) {
@@ -45,18 +44,18 @@ struct ContentView: View {
         .cardAdditionFlow()
         .environmentObject(cardListViewModel)
         .environmentObject(navigationState)
+        .overlay(alignment: .bottomTrailing) {
+            if horizontalSizeClass == .regular && shouldShowRootAddButton {
+                rootAddButtonOverlay
+            }
+        }
         .overlay {
-            ZStack {
-                if horizontalSizeClass == .regular && shouldShowRootAddButton {
-                    rootAddButtonOverlay
-                }
-                if navigationState.isCardListBackgroundInteractionBlocked {
-                    Color.clear
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture { }
-                        .accessibilityHidden(true)
-                }
+            if navigationState.isCardListBackgroundInteractionBlocked {
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { }
+                    .accessibilityHidden(true)
             }
         }
         .onAppear {
@@ -93,23 +92,19 @@ struct ContentView: View {
     }
 
     private var compactCardsRoot: some View {
-        searchableCardsRoot(
-            NavigationStack {
-                CardListView(usesSidebarLayout: false)
-                    .navigationDestination(item: activeCardsRouteBinding) { route in
-                        cardRouteContent(route)
-                    }
-            }
-        )
+        NavigationStack {
+            cardsListRoot(usesSidebarLayout: false)
+                .navigationDestination(item: activeCardsRouteBinding) { route in
+                    cardRouteContent(route)
+                }
+        }
     }
 
     private var regularCardsRoot: some View {
         NavigationSplitView {
-            searchableCardsRoot(
-                CardListView(usesSidebarLayout: true)
-            )
-            .toolbar(removing: .sidebarToggle)
-            .navigationSplitViewColumnWidth(min: 330, ideal: 380, max: 440)
+            cardsListRoot(usesSidebarLayout: true)
+                .toolbar(removing: .sidebarToggle)
+                .navigationSplitViewColumnWidth(min: 330, ideal: 380, max: 440)
         } detail: {
             NavigationStack {
                 splitDetailContent
@@ -118,8 +113,10 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
     }
 
-    private func searchableCardsRoot<Content: View>(_ content: Content) -> some View {
-        content
+    /// 標準検索UIはNavigationコンテナではなく一覧側のNavigation Itemが所有する。
+    /// 詳細のpushやSplit Viewのdetail切替で検索コントローラを付け替えない。
+    private func cardsListRoot(usesSidebarLayout: Bool) -> some View {
+        CardListView(usesSidebarLayout: usesSidebarLayout)
         .searchable(
             text: $cardListViewModel.searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -222,6 +219,9 @@ struct ContentView: View {
         case .detail(let objectURI):
             if let item = cardListViewModel.listItem(for: objectURI) {
                 CardDetailView(item: item)
+                    // Split Viewはdetail列の同じ構造を再利用するため、名刺URIを
+                    // View identityに含めて@Stateへ旧名刺を残さない。
+                    .id(objectURI)
             } else if !cardListViewModel.isListDisplayReady {
                 ProgressView("名刺を読み込み中")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -244,37 +244,23 @@ struct ContentView: View {
 
     /// 追加はTabの選択肢ではなく、右端に独立した標準Glass Buttonとして置く。
     private var rootAddButtonOverlay: some View {
-        GeometryReader { proxy in
-            Button {
-                navigationState.requestCardAddition()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title2.weight(.medium))
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
-            .tint(AppTheme.brandOrange)
-            .accessibilityLabel("名刺を追加")
-            .accessibilityIdentifier("cardAddButton")
-            .onGeometryChange(for: CGSize.self) { buttonProxy in
-                buttonProxy.size
-            } action: { size in
-                guard size.width > 0, size.height > 0 else { return }
-                addButtonSize = size
-            }
-            .position(
-                x: proxy.size.width - AppTheme.Spacing.large - addButtonSize.width / 2,
-                y: addButtonCenterY(in: proxy)
-            )
+        Button {
+            navigationState.requestCardAddition()
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2.weight(.medium))
+                .frame(width: 44, height: 44)
         }
-    }
-
-    private func addButtonCenterY(in proxy: GeometryProxy) -> CGFloat {
-        return proxy.size.height
-            - proxy.safeAreaInsets.bottom
-            - addButtonSize.height / 2
-            - AppTheme.Spacing.large
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.circle)
+        .tint(AppTheme.brandOrange)
+        .accessibilityLabel("名刺を追加")
+        .accessibilityIdentifier("cardAddButton")
+        // overlayの下端は既にContentViewのSafe Area境界に一致する。
+        // 標準bottomBarのGlass描画が持つ光学的な下余白だけ共通トークンで
+        // 合わせ、端末固有のSafe Area値は足さない。
+        .safeAreaPadding(.trailing, AppTheme.Spacing.large)
+        .padding(.bottom, AppTheme.Spacing.xSmall)
     }
 
     private var shouldShowRootAddButton: Bool {

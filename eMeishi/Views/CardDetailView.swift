@@ -46,6 +46,7 @@ struct CardDetailView: View {
                     }
                 )
                 .accessibilityIdentifier("cardImagePreview")
+                .accessibilityValue(item.imageIdentifier)
 
                 profileSection
 
@@ -408,10 +409,12 @@ struct CardDetailView: View {
             }
             Text(displaySnapshot.displayName)
                 .font(.largeTitle.weight(.bold))
+                .accessibilityIdentifier("cardDetailName")
             if !displaySnapshot.company.isEmpty {
                 Text(displaySnapshot.company)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("cardDetailCompany")
             }
             if !displaySnapshot.affiliation.isEmpty {
                 Text(displaySnapshot.affiliation)

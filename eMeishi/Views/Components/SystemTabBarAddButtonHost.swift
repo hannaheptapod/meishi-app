@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// iPhoneの標準Tab Barと同じUIKit階層に、独立した標準Glass追加ボタンを配置する。
-/// Tabの選択肢へ追加せず、Tab Barの透明な全幅hit領域に入力を奪われないようにする。
+/// iPhoneの標準Tab Barの右側へ、Tabではない独立した標準Glass Buttonを配置する。
+/// ボタン本体をUITabBarの子にすると実機のマスク・クリップ対象になるため、
+/// UITabBarController.viewの兄弟として所有する。
 struct SystemTabBarAddButtonHost: UIViewRepresentable {
     let isVisible: Bool
     let action: @MainActor () -> Void
@@ -24,7 +25,9 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
     @MainActor
     final class ProbeView: UIView {
         private weak var installedTabBar: UITabBar?
-        private var overlayContainer: TabBarOverlayContainer?
+        private weak var installedRootView: UIView?
+        private var layoutProbe: TabBarLayoutProbe?
+        private var buttonContainer: RootAddButtonOverlayContainer?
         private var deferredInstallationTask: Task<Void, Never>?
         private var isButtonVisible = false
         private var buttonAction: (@MainActor () -> Void)?
@@ -37,17 +40,19 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
         func update(isVisible: Bool, action: @escaping @MainActor () -> Void) {
             isButtonVisible = isVisible
             buttonAction = action
-            overlayContainer?.button.isHidden = !isVisible
-            overlayContainer?.setNeedsLayout()
+            buttonContainer?.button.isHidden = !isVisible
             scheduleInstallation()
         }
 
         func detach() {
             deferredInstallationTask?.cancel()
             deferredInstallationTask = nil
-            overlayContainer?.removeFromSuperview()
-            overlayContainer = nil
+            layoutProbe?.removeFromSuperview()
+            layoutProbe = nil
+            buttonContainer?.removeFromSuperview()
+            buttonContainer = nil
             installedTabBar = nil
+            installedRootView = nil
         }
 
         private func scheduleInstallation() {
@@ -64,49 +69,85 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
         @discardableResult
         private func installIfPossible() -> Bool {
             guard let window,
-                  let tabBar = findTabBar(in: window) else { return false }
+                  let tabBar = findTabBar(in: window),
+                  let rootView = owningTabBarController(for: tabBar)?.view else {
+                return false
+            }
 
-            if installedTabBar !== tabBar || overlayContainer?.superview !== tabBar {
-                overlayContainer?.removeFromSuperview()
-                let container = TabBarOverlayContainer()
-                container.frame = tabBar.bounds
+            if installedTabBar !== tabBar
+                || installedRootView !== rootView
+                || layoutProbe?.superview !== tabBar
+                || buttonContainer?.superview !== rootView {
+                layoutProbe?.removeFromSuperview()
+                buttonContainer?.removeFromSuperview()
+
+                let container = RootAddButtonOverlayContainer()
+                container.frame = rootView.bounds
                 container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                container.layoutAction = { [weak self, weak tabBar] container in
-                    guard let self, let tabBar else { return }
-                    self.layoutButton(in: container, tabBar: tabBar)
-                }
+                // UITabBarControllerが選択中コンテンツを再配置しても、その兄弟である
+                // 追加操作が背面へ回らないよう同一controller内の描画順を固定する。
+                // UIWindowへは載せないため、sheet/fullScreenCoverより前面には出ない。
+                container.layer.zPosition = tabBar.layer.zPosition + 1
                 container.button.addAction(UIAction { [weak self] _ in
                     self?.buttonAction?()
                 }, for: .touchUpInside)
-                tabBar.addSubview(container)
+                rootView.addSubview(container)
+
+                let probe = TabBarLayoutProbe()
+                probe.frame = tabBar.bounds
+                probe.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                probe.layoutAction = { [weak self, weak container, weak tabBar] in
+                    guard let self, let container, let tabBar else { return }
+                    container.superview?.bringSubviewToFront(container)
+                    self.layoutButton(in: container, tabBar: tabBar)
+                }
+                tabBar.addSubview(probe)
+
                 installedTabBar = tabBar
-                overlayContainer = container
+                installedRootView = rootView
+                layoutProbe = probe
+                buttonContainer = container
             }
 
-            guard let overlayContainer else { return false }
-            overlayContainer.button.isHidden = !isButtonVisible
-            tabBar.bringSubviewToFront(overlayContainer)
-            overlayContainer.setNeedsLayout()
-            overlayContainer.layoutIfNeeded()
+            guard let buttonContainer else { return false }
+            buttonContainer.button.isHidden = !isButtonVisible
+            rootView.bringSubviewToFront(buttonContainer)
+            layoutButton(in: buttonContainer, tabBar: tabBar)
             return true
         }
 
-        private func layoutButton(in container: TabBarOverlayContainer, tabBar: UITabBar) {
-            guard let referenceButton = findReferenceTabButton(in: tabBar) else { return }
+        private func layoutButton(
+            in container: RootAddButtonOverlayContainer,
+            tabBar: UITabBar
+        ) {
+            guard let referenceButton = findReferenceTabButton(in: tabBar) else {
+                container.button.isHidden = true
+                return
+            }
+
             let itemFrame = referenceButton.convert(referenceButton.bounds, to: container)
             let visualFrame = visualTabContainerFrame(
                 startingAt: referenceButton,
                 tabBar: tabBar,
                 container: container
             )
+            guard visualFrame.width > 0, visualFrame.height > 0 else {
+                container.button.isHidden = true
+                return
+            }
+
             let side = min(max(visualFrame.height, itemFrame.height, 44), 72)
             container.button.frame = CGRect(
-                x: container.bounds.maxX - AppTheme.Spacing.large - side,
-                y: visualFrame.maxY - side,
+                x: container.bounds.maxX
+                    - container.safeAreaInsets.right
+                    - AppTheme.Spacing.large
+                    - side,
+                y: visualFrame.midY - side / 2,
                 width: side,
                 height: side
             ).integral
             container.button.layer.cornerRadius = side / 2
+            container.button.isHidden = !isButtonVisible
         }
 
         private func visualTabContainerFrame(
@@ -136,6 +177,17 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
             return nil
         }
 
+        private func owningTabBarController(for view: UIView) -> UITabBarController? {
+            var responder: UIResponder? = view
+            while let current = responder {
+                if let controller = current as? UITabBarController {
+                    return controller
+                }
+                responder = current.next
+            }
+            return nil
+        }
+
         private func findReferenceTabButton(in view: UIView) -> UIView? {
             let identifiers: Set<String> = ["cardsRootTab", "insightsRootTab"]
             let labels: Set<String> = ["名刺", "インサイト"]
@@ -143,15 +195,63 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
                 || view.accessibilityLabel.map(labels.contains) == true {
                 return view
             }
-            for child in view.subviews where child !== overlayContainer {
+            for child in view.subviews where child !== layoutProbe {
                 if let match = findReferenceTabButton(in: child) { return match }
             }
-            return nil
+
+            // 通常起動ではTab itemのAccessibility情報がUIテストより遅く
+            // materializeされる場合がある。識別子の生成を配置条件にせず、
+            // 公開UIControlの実レイアウトから左端のTab itemを選ぶ。
+            guard view === installedTabBar else { return nil }
+            return descendantControls(in: view)
+                .filter { control in
+                    let frame = control.convert(control.bounds, to: view)
+                    return !control.isHidden
+                        && control.alpha > 0.01
+                        && frame.width >= 44
+                        && frame.height >= 44
+                        && frame.intersects(view.bounds)
+                }
+                .min { lhs, rhs in
+                    lhs.convert(lhs.bounds, to: view).minX
+                        < rhs.convert(rhs.bounds, to: view).minX
+                }
+        }
+
+        private func descendantControls(in view: UIView) -> [UIControl] {
+            view.subviews.flatMap { child -> [UIControl] in
+                guard child !== layoutProbe else { return [] }
+                return (child as? UIControl).map { [$0] } ?? descendantControls(in: child)
+            }
+        }
+    }
+
+    /// Tab Barのレイアウト変更だけを通知する。描画・操作・Accessibilityには参加しない。
+    @MainActor
+    final class TabBarLayoutProbe: UIView {
+        var layoutAction: (() -> Void)?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = .clear
+            isUserInteractionEnabled = false
+            isAccessibilityElement = false
+            accessibilityElementsHidden = true
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            layoutAction?()
         }
     }
 
     @MainActor
-    final class TabBarOverlayContainer: UIView {
+    final class RootAddButtonOverlayContainer: UIView {
         let button: UIButton = {
             let button = UIButton(type: .system)
             var configuration = UIButton.Configuration.prominentGlass()
@@ -165,8 +265,6 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
             return button
         }()
 
-        var layoutAction: ((TabBarOverlayContainer) -> Void)?
-
         override init(frame: CGRect) {
             super.init(frame: frame)
             backgroundColor = .clear
@@ -176,11 +274,6 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) {
             fatalError("init(coder:) has not been implemented")
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            layoutAction?(self)
         }
 
         override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
