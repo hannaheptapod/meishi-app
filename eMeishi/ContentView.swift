@@ -79,12 +79,34 @@ struct ContentView: View {
     }
 
     private var cardsRoot: some View {
-        NavigationSplitView(preferredCompactColumn: preferredCompactColumnBinding) {
-            NavigationStack {
-                CardListView(
-                    usesSidebarLayout: horizontalSizeClass == .regular
-                )
+        Group {
+            if horizontalSizeClass == .regular {
+                regularCardsRoot
+            } else {
+                compactCardsRoot
             }
+        }
+        .toolbar(rootTabBarVisibility, for: .tabBar)
+    }
+
+    private var compactCardsRoot: some View {
+        searchableCardsRoot(
+            NavigationStack {
+                CardListView(usesSidebarLayout: false)
+                    .navigationDestination(item: activeCardsRouteBinding) { route in
+                        cardRouteContent(route)
+                    }
+            }
+        )
+    }
+
+    private var regularCardsRoot: some View {
+        NavigationSplitView {
+            searchableCardsRoot(
+                NavigationStack {
+                    CardListView(usesSidebarLayout: true)
+                }
+            )
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(min: 330, ideal: 380, max: 440)
         } detail: {
@@ -93,10 +115,10 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        // Tab BarのvisibilityはContentViewだけが所有し、現在表示中のcards tabの
-        // navigation環境へ適用する。TabView自身への指定ではcompact詳細で反映されない。
-        .toolbar(rootTabBarVisibility, for: .tabBar)
-        // 検索コントローラを一覧行ではなく、詳細遷移でも生存するルートが所有する。
+    }
+
+    private func searchableCardsRoot<Content: View>(_ content: Content) -> some View {
+        content
         .searchable(
             text: $cardListViewModel.searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -106,6 +128,16 @@ struct ContentView: View {
             cardSearchSuggestions
         }
         .onSubmit(of: .search, submitCardSearch)
+    }
+
+    private var activeCardsRouteBinding: Binding<CardListRoute?> {
+        Binding(
+            get: { navigationState.activeCardsRoute },
+            set: { route in
+                guard route == nil else { return }
+                navigationState.returnToCardsRoot()
+            }
+        )
     }
 
     @ViewBuilder
@@ -164,7 +196,21 @@ struct ContentView: View {
 
     @ViewBuilder
     private var splitDetailContent: some View {
-        switch navigationState.activeCardsRoute {
+        if let route = navigationState.activeCardsRoute {
+            cardRouteContent(route)
+        } else {
+            ContentUnavailableView(
+                "名刺を選択",
+                systemImage: "person.text.rectangle",
+                description: Text("一覧から名刺を選ぶと詳細を表示します。")
+            )
+            .background(AppTheme.background.ignoresSafeArea())
+        }
+    }
+
+    @ViewBuilder
+    private func cardRouteContent(_ route: CardListRoute) -> some View {
+        switch route {
         case .settings:
             SettingsView()
         case .duplicates:
@@ -172,9 +218,8 @@ struct ContentView: View {
                 cardListViewModel.fetchCards()
                 cardListViewModel.detectDuplicates()
             })
-        case .detail:
-            if let objectURI = navigationState.selectedCardURI,
-               let item = cardListViewModel.listItem(for: objectURI) {
+        case .detail(let objectURI):
+            if let item = cardListViewModel.listItem(for: objectURI) {
                 CardDetailView(item: item)
             } else if !cardListViewModel.isListDisplayReady {
                 ProgressView("名刺を読み込み中")
@@ -187,29 +232,7 @@ struct ContentView: View {
                 )
                 .background(AppTheme.background.ignoresSafeArea())
             }
-        case nil:
-            ContentUnavailableView(
-                "名刺を選択",
-                systemImage: "person.text.rectangle",
-                description: Text("一覧から名刺を選ぶと詳細を表示します。")
-            )
-            .background(AppTheme.background.ignoresSafeArea())
         }
-    }
-
-    /// NavigationSplitViewの列構造は幅変更時も作り直さない。
-    /// compactでルートがある間だけ詳細列を前面に出し、戻る操作で共通ルートを消去する。
-    private var preferredCompactColumnBinding: Binding<NavigationSplitViewColumn> {
-        Binding(
-            get: {
-                navigationState.activeCardsRoute == nil ? .sidebar : .detail
-            },
-            set: { column in
-                guard horizontalSizeClass != .regular,
-                      column == .sidebar else { return }
-                navigationState.returnToCardsRoot()
-            }
-        )
     }
 
     private var rootTabBarVisibility: Visibility {

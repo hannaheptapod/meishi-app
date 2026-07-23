@@ -48,14 +48,15 @@ if rg -n 'selectedCardForSplit:[[:space:]]*BusinessCard' \
   fail "Split Viewの選択状態へNSManagedObjectを長期保持せず、永続IDを保持してください"
 fi
 
-split_view_count="$(rg -c 'NavigationSplitView\(' eMeishi/ContentView.swift || true)"
+split_view_count="$(rg -c 'NavigationSplitView' eMeishi/ContentView.swift || true)"
 if [[ "$split_view_count" != "1" ]]; then
-  fail "幅変更でルートを差し替えないよう、名刺ルートは単一のNavigationSplitViewで構成してください。現在: $split_view_count"
+  fail "iPadの名刺ルートは単一のNavigationSplitViewで構成してください。現在: $split_view_count"
 fi
 
-if rg -n 'if[[:space:]]+horizontalSizeClass[[:space:]]*==[[:space:]]*\.regular' \
-    eMeishi/ContentView.swift >/dev/null; then
-  fail "サイズクラス条件でNavigationルートを作り替えないでください"
+if ! rg -q 'private var compactCardsRoot: some View' eMeishi/ContentView.swift \
+    || ! rg -q 'private var regularCardsRoot: some View' eMeishi/ContentView.swift \
+    || ! rg -Fq '.navigationDestination(item: activeCardsRouteBinding)' eMeishi/ContentView.swift; then
+  fail "iPhoneはNavigationStack、iPadはNavigationSplitViewの安定した一覧ルートを使用してください"
 fi
 
 compact_add_button_owners="$({ rg -l 'accessibilityIdentifier\("cardAddButton"\)' eMeishi --glob '*.swift' || true; } | sort | mapfile_compat)"
