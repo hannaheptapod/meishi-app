@@ -59,15 +59,17 @@ if ! rg -q 'private var compactCardsRoot: some View' eMeishi/ContentView.swift \
   fail "iPhoneはNavigationStack、iPadはNavigationSplitViewの安定した一覧ルートを使用してください"
 fi
 
-compact_add_button_owners="$({ rg -l 'accessibilityIdentifier\("cardAddButton"\)' eMeishi --glob '*.swift' || true; } | sort | mapfile_compat)"
-if [[ "$compact_add_button_owners" != "eMeishi/ContentView.swift" ]]; then
-  fail "ルート追加アクションはContentViewだけが所有してください。現在: ${compact_add_button_owners:-なし}"
+compact_add_button_owners="$({ rg -l 'accessibilityIdentifier[[:space:]]*=[[:space:]]*"cardAddButton"|accessibilityIdentifier\("cardAddButton"\)' eMeishi --glob '*.swift' || true; } | sort | mapfile_compat)"
+expected_add_button_owners=$'eMeishi/ContentView.swift\neMeishi/Views/Components/SystemTabBarAddButtonHost.swift'
+if [[ "$compact_add_button_owners" != "$expected_add_button_owners" ]]; then
+  fail "追加アクションはContentViewと標準Tab Bar Hostだけで構成してください。現在: ${compact_add_button_owners:-なし}"
 fi
 
 if rg -q '\.tabPlacement\(\.pinned\)' eMeishi/ContentView.swift \
     || rg -q 'RootTabSelection\.add' eMeishi/ContentView.swift \
     || ! rg -q 'rootAddButtonOverlay' eMeishi/ContentView.swift \
-    || ! rg -q '\.buttonStyle\(\.glassProminent\)' eMeishi/ContentView.swift; then
+    || ! rg -q '\.buttonStyle\(\.glassProminent\)' eMeishi/ContentView.swift \
+    || ! rg -q 'UIButton\.Configuration\.prominentGlass\(\)' eMeishi/Views/Components/SystemTabBarAddButtonHost.swift; then
   fail "追加アクションをTabへ戻さず、右端の独立した標準Glass Buttonとして維持してください"
 fi
 

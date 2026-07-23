@@ -74,6 +74,14 @@ final class EMeishiUITests: XCTestCase {
         )).firstMatch
     }
 
+    /// 標準Tab Bar内の最前面にある独立追加ボタンを直接操作する。
+    private func tapAddButton() {
+        let button = addButton
+        XCTAssertTrue(button.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(button.isHittable)
+        button.tap()
+    }
+
     private var sortFilterMenu: XCUIElement {
         app.buttons
             .matching(NSPredicate(
@@ -182,14 +190,14 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertEqual(addButton.frame.width, addButton.frame.height, accuracy: 1)
         XCTAssertLessThanOrEqual(
             abs(navigationTabsFrame.height - addButton.frame.height),
-            4,
-            "標準Tab項目のアクセシビリティ余白を除き、標準Glass Buttonの寸法を維持する"
+            10,
+            "Tab項目の54ptアクセシビリティframeではなく、62ptの視覚カプセルにGlass Buttonを揃える"
         )
         XCTAssertEqual(
-            navigationTabsFrame.maxY,
-            addButton.frame.maxY,
+            navigationTabsFrame.midY,
+            addButton.frame.midY,
             accuracy: 1,
-            "追加ボタンと標準Tab Barの下端を揃える"
+            "追加ボタンを標準Tab視覚カプセルと同じ中心線へ置く。Tab=\(navigationTabsFrame), Add=\(addButton.frame)"
         )
 
         // 通常検索と自然言語検索は1つの標準検索欄を共有し、独立ボタンを置かない
@@ -244,7 +252,7 @@ final class EMeishiUITests: XCTestCase {
     @MainActor
     func testTrailingAddOpensAdditionChoices() throws {
         XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
-        addButton.tap()
+        tapAddButton()
 
         XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(app.buttons["カメラで撮影"].exists)
@@ -259,7 +267,7 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(insightsTab.isSelected)
 
         XCTAssertTrue(addButton.waitForExistence(timeout: Self.shortTimeout))
-        addButton.tap()
+        tapAddButton()
         XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
         XCTAssertTrue(insightsTab.isSelected, "追加画面を開いても直前のタブを維持するべき")
     }
@@ -406,7 +414,7 @@ final class EMeishiUITests: XCTestCase {
             )
         }
 
-        addButton.tap()
+        tapAddButton()
         XCTAssertTrue(app.navigationBars.staticTexts["名刺を追加"].waitForExistence(timeout: Self.shortTimeout))
     }
 
