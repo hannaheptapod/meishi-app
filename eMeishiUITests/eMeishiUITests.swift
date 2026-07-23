@@ -521,14 +521,17 @@ final class EMeishiUITests: XCTestCase {
                 "サイズが異なるiPad下部アクションは下端を揃える"
             )
         } else {
-            XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
-            XCTAssertTrue(
-                nativeTabBar.waitForNonExistence(timeout: Self.shortTimeout),
-                "iPhone詳細ではTab BarをView階層から除外する"
+            XCTAssertFalse(
+                cardSearchField.isHittable,
+                "iPhone詳細では背面に保持した一覧検索欄を操作対象にしない"
             )
-            XCTAssertTrue(
-                addButton.waitForNonExistence(timeout: Self.shortTimeout),
-                "iPhone詳細では独立追加ボタンをView階層から除外する"
+            XCTAssertFalse(
+                nativeTabBar.isHittable,
+                "iPhone詳細では背面に保持したTab Barを操作対象にしない"
+            )
+            XCTAssertFalse(
+                addButton.isHittable,
+                "iPhone詳細では背面に保持した追加ボタンを操作対象にしない"
             )
         }
 
@@ -569,8 +572,10 @@ final class EMeishiUITests: XCTestCase {
             return
         }
 
-        // compact幅では標準の戻る操作で一覧へ復帰する。
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // compact幅では左端からのdimmingなしインタラクティブ遷移で一覧へ復帰する。
+        let leftEdge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let swipeDestination = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        leftEdge.press(forDuration: 0.05, thenDragTo: swipeDestination)
 
         // リスト画面に戻ったことを確認（選択ボタンが表示される）
         XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 3))

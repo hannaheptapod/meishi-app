@@ -55,8 +55,8 @@ fi
 
 if ! rg -q 'private var compactCardsRoot: some View' eMeishi/ContentView.swift \
     || ! rg -q 'private var regularCardsRoot: some View' eMeishi/ContentView.swift \
-    || ! rg -Fq '.navigationDestination(item: activeCardsRouteBinding)' eMeishi/ContentView.swift; then
-  fail "iPhoneはNavigationStack、iPadはNavigationSplitViewの安定した一覧ルートを使用してください"
+    || ! rg -Fq '.fullScreenCover(item: $compactPresentedRoute' eMeishi/ContentView.swift; then
+  fail "iPhoneは検索欄を保持するNavigationStackと独立詳細Presentation、iPadはNavigationSplitViewを使用してください"
 fi
 
 compact_add_button_owners="$({ rg -l 'accessibilityIdentifier[[:space:]]*=[[:space:]]*"cardAddButton"|accessibilityIdentifier\("cardAddButton"\)' eMeishi --glob '*.swift' || true; } | sort | mapfile_compat)"
@@ -228,9 +228,13 @@ if rg -n '@State private var (isShowingEditForm|exportItem|isShowingCardImage|is
   fail "CardDetailViewのpresentationは単一の型付きキューで排他管理してください"
 fi
 
-if rg -n '\.(sheet|fullScreenCover|alert|confirmationDialog)\(' \
-    eMeishi/App/eMeishiApp.swift eMeishi/ContentView.swift >/dev/null; then
-  fail "アプリルートのpresentationはCardAdditionFlowModifierだけが所有してください"
+content_view_full_screen_cover_count="$(rg -c '\.fullScreenCover\(' eMeishi/ContentView.swift || true)"
+if rg -n '\.(sheet|alert|confirmationDialog)\(' \
+    eMeishi/App/eMeishiApp.swift eMeishi/ContentView.swift >/dev/null \
+    || rg -n '\.fullScreenCover\(' eMeishi/App/eMeishiApp.swift >/dev/null \
+    || [[ "$content_view_full_screen_cover_count" != "1" ]] \
+    || ! rg -Fq '.fullScreenCover(item: $compactPresentedRoute' eMeishi/ContentView.swift; then
+  fail "アプリルートのpresentationはCardAdditionFlowModifierとcompact詳細Presentationだけに限定してください"
 fi
 
 if ! rg -q '\.cardAdditionFlow\(\)' eMeishi/ContentView.swift \

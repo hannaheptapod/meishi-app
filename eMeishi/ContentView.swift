@@ -9,6 +9,7 @@ struct ContentView: View {
     @EnvironmentObject private var entitlementStore: EntitlementStore
     @StateObject private var cardListViewModel = CardListViewModel()
     @StateObject private var navigationState = AppNavigationState()
+    @State private var compactPresentedRoute: CompactCardsRoutePresentation?
 
     var body: some View {
         TabView(selection: $navigationState.selectedTab) {
@@ -67,6 +68,12 @@ struct ContentView: View {
             default: navigationState.selectedTab = .cards
             }
         }
+        .onChange(of: navigationState.activeCardsRoute) { _, _ in
+            syncCompactCardsRoutePresentation()
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in
+            syncCompactCardsRoutePresentation()
+        }
         .onReceive(
             NotificationCenter.default.publisher(
                 for: .NSManagedObjectContextObjectsDidChange,
@@ -94,9 +101,143 @@ struct ContentView: View {
     private var compactCardsRoot: some View {
         NavigationStack {
             cardsListRoot(usesSidebarLayout: false)
-                .navigationDestination(item: activeCardsRouteBinding) { route in
-                    cardRouteContent(route)
+        }
+        .fullScreenCover(item: $compactPresentedRoute, onDismiss: {
+            guard horizontalSizeClass != .regular else { return }
+            navigationState.returnToCardsRoot()
+        }) { presentation in
+            compactCardsRouteContent(presentation.route)
+        }
+    }
+
+    private struct CompactCardsRoutePresentation: Identifiable {
+        let route: CardListRoute
+
+        var id: CardListRoute { route }
+    }
+
+    private func syncCompactCardsRoutePresentation() {
+        guard horizontalSizeClass != .regular,
+              navigationState.selectedTab == .cards else {
+            setCompactPresentedRouteWithoutAnimation(nil)
+            return
+        }
+        guard let route = navigationState.activeCardsRoute else {
+            setCompactPresentedRouteWithoutAnimation(nil)
+            return
+        }
+        guard compactPresentedRoute?.route != route else { return }
+        setCompactPresentedRouteWithoutAnimation(
+            CompactCardsRoutePresentation(route: route)
+        )
+    }
+
+    private func compactCardsRouteContent(_ route: CardListRoute) -> some View {
+        CompactCardsRouteContainer(
+            route: route,
+            onPopCompletion: completeCompactRoutePop
+        ) { destination in
+            cardRouteContent(destination)
+                .toolbar(.visible, for: .navigationBar)
+        }
+        // 一覧のNavigation Itemを破棄せず、詳細だけを別Presentationで表示する。
+        // iOS標準検索欄のGlass背景がpop後に遅れて再構成されるのを避ける。
+        .presentationBackground(.clear)
+    }
+
+    private struct CompactCardsRouteContainer<Destination: View>: View {
+        let route: CardListRoute
+        let onPopCompletion: () -> Void
+        @ViewBuilder let destination: (CardListRoute) -> Destination
+        @State private var isPresented = false
+        @State private var dragOffset: CGFloat = 0
+        @State private var isEdgeDragging = false
+        @State private var isCompletingPop = false
+
+        var body: some View {
+            GeometryReader { proxy in
+                NavigationStack {
+                    destination(route)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button {
+                                    completePop(containerWidth: proxy.size.width)
+                                } label: {
+                                    Image(systemName: "chevron.backward")
+                                }
+                                .tint(Color.primary)
+                                .accessibilityLabel("戻る")
+                            }
+                        }
+                    }
+                .offset(x: isPresented ? dragOffset : proxy.size.width)
+                .simultaneousGesture(edgePopGesture(containerWidth: proxy.size.width))
+                .task {
+                    // fullScreenCover自体は無動作で配置し、詳細面だけを右から移動する。
+                    // UIKit標準popの全画面dimmingを使わず、一覧の色を変化させない。
+                    try? await Task.sleep(for: .milliseconds(30))
+                    guard !isPresented else { return }
+                    withAnimation(.easeOut(duration: 0.28)) {
+                        isPresented = true
+                    }
                 }
+            }
+        }
+
+        private func edgePopGesture(containerWidth: CGFloat) -> some Gesture {
+            DragGesture(minimumDistance: 8, coordinateSpace: .local)
+                .onChanged { value in
+                    guard !isCompletingPop,
+                          value.startLocation.x <= 24,
+                          value.translation.width > 0,
+                          value.translation.width > abs(value.translation.height) else { return }
+                    isEdgeDragging = true
+                    dragOffset = min(containerWidth, value.translation.width)
+                }
+                .onEnded { value in
+                    guard isEdgeDragging else { return }
+                    isEdgeDragging = false
+
+                    let shouldComplete = value.translation.width > containerWidth * 0.25
+                        || value.predictedEndTranslation.width > containerWidth * 0.6
+                    if shouldComplete {
+                        completePop(containerWidth: containerWidth)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        }
+
+        private func completePop(containerWidth: CGFloat) {
+            guard !isCompletingPop else { return }
+            isCompletingPop = true
+            withAnimation(.easeOut(duration: 0.22), completionCriteria: .logicallyComplete) {
+                dragOffset = containerWidth
+            } completion: {
+                onPopCompletion()
+            }
+        }
+    }
+
+    private func completeCompactRoutePop() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            compactPresentedRoute = nil
+            navigationState.returnToCardsRoot()
+        }
+    }
+
+    private func setCompactPresentedRouteWithoutAnimation(
+        _ presentation: CompactCardsRoutePresentation?
+    ) {
+        guard compactPresentedRoute?.route != presentation?.route else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            compactPresentedRoute = presentation
         }
     }
 
@@ -126,16 +267,6 @@ struct ContentView: View {
             cardSearchSuggestions
         }
         .onSubmit(of: .search, submitCardSearch)
-    }
-
-    private var activeCardsRouteBinding: Binding<CardListRoute?> {
-        Binding(
-            get: { navigationState.activeCardsRoute },
-            set: { route in
-                guard route == nil else { return }
-                navigationState.returnToCardsRoot()
-            }
-        )
     }
 
     @ViewBuilder
@@ -237,8 +368,10 @@ struct ContentView: View {
     }
 
     private var rootTabBarVisibility: Visibility {
+        // compact詳細は別の全画面層がRoot Chromeを覆う。背面のTab Barを
+        // 非表示化するとpop後の再生成が見えるため、選択モードだけを判定する。
         navigationState.shouldHideRootTabBar(
-            isCompactWidth: horizontalSizeClass != .regular
+            isCompactWidth: false
         ) ? .hidden : .visible
     }
 
@@ -262,10 +395,9 @@ struct ContentView: View {
         guard !navigationState.isRootChromeSuppressed else { return false }
         switch navigationState.selectedTab {
         case .cards:
-            // iPhoneの詳細遷移では隠すが、iPadの2カラムでは詳細表示中も
-            // 一覧側のルート操作として追加ボタンを維持する。
-            return horizontalSizeClass == .regular
-                || navigationState.activeCardsRoute == nil
+            // compact詳細では全画面層の背面に維持し、popの最初の一覧フレーム
+            // から表示できるよう再生成しない。iPadでは従来どおり常時表示する。
+            return true
         case .insights:
             return navigationState.insightsPath.isEmpty
         }
