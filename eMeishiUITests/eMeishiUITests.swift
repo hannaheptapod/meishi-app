@@ -522,7 +522,14 @@ final class EMeishiUITests: XCTestCase {
             )
         } else {
             XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
-            XCTAssertFalse(nativeTabBar.isHittable)
+            XCTAssertTrue(
+                nativeTabBar.waitForNonExistence(timeout: Self.shortTimeout),
+                "iPhone詳細ではTab BarをView階層から除外する"
+            )
+            XCTAssertTrue(
+                addButton.waitForNonExistence(timeout: Self.shortTimeout),
+                "iPhone詳細では独立追加ボタンをView階層から除外する"
+            )
         }
 
         // 詳細自体は下スワイプでdismissせず、標準の戻る導線を使う。

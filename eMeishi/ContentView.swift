@@ -126,12 +126,6 @@ struct ContentView: View {
             cardSearchSuggestions
         }
         .onSubmit(of: .search, submitCardSearch)
-        .background {
-            if !usesSidebarLayout {
-                NavigationItemSearchPlacementConfigurator()
-                    .frame(width: 0, height: 0)
-            }
-        }
     }
 
     private var activeCardsRouteBinding: Binding<CardListRoute?> {

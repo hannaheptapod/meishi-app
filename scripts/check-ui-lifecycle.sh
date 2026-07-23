@@ -91,10 +91,9 @@ if ! rg -q -U 'NotificationCenter\.default\.publisher\((.|\n){0,180}for: \.NSMan
   fail "選択中詳細の削除通知はNavigation状態へ触れる前にMain RunLoopへ移してください"
 fi
 
-search_configurator='eMeishi/Views/Components/NavigationItemSearchPlacementConfigurator.swift'
-if ! rg -Fq 'searchBarPlacementAllowsToolbarIntegration = false' "$search_configurator" \
-    || rg -q 'viewDidLayoutSubviews|sizeToFit\(\)|searchBar\.layoutIfNeeded\(\)|searchTextField\.layoutIfNeeded\(\)' "$search_configurator"; then
-  fail "標準検索欄はToolbar統合だけを無効化し、遷移中に寸法やレイアウトを再計算しないでください"
+if rg -n 'NavigationItemSearchPlacementConfigurator|UISearchTextField|searchBarPlacementAllowsToolbarIntegration|preferredSearchBarPlacement' \
+    eMeishi --glob '*.swift' >/dev/null; then
+  fail "一覧検索はUIKitで再構成せず、標準searchableの配置・外観・遷移を維持してください"
 fi
 
 if rg -n '\.tabBarMinimizeBehavior\(\.never\)' eMeishi/ContentView.swift >/dev/null; then
