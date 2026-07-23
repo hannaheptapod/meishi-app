@@ -106,9 +106,7 @@ struct ContentView: View {
     private var regularCardsRoot: some View {
         NavigationSplitView {
             searchableCardsRoot(
-                NavigationStack {
-                    CardListView(usesSidebarLayout: true)
-                }
+                CardListView(usesSidebarLayout: true)
             )
             .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(min: 330, ideal: 380, max: 440)

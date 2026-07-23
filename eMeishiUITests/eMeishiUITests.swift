@@ -483,6 +483,18 @@ final class EMeishiUITests: XCTestCase {
             XCTAssertTrue(cardSearchField.isHittable)
             XCTAssertTrue(cardsTab.isHittable)
             XCTAssertTrue(addButton.isHittable, "Split Viewでは一覧側の追加操作を維持する")
+            let saveButton = app.buttons["saveToContactsButton"]
+            let shareButton = app.buttons["shareCardButton"]
+            XCTAssertLessThan(
+                saveButton.frame.maxX,
+                shareButton.frame.minX,
+                "iPad詳細の連絡先保存と共有は左下で順に並べる"
+            )
+            let detailActionsFrame = saveButton.frame.union(shareButton.frame)
+            XCTAssertFalse(
+                detailActionsFrame.intersects(addButton.frame),
+                "iPad詳細の左下アクションと右下追加ボタンを重ねない"
+            )
         } else {
             XCTAssertFalse(cardSearchField.exists, "検索欄を詳細のNavigation Itemへ持ち越さない")
             XCTAssertFalse(nativeTabBar.isHittable)
