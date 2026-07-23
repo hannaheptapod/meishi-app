@@ -256,6 +256,10 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
             let button = UIButton(type: .system)
             var configuration = UIButton.Configuration.prominentGlass()
             configuration.image = UIImage(systemName: "plus")
+            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+                pointSize: 24,
+                weight: .semibold
+            )
             configuration.baseBackgroundColor = UIColor(named: "AccentColor")
             configuration.baseForegroundColor = .white
             configuration.cornerStyle = .capsule

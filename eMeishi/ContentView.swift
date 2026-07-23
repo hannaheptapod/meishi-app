@@ -254,7 +254,7 @@ struct ContentView: View {
             navigationState.requestCardAddition()
         } label: {
             Image(systemName: "plus")
-                .font(.title2.weight(.medium))
+                .font(.title2.weight(.semibold))
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.glassProminent)
