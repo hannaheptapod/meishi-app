@@ -207,7 +207,13 @@ private final class SystemCameraBatchHostViewController:
         picker.showsCameraControls = true
         picker.delegate = self
         picker.modalPresentationStyle = .fullScreen
-        picker.cameraOverlayView = makeCameraOverlay(capturedCount: capturedInputs.count)
+        // cameraOverlayView は frame=.zero のViewを自動では画面全体へ広げない。
+        // Picker自身のboundsを初期値にし、回転・サイズ変更にも追従させる。
+        picker.loadViewIfNeeded()
+        picker.cameraOverlayView = makeCameraOverlay(
+            capturedCount: capturedInputs.count,
+            frame: picker.view.bounds
+        )
         activePicker = picker
         present(picker, animated: capturedInputs.isEmpty)
     }
@@ -304,8 +310,9 @@ private final class SystemCameraBatchHostViewController:
         present(alert, animated: true)
     }
 
-    private func makeCameraOverlay(capturedCount: Int) -> UIView {
-        let overlay = CameraPassthroughView()
+    private func makeCameraOverlay(capturedCount: Int, frame: CGRect) -> UIView {
+        let overlay = CameraPassthroughView(frame: frame)
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         overlay.backgroundColor = .clear
 
         guard capturedCount > 0 else { return overlay }
