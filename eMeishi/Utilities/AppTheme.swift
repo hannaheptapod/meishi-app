@@ -19,6 +19,12 @@ enum AppTheme {
         static let xLarge: CGFloat = 24
     }
 
+    enum RootChrome {
+        static let addButtonMinimumDiameter: CGFloat = 44
+        static let addButtonMaximumDiameter: CGFloat = 64
+        static let addButtonSymbolPointSize: CGFloat = 24
+    }
+
     static let cardListMaximumWidth: CGFloat = 760
     static let contentMaximumWidth: CGFloat = 860
     static let monthlyBlue = Color.blue

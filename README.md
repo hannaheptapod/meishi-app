@@ -195,6 +195,7 @@ meishi-app/
 │   ├── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
 │   ├── Models/                                 # ナビゲーション・追加フロー・presentation・起動状態の状態機械テスト
 │   ├── Utilities/                              # フィールド判定・URL・コンテキストメニュー等の純粋ロジックテスト
+│   ├── Views/                                  # 共通UI部品の外観設定・アクセシビリティ契約テスト
 │   └── Billing/
 │       └── BillingTests.swift                  # GrandfatherStore・EntitlementStore・ProductIdentifier・PaywallContext
 ├── eMeishiUITests/

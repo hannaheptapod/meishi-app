@@ -139,6 +139,7 @@ final class EMeishiUITests: XCTestCase {
     // タイムアウト定数
     private static let defaultTimeout: TimeInterval = 5
     private static let shortTimeout: TimeInterval = 3
+    private static let regularRootAddButtonDiameter: CGFloat = 64
 
     /// 選択モードに入る（共通ヘルパー）
     @MainActor
@@ -489,6 +490,18 @@ final class EMeishiUITests: XCTestCase {
             XCTAssertTrue(cardSearchField.isHittable)
             XCTAssertTrue(cardsTab.isHittable)
             XCTAssertTrue(addButton.isHittable, "Split Viewでは一覧側の追加操作を維持する")
+            XCTAssertEqual(
+                addButton.frame.width,
+                addButton.frame.height,
+                accuracy: 1,
+                "iPadの追加ボタンもiPhoneと同じ真円にする"
+            )
+            XCTAssertEqual(
+                addButton.frame.width,
+                Self.regularRootAddButtonDiameter,
+                accuracy: 1,
+                "iPadとiPhoneの展開時は共通の追加ボタン寸法を使う"
+            )
             let saveButton = app.buttons["saveToContactsButton"]
             let shareButton = app.buttons["shareCardButton"]
             XCTAssertLessThan(

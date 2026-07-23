@@ -1,6 +1,66 @@
 import SwiftUI
 import UIKit
 
+/// iPhoneのTab Bar追従配置とiPadのSplit View配置で共有する追加ボタン本体。
+/// 配置だけを親へ任せ、Glass・色・記号は端末にかかわらず同じUIButtonで描画する。
+struct RootAddButton: UIViewRepresentable {
+    let action: @MainActor () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = RootAddButtonAppearance.makeButton()
+        button.addAction(UIAction { [weak coordinator = context.coordinator] _ in
+            coordinator?.performAction()
+        }, for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.action = action
+        RootAddButtonAppearance.configure(button)
+    }
+
+    @MainActor
+    final class Coordinator {
+        var action: @MainActor () -> Void
+
+        init(action: @escaping @MainActor () -> Void) {
+            self.action = action
+        }
+
+        func performAction() {
+            action()
+        }
+    }
+}
+
+@MainActor
+enum RootAddButtonAppearance {
+    static func makeButton() -> UIButton {
+        let button = UIButton(type: .system)
+        configure(button)
+        return button
+    }
+
+    static func configure(_ button: UIButton) {
+        var configuration = UIButton.Configuration.prominentGlass()
+        configuration.image = UIImage(systemName: "plus")
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            pointSize: AppTheme.RootChrome.addButtonSymbolPointSize,
+            weight: .semibold
+        )
+        configuration.baseBackgroundColor = UIColor(named: "AccentColor")
+        configuration.baseForegroundColor = .white
+        configuration.cornerStyle = .capsule
+        button.configuration = configuration
+        button.accessibilityLabel = "名刺を追加"
+        button.accessibilityIdentifier = "cardAddButton"
+    }
+}
+
 /// iPhoneの標準Tab Barの右側へ、Tabではない独立した標準Glass Buttonを配置する。
 /// ボタン本体をUITabBarの子にすると実機のマスク・クリップ対象になるため、
 /// UITabBarController.viewの兄弟として所有する。
@@ -136,7 +196,13 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
                 return
             }
 
-            let side = min(max(visualFrame.height, itemFrame.height, 44), 72)
+            // Glass面の中心はTab Barの外側コンテナへ追従させる一方、
+            // 直径は実際のTab項目から取る。縮小後も残る外側コンテナの高さを
+            // 直径へ流用すると、Tabだけ縮んで追加ボタンが大きいままになる。
+            let side = min(
+                max(itemFrame.height, AppTheme.RootChrome.addButtonMinimumDiameter),
+                AppTheme.RootChrome.addButtonMaximumDiameter
+            )
             container.button.frame = CGRect(
                 x: container.bounds.maxX
                     - container.safeAreaInsets.right
@@ -252,22 +318,7 @@ struct SystemTabBarAddButtonHost: UIViewRepresentable {
 
     @MainActor
     final class RootAddButtonOverlayContainer: UIView {
-        let button: UIButton = {
-            let button = UIButton(type: .system)
-            var configuration = UIButton.Configuration.prominentGlass()
-            configuration.image = UIImage(systemName: "plus")
-            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
-                pointSize: 24,
-                weight: .semibold
-            )
-            configuration.baseBackgroundColor = UIColor(named: "AccentColor")
-            configuration.baseForegroundColor = .white
-            configuration.cornerStyle = .capsule
-            button.configuration = configuration
-            button.accessibilityLabel = "名刺を追加"
-            button.accessibilityIdentifier = "cardAddButton"
-            return button
-        }()
+        let button = RootAddButtonAppearance.makeButton()
 
         override init(frame: CGRect) {
             super.init(frame: frame)

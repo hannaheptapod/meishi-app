@@ -68,7 +68,8 @@ fi
 if rg -q '\.tabPlacement\(\.pinned\)' eMeishi/ContentView.swift \
     || rg -q 'RootTabSelection\.add' eMeishi/ContentView.swift \
     || ! rg -q 'rootAddButtonOverlay' eMeishi/ContentView.swift \
-    || ! rg -q '\.buttonStyle\(\.glassProminent\)' eMeishi/ContentView.swift \
+    || ! rg -Fq 'RootAddButton(action:' eMeishi/ContentView.swift \
+    || rg -q '\.buttonStyle\(\.glassProminent\)' eMeishi/ContentView.swift \
     || ! rg -q 'UIButton\.Configuration\.prominentGlass\(\)' eMeishi/Views/Components/SystemTabBarAddButtonHost.swift; then
   fail "追加アクションをTabへ戻さず、右端の独立した標準Glass Buttonとして維持してください"
 fi

@@ -250,16 +250,11 @@ struct ContentView: View {
 
     /// 追加はTabの選択肢ではなく、右端に独立した標準Glass Buttonとして置く。
     private var rootAddButtonOverlay: some View {
-        Button {
-            navigationState.requestCardAddition()
-        } label: {
-            Image(systemName: "plus")
-                .font(.title2.weight(.semibold))
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.circle)
-        .tint(AppTheme.brandOrange)
+        RootAddButton(action: navigationState.requestCardAddition)
+        .frame(
+            width: AppTheme.RootChrome.addButtonMaximumDiameter,
+            height: AppTheme.RootChrome.addButtonMaximumDiameter
+        )
         .accessibilityLabel("名刺を追加")
         .accessibilityIdentifier("cardAddButton")
         // overlayの下端は既にContentViewのSafe Area境界に一致する。
