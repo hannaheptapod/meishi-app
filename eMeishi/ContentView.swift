@@ -158,6 +158,9 @@ struct ContentView: View {
             GeometryReader { proxy in
                 NavigationStack {
                     destination(route)
+                        // 左端drag中は移動する詳細面のButtonが指の下に残るため、
+                        // dragと同じ指離しで画像表示などを発火させない。
+                        .allowsHitTesting(!isEdgeDragging && !isCompletingPop)
                         .toolbar {
                             ToolbarItem(placement: .topBarLeading) {
                                 Button {
@@ -196,15 +199,18 @@ struct ContentView: View {
                 }
                 .onEnded { value in
                     guard isEdgeDragging else { return }
-                    isEdgeDragging = false
 
                     let shouldComplete = value.translation.width > containerWidth * 0.25
                         || value.predictedEndTranslation.width > containerWidth * 0.6
                     if shouldComplete {
                         completePop(containerWidth: containerWidth)
                     } else {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        // 指離し直後の子Button actionも抑止するため、詳細面が
+                        // 元位置へ戻り切るまではhit testingを再開しない。
+                        withAnimation(.easeOut(duration: 0.2), completionCriteria: .logicallyComplete) {
                             dragOffset = 0
+                        } completion: {
+                            isEdgeDragging = false
                         }
                     }
                 }

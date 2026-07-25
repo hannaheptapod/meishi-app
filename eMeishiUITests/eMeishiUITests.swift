@@ -572,13 +572,20 @@ final class EMeishiUITests: XCTestCase {
             return
         }
 
-        // compact幅では左端からのdimmingなしインタラクティブ遷移で一覧へ復帰する。
-        let leftEdge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-        let swipeDestination = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
-        leftEdge.press(forDuration: 0.05, thenDragTo: swipeDestination)
+        // 画像Button上の左端から戻っても、全画面画像を同時発火させず一覧へ復帰する。
+        XCTAssertTrue(cardImagePreview.waitForExistence(timeout: Self.shortTimeout))
+        let imageLeftEdge = cardImagePreview.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.01, dy: 0.2)
+        )
+        let swipeDestination = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.2))
+        imageLeftEdge.press(forDuration: 0.05, thenDragTo: swipeDestination)
 
         // リスト画面に戻ったことを確認（選択ボタンが表示される）
         XCTAssertTrue(app.buttons["selectButton"].waitForExistence(timeout: 3))
+        XCTAssertFalse(
+            app.otherElements["fullScreenCardImage"].exists,
+            "左端戻るdragと名刺画像の全画面表示を同時発火させない"
+        )
         XCTAssertTrue(nativeTabBar.isHittable, "Tab Barは一覧への復帰と同時に操作可能になる")
         XCTAssertTrue(addButton.exists, "追加ボタンは一覧と同時に復帰する")
         XCTAssertTrue(cardSearchField.isHittable, "検索欄は一覧への復帰と同時に操作可能になる")
