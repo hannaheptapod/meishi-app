@@ -69,6 +69,29 @@ struct OCRServiceTests {
         #expect(OCRService.bestCardRectIndex(candidates: candidates) == nil)
     }
 
+    // #187: 影で名刺外周が検出できず、内側のロゴ矩形だけが高confidenceで
+    // 返った場合は候補なしとし、誤クロップせず元画像維持へ倒す。
+    @Test func bestCardRectRejectsLoneCenteredLogoRectangle() {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.34, y: 0.38, width: 0.32, height: 0.20), 0.99),
+        ]
+
+        #expect(OCRService.bestCardRectIndex(candidates: candidates) == nil)
+    }
+
+    // #187: 影の影響でconfidenceが下がった名刺外周でも、
+    // 高confidenceの小さな内側矩形より優先される。
+    @Test func bestCardRectPrefersShadowedOuterCardOverConfidentInnerLogo() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.36, y: 0.40, width: 0.34, height: 0.20), 0.99),
+            (CGRect(x: 0.06, y: 0.20, width: 0.86, height: 0.50), 0.50),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 1)
+    }
+
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
         let lines = [
             makeLine("田中", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),

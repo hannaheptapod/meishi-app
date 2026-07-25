@@ -86,7 +86,7 @@ actor OCRService {
                     )
                 )
             }
-            .filter { $0.score > 0 }
+            .filter { $0.score >= minimumAcceptableCardScore }
             .max { $0.score < $1.score }?
             .observation
     }
@@ -104,16 +104,21 @@ actor OCRService {
                     )
                 )
             }
-            .filter { $0.score > 0 }
+            .filter { $0.score >= minimumAcceptableCardScore }
             .max { $0.score < $1.score }?
             .index
     }
+
+    /// 名刺外周として採用する最低スコア。ロゴ・QR・罫線などの局所矩形しか
+    /// 検出できなかった場合は候補なし（= 元画像維持）へ倒すための下限（#187）。
+    private static let minimumAcceptableCardScore: CGFloat = 5.3
 
     private struct CardRectangleMetrics {
         let area: CGFloat
         let shortLongAspect: CGFloat
         let oppositeSideBalance: CGFloat
         let edgeInset: CGFloat
+        let centerOffset: CGFloat
     }
 
     private static func cardRectangleMetrics(for observation: RectangleObservation) -> CardRectangleMetrics {
@@ -141,11 +146,17 @@ actor OCRService {
             1 - (ys.max() ?? 1)
         )
 
+        let centroid = CGPoint(
+            x: xs.reduce(0, +) / 4,
+            y: ys.reduce(0, +) / 4
+        )
+
         return CardRectangleMetrics(
             area: area,
             shortLongAspect: shortLongAspect,
             oppositeSideBalance: min(horizontalBalance, verticalBalance),
-            edgeInset: max(0, edgeInset)
+            edgeInset: max(0, edgeInset),
+            centerOffset: distance(centroid, CGPoint(x: 0.5, y: 0.5))
         )
     }
 
@@ -155,7 +166,8 @@ actor OCRService {
             area: rect.width * rect.height,
             shortLongAspect: shortLongAspect,
             oppositeSideBalance: 1,
-            edgeInset: max(0, min(rect.minX, rect.minY, 1 - rect.maxX, 1 - rect.maxY))
+            edgeInset: max(0, min(rect.minX, rect.minY, 1 - rect.maxX, 1 - rect.maxY)),
+            centerOffset: distance(CGPoint(x: rect.midX, y: rect.midY), CGPoint(x: 0.5, y: 0.5))
         )
     }
 
@@ -177,15 +189,22 @@ actor OCRService {
         // 面積の大きい外周を優先する。旧実装の hugeRectPenalty は影の外側にある
         // 正しい名刺外周を不利にしていたため廃止する。
         let areaScore = min(sqrt(area / 0.30), 1.0)
+        // 名刺外周は画像端の近くまで届く。内側に浮いた矩形（ロゴ・白地パネル）ほど不利にする。
         let edgeScore = max(0, 1 - metrics.edgeInset / 0.24)
         let shapeScore = metrics.oppositeSideBalance
+        // 撮影対象の名刺は画面中央を占める。中心から外れた局所矩形（QR・隅のロゴ）を減点する（#187）。
+        let centralityScore = max(0, 1 - metrics.centerOffset / 0.42)
+        // 占有率が低い矩形はロゴ・QR・罫線ブロックの可能性が高いため、面積スコアとは別に減点を漸増させる（#187）。
+        let smallAreaPenalty = area < 0.14 ? (0.14 - area) / 0.14 * 1.8 : 0
         let orderPenalty = CGFloat(visionOrder) * 0.04
 
         return CGFloat(confidence) * 1.5
             + aspectScore * 1.5
             + areaScore * 2.5
-            + edgeScore
+            + edgeScore * 1.4
             + shapeScore
+            + centralityScore * 0.8
+            - smallAreaPenalty
             - orderPenalty
     }
 
