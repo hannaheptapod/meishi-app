@@ -92,6 +92,24 @@ struct OCRServiceTests {
         #expect(index == 1)
     }
 
+    // 補正後アスペクト検証: 名刺の実比率（日本 0.604 / US 0.571）を含む範囲を通す。
+    @Test func isPlausibleCardAspectAcceptsBusinessCardProportions() {
+        #expect(OCRService.isPlausibleCardAspect(CGSize(width: 91, height: 55)))
+        #expect(OCRService.isPlausibleCardAspect(CGSize(width: 55, height: 91)))
+        #expect(OCRService.isPlausibleCardAspect(CGSize(width: 350, height: 200)))
+    }
+
+    // 極端に細長い補正出力は部分矩形（罫線帯など）の誤検出とみなす。
+    @Test func isPlausibleCardAspectRejectsElongatedOutput() {
+        #expect(!OCRService.isPlausibleCardAspect(CGSize(width: 1_000, height: 250)))
+    }
+
+    // 正方形に近い補正出力は頂点の取り違えを示す。
+    @Test func isPlausibleCardAspectRejectsNearSquareOutput() {
+        #expect(!OCRService.isPlausibleCardAspect(CGSize(width: 500, height: 480)))
+        #expect(!OCRService.isPlausibleCardAspect(CGSize(width: 0, height: 100)))
+    }
+
     // Vision の返却順はスコア順ではないため、順序が変わっても同じ矩形を選ぶ。
     @Test func bestCardRectIsIndependentOfVisionOrder() throws {
         let candidates: [(rect: CGRect, confidence: Float)] = [

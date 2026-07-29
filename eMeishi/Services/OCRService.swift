@@ -241,6 +241,18 @@ actor OCRService {
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）
 
+    /// 補正後の名刺として妥当な短辺/長辺比。範囲外は補正失敗とみなし元画像へ倒す。
+    /// 日本の名刺 91×55mm = 0.604、US 3.5×2in = 0.571。正方形に近い出力や
+    /// 極端な細長出力は、頂点の取り違えや部分矩形の誤検出を示す。
+    private static let plausibleCorrectedAspectRange: ClosedRange<CGFloat> = 0.40...0.85
+
+    /// 補正後サイズが名刺として妥当かを判定する。
+    static func isPlausibleCardAspect(_ size: CGSize) -> Bool {
+        guard size.width > 0, size.height > 0 else { return false }
+        let shortLongAspect = min(size.width, size.height) / max(size.width, size.height)
+        return plausibleCorrectedAspectRange.contains(shortLongAspect)
+    }
+
     private static func perspectiveCorrected(
         cgImage: CGImage,
         observation: RectangleObservation
@@ -262,7 +274,14 @@ actor OCRService {
         filter.setValue(toCI(observation.bottomRight.cgPoint), forKey: "inputBottomRight")
 
         guard let outputCIImage = filter.outputImage else { return nil }
-        guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: outputCIImage.extent) else { return nil }
+        // extent は遅延評価なのでレンダリング前に検証できる。名刺として不合理な
+        // 出力（頂点取り違え・部分矩形の誤検出）はここで破棄し、元画像維持へ倒す。
+        let extent = outputCIImage.extent
+        guard !extent.isEmpty, !extent.isInfinite, isPlausibleCardAspect(extent.size) else {
+            AppLogger.ocr.debug("補正後アスペクトが名刺として不合理。元画像を使用")
+            return nil
+        }
+        guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else { return nil }
         return UIImage(cgImage: outputCGImage)
     }
 
