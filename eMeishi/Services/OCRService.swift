@@ -334,6 +334,8 @@ actor OCRService {
                 Locale.Language(identifier: "ja-JP"),
                 Locale.Language(identifier: "en-US"),
             ]
+            // 法人格の定型語彙を認識辞書へ与え、社名行の誤認識を減らす
+            request.customWords = LegalEntityTerms.ocrCustomWords
 
             let observations = try await request.perform(on: cgImage)
             let rawLines: [RecognizedLine] = observations.compactMap { obs in
@@ -348,10 +350,13 @@ actor OCRService {
             }
 
             // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
-            let lines = Self.mergeAdjacentFragments(
+            let merged = Self.mergeAdjacentFragments(
                 rawLines,
                 isVerticalCard: image.size.height > image.size.width * 1.1
             )
+            // 低信頼度行の除外は結合の後に行う。縦書きの単漢字断片は個別の
+            // confidence が低くなりやすく、結合後の平均値で救う。
+            let lines = Self.filterLowConfidenceLines(merged)
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
             return lines
@@ -413,6 +418,24 @@ actor OCRService {
         let mergedVertical = mergeVerticalFragments(verticalCandidates)
         let mergedHorizontal = mergeHorizontalFragments(horizontalCandidates)
         return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
+    }
+
+    // MARK: - 低信頼度行の除外
+
+    /// この信頼度未満の行は認識ノイズとみなし除外する。
+    private static let minimumLineConfidence: Float = 0.3
+
+    /// 低信頼度行を除外する。全行または過半数が閾値未満のときは画像全体の
+    /// 品質問題とみなし、元の行を維持する（1 行も返さないと呼出し側が
+    /// OCR 失敗として扱い、成功していた読み取りが失敗に化けるため）。
+    static func filterLowConfidenceLines(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        let filtered = lines.filter { $0.confidence >= minimumLineConfidence }
+        guard !filtered.isEmpty, filtered.count * 2 >= lines.count else { return lines }
+        if filtered.count < lines.count {
+            let dropped = lines.filter { $0.confidence < minimumLineConfidence }
+            AppLogger.ocr.debug("低信頼度行を除外: \(dropped.map { "'\($0.text)'" }.joined(separator: ", "), privacy: .private)")
+        }
+        return filtered
     }
 
     // MARK: - 断片結合の閾値（全角換算表示幅）

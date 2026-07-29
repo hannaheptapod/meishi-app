@@ -324,6 +324,45 @@ struct OCRServiceTests {
         #expect(merged.map { $0.text } == ["山田"])
     }
 
+    // 低信頼度の行は認識ノイズとして除外する。
+    @Test func filterLowConfidenceLinesDropsNoiseLines() {
+        let lines = [
+            makeLine("サンプル株式会社", midY: 0.72, confidence: 0.90),
+            makeLine("田中 花子", midY: 0.62, confidence: 0.85),
+            makeLine("!lI|", midY: 0.30, confidence: 0.15),
+        ]
+
+        let filtered = OCRService.filterLowConfidenceLines(lines)
+
+        #expect(filtered.map { $0.text } == ["サンプル株式会社", "田中 花子"])
+    }
+
+    // 全行が低信頼度なら画像品質の問題であり、行を落とさず元を維持する
+    // （空を返すと呼出し側で成功していた OCR が失敗扱いになる）。
+    @Test func filterLowConfidenceLinesKeepsAllWhenEveryLineIsLowConfidence() {
+        let lines = [
+            makeLine("サンプル", midY: 0.72, confidence: 0.20),
+            makeLine("かすれた行", midY: 0.62, confidence: 0.10),
+        ]
+
+        let filtered = OCRService.filterLowConfidenceLines(lines)
+
+        #expect(filtered.count == 2)
+    }
+
+    // 過半数が閾値未満の場合も画像品質の問題とみなし元を維持する。
+    @Test func filterLowConfidenceLinesKeepsAllWhenMajorityWouldBeDropped() {
+        let lines = [
+            makeLine("サンプル株式会社", midY: 0.72, confidence: 0.90),
+            makeLine("かすれた行", midY: 0.62, confidence: 0.10),
+            makeLine("にじんだ行", midY: 0.52, confidence: 0.12),
+        ]
+
+        let filtered = OCRService.filterLowConfidenceLines(lines)
+
+        #expect(filtered.count == 3)
+    }
+
     @Test func mergeAdjacentFragmentsDoesNotVerticallyMergeAsciiContacts() {
         let lines = [
             makeLine("hanako", midX: 0.72, midY: 0.82, width: 0.18, height: 0.04),
