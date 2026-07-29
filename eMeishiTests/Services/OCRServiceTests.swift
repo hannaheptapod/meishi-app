@@ -242,6 +242,30 @@ struct OCRServiceTests {
         #expect(merged.allSatisfy { $0.textDirection == .topToBottom })
     }
 
+    // 英字名は文字数でなく全角換算幅（ASCII=0.5）で判定し、語境界の空白を保って結合する。
+    @Test func mergeAdjacentFragmentsMergesSplitLatinNameWithSpace() {
+        let lines = [
+            makeLine("Hanako", midX: 0.30, midY: 0.70, width: 0.14, height: 0.05),
+            makeLine("Tanaka", midX: 0.48, midY: 0.70, width: 0.14, height: 0.05),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines)
+
+        #expect(merged.map { $0.text } == ["Hanako Tanaka"])
+    }
+
+    // 表示幅の大きい英字行同士は別フィールドとみなし結合しない。
+    @Test func mergeAdjacentFragmentsKeepsLongLatinLinesSeparate() {
+        let lines = [
+            makeLine("Marketing", midX: 0.28, midY: 0.70, width: 0.18, height: 0.05),
+            makeLine("Department", midX: 0.52, midY: 0.70, width: 0.20, height: 0.05),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines)
+
+        #expect(merged.count == 2)
+    }
+
     // 左右 2 カラム名刺では、行同士が近くても列境界を跨ぐ結合をしない。
     @Test func mergeAdjacentFragmentsDoesNotMergeAcrossColumnBoundary() {
         let lines = [

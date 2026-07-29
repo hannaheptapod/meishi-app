@@ -415,6 +415,31 @@ actor OCRService {
         return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
     }
 
+    // MARK: - 断片結合の閾値（全角換算表示幅）
+
+    /// 結合対象とみなす断片の最大表示幅（全角換算）。
+    private static let horizontalMergeMaxDisplayWidth: CGFloat = 4.0
+    private static let verticalMergeMaxDisplayWidth: CGFloat = 6.0
+
+    /// 全角換算の表示幅（ASCII = 0.5、それ以外 = 1.0）。
+    /// 英字名は文字数が多くても表示幅は小さいため、文字数でなく幅で判定する。
+    private static func displayWidth(_ text: String) -> CGFloat {
+        text.unicodeScalars.reduce(0) { $0 + ($1.isASCII ? 0.5 : 1.0) }
+    }
+
+    /// 横書き断片の連結。英字断片同士は語境界を保つため半角スペースで繋ぐ。
+    /// メール・URL・電話番号らしい断片に空白を入れると下流の抽出が壊れるため、
+    /// その場合と日本語断片は従来どおり直結する。
+    private static func joinHorizontalFragments(_ fragments: [String]) -> String {
+        guard var joined = fragments.first else { return "" }
+        for (previous, fragment) in zip(fragments, fragments.dropFirst()) {
+            let needsSpace = isMostlyASCII(previous) && isMostlyASCII(fragment)
+                && !isContactLike(previous) && !isContactLike(fragment)
+            joined += (needsSpace ? " " : "") + fragment
+        }
+        return joined
+    }
+
     // MARK: - カラム境界推定
 
     /// 列境界とみなす最小の空白帯幅（正規化 X）。
@@ -528,9 +553,10 @@ actor OCRService {
                 // （名刺の名前は文字間を広げることがあるが、別フィールドはもっと離れる）
                 if gap < maxH * 2.0 {
                     // 短い断片のみ統合（長い行同士は別フィールドの可能性が高い）
-                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
-                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
-                    if anchorChars <= 4 || candChars <= 4 {
+                    let anchorWidth = displayWidth(anchor.text.trimmingCharacters(in: .whitespaces))
+                    let candWidth = displayWidth(candidate.text.trimmingCharacters(in: .whitespaces))
+                    if anchorWidth <= horizontalMergeMaxDisplayWidth
+                        || candWidth <= horizontalMergeMaxDisplayWidth {
                         used.insert(j)
                         group.append((j, candidate))
                     }
@@ -542,7 +568,7 @@ actor OCRService {
             } else {
                 // X 座標順（左→右）にソートして結合
                 let sorted = group.sorted { $0.line.boundingBox.midX < $1.line.boundingBox.midX }
-                let mergedText = sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) }.joined()
+                let mergedText = joinHorizontalFragments(sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) })
                 // 結合後の bounding box は全断片を包含する矩形
                 let minX = sorted.map { $0.line.boundingBox.minX }.min()!
                 let minY = sorted.map { $0.line.boundingBox.minY }.min()!
@@ -610,9 +636,10 @@ actor OCRService {
                 }
 
                 if gap < maxW * 2.4 {
-                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
-                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
-                    if anchorChars <= 6 || candChars <= 6 {
+                    let anchorWidth = displayWidth(anchor.text.trimmingCharacters(in: .whitespaces))
+                    let candWidth = displayWidth(candidate.text.trimmingCharacters(in: .whitespaces))
+                    if anchorWidth <= verticalMergeMaxDisplayWidth
+                        || candWidth <= verticalMergeMaxDisplayWidth {
                         used.insert(j)
                         group.append((j, candidate))
                     }
