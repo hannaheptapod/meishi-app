@@ -50,6 +50,10 @@ nonisolated enum LegalEntityTerms {
     /// CardFieldClassifier の会社名検出で使用
     static let allDetectionTerms: [String] = kanjiTerms + englishTerms + abbreviatedTerms
 
+    /// OCR の customWords 用。括弧略称は記号形で認識辞書に効かず、
+    /// ひらがな読みは名刺上に現れないため除外する。
+    static let ocrCustomWords: [String] = kanjiTerms + englishTerms
+
     // MARK: - 除去
 
     /// 漢字・英語・略称の法人格を前方・後方から除去する（ソート・重複比較用）

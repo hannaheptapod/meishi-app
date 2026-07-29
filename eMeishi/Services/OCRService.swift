@@ -74,44 +74,71 @@ actor OCRService {
     }
 
     static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
-        observations
+        let scored = observations
             .enumerated()
-            .map { index, observation in
-                (
-                    observation: observation,
-                    score: cardRectangleScore(
-                        metrics: cardRectangleMetrics(for: observation),
-                        confidence: observation.confidence,
-                        visionOrder: index
-                    )
-                )
+            .compactMap { index, observation in
+                cardRectangleScore(
+                    metrics: cardRectangleMetrics(for: observation),
+                    confidence: observation.confidence
+                ).map { (index: index, score: $0) }
             }
-            .filter { $0.score >= minimumAcceptableCardScore }
-            .max { $0.score < $1.score }?
-            .observation
+        return bestScoredIndex(scored).map { observations[$0] }
     }
 
     static func bestCardRectIndex(candidates: [(rect: CGRect, confidence: Float)]) -> Int? {
-        candidates
+        let scored = candidates
             .enumerated()
-            .map { index, candidate in
-                (
-                    index: index,
-                    score: cardRectangleScore(
-                        metrics: cardRectangleMetrics(for: candidate.rect),
-                        confidence: candidate.confidence,
-                        visionOrder: index
-                    )
-                )
+            .compactMap { index, candidate in
+                cardRectangleScore(
+                    metrics: cardRectangleMetrics(for: candidate.rect),
+                    confidence: candidate.confidence
+                ).map { (index: index, score: $0) }
             }
+        return bestScoredIndex(scored)
+    }
+
+    /// 同点とみなすスコア差（正規化値）。この幅の中では Vision 返却順を優先する。
+    private static let cardScoreTieTolerance: CGFloat = 0.01
+
+    /// 最良候補の index を返す。Vision 返却順への依存を減点でなく
+    /// タイブレークとして表現する: スコアをトレランス幅でバケット化し、
+    /// 同一バケット内は Vision index 昇順（= 先に返された候補）を選ぶ。
+    private static func bestScoredIndex(_ scored: [(index: Int, score: CGFloat)]) -> Int? {
+        scored
             .filter { $0.score >= minimumAcceptableCardScore }
-            .max { $0.score < $1.score }?
+            .map { (index: $0.index, bucket: Int(($0.score / cardScoreTieTolerance).rounded())) }
+            .sorted {
+                if $0.bucket != $1.bucket { return $0.bucket > $1.bucket }
+                return $0.index < $1.index
+            }
+            .first?
             .index
     }
 
-    /// 名刺外周として採用する最低スコア。ロゴ・QR・罫線などの局所矩形しか
+    /// スコア各項の重み。正規化の分母 total と常に一致させるため一元管理する。
+    private enum CardScoreWeight {
+        static let confidence: CGFloat = 1.5
+        static let aspect: CGFloat = 1.5
+        static let area: CGFloat = 2.5
+        static let edge: CGFloat = 1.4
+        static let shape: CGFloat = 1.0
+        static let centrality: CGFloat = 0.8
+        /// 全項目が満点のときの重み和（= 8.7）。スコアを 0〜1 へ正規化する分母。
+        static let total: CGFloat = confidence + aspect + area + edge + shape + centrality
+    }
+
+    /// 名刺外周として採用する最低スコア（正規化値）。ロゴ・QR・罫線などの局所矩形しか
     /// 検出できなかった場合は候補なし（= 元画像維持）へ倒すための下限（#187）。
-    private static let minimumAcceptableCardScore: CGFloat = 5.3
+    /// 旧絶対値 5.3 / 重み和 8.7 = 0.609 と同じ分割になる値。
+    private static let minimumAcceptableCardScore: CGFloat = 0.61
+
+    /// 名刺外周として意味を持つ最小面積（正規化）。これ未満はロゴ・QR 相当。
+    private static let minimumCardArea: CGFloat = 0.055
+
+    /// 画像の大部分を占める矩形はテーブル面や背景枠の可能性が高いため、
+    /// この閾値を超えた面積分だけ減点を漸増させる（寄り撮影の正当な大矩形は残す）。
+    private static let oversizedAreaThreshold: CGFloat = 0.70
+    private static let oversizedAreaPenaltyWeight: CGFloat = 3.0
 
     private struct CardRectangleMetrics {
         let area: CGFloat
@@ -171,18 +198,23 @@ actor OCRService {
         )
     }
 
+    /// 名刺外周らしさの正規化スコア（0〜1）。足切り条件を満たさない候補は nil。
     private static func cardRectangleScore(
         metrics: CardRectangleMetrics,
-        confidence: Float,
-        visionOrder: Int
-    ) -> CGFloat {
+        confidence: Float
+    ) -> CGFloat? {
         let area = metrics.area
-        // ロゴやQRコード程度の小矩形は候補から外し、画面をほぼ覆う矩形も除外する。
-        guard (0.055...0.92).contains(area) else { return -1 }
+        // ロゴやQRコード程度の小矩形は候補から外す。大面積側は足切りでなく
+        // 漸増ペナルティで扱う（寄り撮影では名刺が画面の大半を占めるため）。
+        guard area >= minimumCardArea else { return nil }
+        // 画像の外縁とほぼ一致する矩形は枠検出の誤りであり名刺ではない。
+        guard !(area > 0.90 && metrics.edgeInset < 0.005) else { return nil }
 
         let shortLongAspect = metrics.shortLongAspect
-        guard (0.32...0.90).contains(shortLongAspect) else { return -1 }
-        guard metrics.oppositeSideBalance > 0.55 else { return -1 }
+        // 上限 0.95: 写真と名刺のアスペクトが近い構図では正規化座標上の比が
+        // 1.0 へ近づくため、旧上限 0.90 では寄り撮影の正当な外周を弾いていた。
+        guard (0.32...0.95).contains(shortLongAspect) else { return nil }
+        guard metrics.oppositeSideBalance > 0.55 else { return nil }
 
         let businessCardAspect: CGFloat = 0.58
         let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
@@ -196,16 +228,20 @@ actor OCRService {
         let centralityScore = max(0, 1 - metrics.centerOffset / 0.42)
         // 占有率が低い矩形はロゴ・QR・罫線ブロックの可能性が高いため、面積スコアとは別に減点を漸増させる（#187）。
         let smallAreaPenalty = area < 0.14 ? (0.14 - area) / 0.14 * 1.8 : 0
-        let orderPenalty = CGFloat(visionOrder) * 0.04
+        // 画面をほぼ覆う矩形（テーブル面・背景枠）は超過分に応じて減点する。
+        let oversizedAreaPenalty = area > oversizedAreaThreshold
+            ? (area - oversizedAreaThreshold) * oversizedAreaPenaltyWeight
+            : 0
 
-        return CGFloat(confidence) * 1.5
-            + aspectScore * 1.5
-            + areaScore * 2.5
-            + edgeScore * 1.4
-            + shapeScore
-            + centralityScore * 0.8
+        let weightedSum = CGFloat(confidence) * CardScoreWeight.confidence
+            + aspectScore * CardScoreWeight.aspect
+            + areaScore * CardScoreWeight.area
+            + edgeScore * CardScoreWeight.edge
+            + shapeScore * CardScoreWeight.shape
+            + centralityScore * CardScoreWeight.centrality
             - smallAreaPenalty
-            - orderPenalty
+            - oversizedAreaPenalty
+        return weightedSum / CardScoreWeight.total
     }
 
     private static func distance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
@@ -222,6 +258,18 @@ actor OCRService {
     }
 
     // MARK: - パースペクティブ補正（CIPerspectiveCorrection）
+
+    /// 補正後の名刺として妥当な短辺/長辺比。範囲外は補正失敗とみなし元画像へ倒す。
+    /// 日本の名刺 91×55mm = 0.604、US 3.5×2in = 0.571。正方形に近い出力や
+    /// 極端な細長出力は、頂点の取り違えや部分矩形の誤検出を示す。
+    private static let plausibleCorrectedAspectRange: ClosedRange<CGFloat> = 0.40...0.85
+
+    /// 補正後サイズが名刺として妥当かを判定する。
+    static func isPlausibleCardAspect(_ size: CGSize) -> Bool {
+        guard size.width > 0, size.height > 0 else { return false }
+        let shortLongAspect = min(size.width, size.height) / max(size.width, size.height)
+        return plausibleCorrectedAspectRange.contains(shortLongAspect)
+    }
 
     private static func perspectiveCorrected(
         cgImage: CGImage,
@@ -244,7 +292,14 @@ actor OCRService {
         filter.setValue(toCI(observation.bottomRight.cgPoint), forKey: "inputBottomRight")
 
         guard let outputCIImage = filter.outputImage else { return nil }
-        guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: outputCIImage.extent) else { return nil }
+        // extent は遅延評価なのでレンダリング前に検証できる。名刺として不合理な
+        // 出力（頂点取り違え・部分矩形の誤検出）はここで破棄し、元画像維持へ倒す。
+        let extent = outputCIImage.extent
+        guard !extent.isEmpty, !extent.isInfinite, isPlausibleCardAspect(extent.size) else {
+            AppLogger.ocr.debug("補正後アスペクトが名刺として不合理。元画像を使用")
+            return nil
+        }
+        guard let outputCGImage = ciContext.createCGImage(outputCIImage, from: extent) else { return nil }
         return UIImage(cgImage: outputCGImage)
     }
 
@@ -279,6 +334,8 @@ actor OCRService {
                 Locale.Language(identifier: "ja-JP"),
                 Locale.Language(identifier: "en-US"),
             ]
+            // 法人格の定型語彙を認識辞書へ与え、社名行の誤認識を減らす
+            request.customWords = LegalEntityTerms.ocrCustomWords
 
             let observations = try await request.perform(on: cgImage)
             let rawLines: [RecognizedLine] = observations.compactMap { obs in
@@ -293,10 +350,13 @@ actor OCRService {
             }
 
             // 近接する短い断片行を統合（OCR が名前等を文字単位で分割する問題への対策）
-            let lines = Self.mergeAdjacentFragments(
+            let merged = Self.mergeAdjacentFragments(
                 rawLines,
                 isVerticalCard: image.size.height > image.size.width * 1.1
             )
+            // 低信頼度行の除外は結合の後に行う。縦書きの単漢字断片は個別の
+            // confidence が低くなりやすく、結合後の平均値で救う。
+            let lines = Self.filterLowConfidenceLines(merged)
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             AppLogger.ocr.info("OCR完了: \(lines.count, privacy: .public)行認識 \(String(format: "%.1f", elapsed), privacy: .public)秒")
             return lines
@@ -331,24 +391,126 @@ actor OCRService {
     /// 1つの名前を複数の observation に分割することがある。
     /// 同一行（Y座標近接）かつ X 方向に近い短い断片を結合し、
     /// 下流の分類ロジックに安定した行を渡す。
+    ///
+    /// - Parameter isVerticalCard: 画像が縦長かどうかの補助情報。縦書き判定の
+    ///   主役は Vision の textDirection で、この値は横書きの証拠が 1 行もない
+    ///   場合のフォールバックにだけ使う。
     static func mergeAdjacentFragments(
         _ lines: [RecognizedLine],
         isVerticalCard: Bool = false
     ) -> [RecognizedLine] {
         guard lines.count > 1 else { return lines }
 
-        let shouldUseVerticalMerge = lines.contains { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        // 主判定は Vision の textDirection。画像が縦長でも横書き行が検出されて
+        // いれば横位置の名刺を縦向きに撮っただけであり、形状フォールバックは使わない。
+        let hasHorizontalEvidence = lines.contains { $0.textDirection == .leftToRight }
+        let allowsAspectFallback = isVerticalCard && !hasHorizontalEvidence
+
+        let shouldUseVerticalMerge = lines.contains { isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
 
         guard shouldUseVerticalMerge else {
             return mergeHorizontalFragments(lines)
         }
 
-        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
-        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
+        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
 
         let mergedVertical = mergeVerticalFragments(verticalCandidates)
         let mergedHorizontal = mergeHorizontalFragments(horizontalCandidates)
         return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
+    }
+
+    // MARK: - 低信頼度行の除外
+
+    /// この信頼度未満の行は認識ノイズとみなし除外する。
+    private static let minimumLineConfidence: Float = 0.3
+
+    /// 低信頼度行を除外する。全行または過半数が閾値未満のときは画像全体の
+    /// 品質問題とみなし、元の行を維持する（1 行も返さないと呼出し側が
+    /// OCR 失敗として扱い、成功していた読み取りが失敗に化けるため）。
+    static func filterLowConfidenceLines(_ lines: [RecognizedLine]) -> [RecognizedLine] {
+        let filtered = lines.filter { $0.confidence >= minimumLineConfidence }
+        guard !filtered.isEmpty, filtered.count * 2 >= lines.count else { return lines }
+        if filtered.count < lines.count {
+            let dropped = lines.filter { $0.confidence < minimumLineConfidence }
+            AppLogger.ocr.debug("低信頼度行を除外: \(dropped.map { "'\($0.text)'" }.joined(separator: ", "), privacy: .private)")
+        }
+        return filtered
+    }
+
+    // MARK: - 断片結合の閾値（全角換算表示幅）
+
+    /// 結合対象とみなす断片の最大表示幅（全角換算）。
+    private static let horizontalMergeMaxDisplayWidth: CGFloat = 4.0
+    private static let verticalMergeMaxDisplayWidth: CGFloat = 6.0
+
+    /// 全角換算の表示幅（ASCII = 0.5、それ以外 = 1.0）。
+    /// 英字名は文字数が多くても表示幅は小さいため、文字数でなく幅で判定する。
+    private static func displayWidth(_ text: String) -> CGFloat {
+        text.unicodeScalars.reduce(0) { $0 + ($1.isASCII ? 0.5 : 1.0) }
+    }
+
+    /// 横書き断片の連結。英字断片同士は語境界を保つため半角スペースで繋ぐ。
+    /// メール・URL・電話番号らしい断片に空白を入れると下流の抽出が壊れるため、
+    /// その場合と日本語断片は従来どおり直結する。
+    private static func joinHorizontalFragments(_ fragments: [String]) -> String {
+        guard var joined = fragments.first else { return "" }
+        for (previous, fragment) in zip(fragments, fragments.dropFirst()) {
+            let needsSpace = isMostlyASCII(previous) && isMostlyASCII(fragment)
+                && !isContactLike(previous) && !isContactLike(fragment)
+            joined += (needsSpace ? " " : "") + fragment
+        }
+        return joined
+    }
+
+    // MARK: - カラム境界推定
+
+    /// 列境界とみなす最小の空白帯幅（正規化 X）。
+    private static let minimumColumnGap: CGFloat = 0.08
+    /// 列境界として意味を持つ位置の範囲。端に寄った空白は余白でしかない。
+    private static let columnBoundaryRange: ClosedRange<CGFloat> = 0.30...0.70
+    /// 境界の両側に最低限必要な行数。片側 1 行では列とは言えない。
+    private static let minimumLinesPerColumn = 2
+
+    /// 行群の X 区間をユニオンし、中央付近にある最大の空白帯を列境界として返す。
+    /// 左右 2 カラム名刺で、別カラムの行同士が横結合されるのを防ぐ。
+    static func columnBoundary(for lines: [RecognizedLine]) -> CGFloat? {
+        guard lines.count >= minimumLinesPerColumn * 2 else { return nil }
+
+        // X 区間を minX 昇順でマージし、連続グループ間のギャップを求める
+        let intervals = lines
+            .map { (min: $0.boundingBox.minX, max: $0.boundingBox.maxX) }
+            .sorted { $0.min < $1.min }
+        var mergedIntervals: [(min: CGFloat, max: CGFloat)] = []
+        for interval in intervals {
+            if var last = mergedIntervals.last, interval.min <= last.max {
+                last.max = max(last.max, interval.max)
+                mergedIntervals[mergedIntervals.count - 1] = last
+            } else {
+                mergedIntervals.append(interval)
+            }
+        }
+        guard mergedIntervals.count >= 2 else { return nil }
+
+        // 最大ギャップを列境界候補にする
+        var bestBoundary: (center: CGFloat, width: CGFloat)?
+        for (lhs, rhs) in zip(mergedIntervals, mergedIntervals.dropFirst()) {
+            let width = rhs.min - lhs.max
+            if width > (bestBoundary?.width ?? 0) {
+                bestBoundary = (center: (lhs.max + rhs.min) / 2, width: width)
+            }
+        }
+        guard let boundary = bestBoundary,
+              boundary.width >= minimumColumnGap,
+              columnBoundaryRange.contains(boundary.center) else { return nil }
+
+        // 両側に列と呼べる行数があるかを確認する
+        let leftCount = lines.filter { $0.boundingBox.midX < boundary.center }.count
+        let rightCount = lines.count - leftCount
+        guard leftCount >= minimumLinesPerColumn, rightCount >= minimumLinesPerColumn else {
+            return nil
+        }
+        return boundary.center
     }
 
     private static func mergeHorizontalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
@@ -357,6 +519,11 @@ actor OCRService {
         // インデックス管理用
         var used = Set<Int>()
         var result: [RecognizedLine] = []
+        // 列境界を跨ぐ結合は別カラムのフィールド混合になるため禁止する
+        let boundary = columnBoundary(for: lines)
+        if let boundary {
+            AppLogger.ocr.debug("列境界を検出: x=\(boundary, privacy: .public)")
+        }
 
         // Y 座標降順（Vision座標系: 上が大きい → 名刺の上から処理）
         let indexed = lines.enumerated().sorted {
@@ -378,6 +545,12 @@ actor OCRService {
 
                 // 同一行判定: Y 中心の差が行の高さの 60% 以内
                 guard abs(candidate.boundingBox.midY - anchor.boundingBox.midY) < maxH * 0.6 else {
+                    continue
+                }
+
+                // 列境界を跨ぐ候補は別カラムのフィールドとみなし結合しない
+                if let boundary,
+                   (anchor.boundingBox.midX < boundary) != (candidate.boundingBox.midX < boundary) {
                     continue
                 }
 
@@ -403,9 +576,10 @@ actor OCRService {
                 // （名刺の名前は文字間を広げることがあるが、別フィールドはもっと離れる）
                 if gap < maxH * 2.0 {
                     // 短い断片のみ統合（長い行同士は別フィールドの可能性が高い）
-                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
-                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
-                    if anchorChars <= 4 || candChars <= 4 {
+                    let anchorWidth = displayWidth(anchor.text.trimmingCharacters(in: .whitespaces))
+                    let candWidth = displayWidth(candidate.text.trimmingCharacters(in: .whitespaces))
+                    if anchorWidth <= horizontalMergeMaxDisplayWidth
+                        || candWidth <= horizontalMergeMaxDisplayWidth {
                         used.insert(j)
                         group.append((j, candidate))
                     }
@@ -417,7 +591,7 @@ actor OCRService {
             } else {
                 // X 座標順（左→右）にソートして結合
                 let sorted = group.sorted { $0.line.boundingBox.midX < $1.line.boundingBox.midX }
-                let mergedText = sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) }.joined()
+                let mergedText = joinHorizontalFragments(sorted.map { $0.line.text.trimmingCharacters(in: .whitespaces) })
                 // 結合後の bounding box は全断片を包含する矩形
                 let minX = sorted.map { $0.line.boundingBox.minX }.min()!
                 let minY = sorted.map { $0.line.boundingBox.minY }.min()!
@@ -485,9 +659,10 @@ actor OCRService {
                 }
 
                 if gap < maxW * 2.4 {
-                    let anchorChars = anchor.text.trimmingCharacters(in: .whitespaces).count
-                    let candChars = candidate.text.trimmingCharacters(in: .whitespaces).count
-                    if anchorChars <= 6 || candChars <= 6 {
+                    let anchorWidth = displayWidth(anchor.text.trimmingCharacters(in: .whitespaces))
+                    let candWidth = displayWidth(candidate.text.trimmingCharacters(in: .whitespaces))
+                    if anchorWidth <= verticalMergeMaxDisplayWidth
+                        || candWidth <= verticalMergeMaxDisplayWidth {
                         used.insert(j)
                         group.append((j, candidate))
                     }
@@ -515,7 +690,7 @@ actor OCRService {
         return sortForReadingOrder(result, preferVertical: true)
     }
 
-    private static func isVerticalMergeCandidate(_ line: RecognizedLine, isVerticalCard: Bool) -> Bool {
+    private static func isVerticalMergeCandidate(_ line: RecognizedLine, allowsAspectFallback: Bool) -> Bool {
         let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         guard !isContactLike(text), !isMostlyASCII(text) else { return false }
@@ -524,7 +699,7 @@ actor OCRService {
         }
         guard hasJapanese else { return false }
         if line.textDirection == .topToBottom { return true }
-        guard isVerticalCard else { return false }
+        guard allowsAspectFallback else { return false }
         return line.boundingBox.height > line.boundingBox.width * 1.4
     }
 
