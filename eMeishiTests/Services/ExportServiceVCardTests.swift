@@ -119,4 +119,17 @@ struct ExportServiceVCardTests {
         #expect(!vcf.contains("URL:"))
         #expect(!vcf.contains("NOTE:"))
     }
+
+    @Test func backgroundExportWritesVCardFile() async throws {
+        let card = makeDTO(
+            company: "例示商事株式会社",
+            email: "staff@example.com"
+        )
+        let url = try await service.exportVCardInBackground(from: [card])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let text = try String(contentsOf: url, encoding: .utf8)
+        #expect(text.contains("BEGIN:VCARD"))
+        #expect(text.contains("staff@example.com"))
+    }
 }

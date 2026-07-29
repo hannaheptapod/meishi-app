@@ -2,7 +2,7 @@ import Foundation
 import os
 
 // エクスポート処理のエラー型
-enum ExportError: LocalizedError {
+nonisolated enum ExportError: LocalizedError {
     case csvWriteFailed(Error)
     case vcardWriteFailed(Error)
 
@@ -16,43 +16,41 @@ enum ExportError: LocalizedError {
     }
 }
 
-// CSV・vCard（.vcf）エクスポートサービス
-class ExportService {
+// CSV・vCard（.vcf）エクスポートサービス。
+// 値変換は副作用のない同期APIを維持し、ファイル生成は専用actorへ委譲する。
+nonisolated final class ExportService: Sendable {
 
     static let shared = ExportService()
+    private let fileWorker = ExportFileWorker()
 
     // MARK: - CSV エクスポート
 
     /// 複数の名刺 DTO を CSV 形式の文字列に変換する
     func csvString(from cards: [CardExportDTO]) -> String {
+        Self.makeCSVString(from: cards)
+    }
+
+    fileprivate static func makeCSVString(from cards: [CardExportDTO]) -> String {
         let header = "姓,名,会社名,部署,役職,電話番号,メールアドレス,住所,Webサイト,メモ,登録日時"
-        let rows = cards.map { csvRow(from: $0) }
+        let formatter = ISO8601DateFormatter()
+        let rows = cards.map { csvRow(from: $0, formatter: formatter) }
         return ([header] + rows).joined(separator: "\n")
     }
 
     /// CSV を一時ファイルに書き出して URL を返す
     func exportCSV(from cards: [CardExportDTO]) throws -> URL {
-        let csv = csvString(from: cards)
-        let url = temporaryFileURL(name: "meishi_export", ext: "csv")
-        // BOM付きUTF-8 でExcel等での文字化けを防ぐ
-        var data = Data([0xEF, 0xBB, 0xBF])
-        data.append(contentsOf: csv.utf8)
-        do {
-            try data.write(to: url)
-            AppLogger.export.info("CSVエクスポート完了: \(cards.count, privacy: .public)件")
-        } catch {
-            AppLogger.export.error("CSVエクスポート失敗: \(error)")
-            throw ExportError.csvWriteFailed(error)
-        }
-        return url
+        try Self.writeCSV(from: cards)
     }
 
-    // ISO8601DateFormatter は並列呼び出しごとに生成すると ICU 内部の初期化が
-    // 競合してヒープ破壊を起こすため、static で一度だけ生成して共有する。
-    // ICU は内部 mutex で string(from:) の並列実行を保護しているため安全。
-    private static let iso8601Formatter = ISO8601DateFormatter()
+    /// 全件の文字列生成とファイルI/OをMainActor外で実行する。
+    func exportCSVInBackground(from cards: [CardExportDTO]) async throws -> URL {
+        try await fileWorker.exportCSV(from: cards)
+    }
 
-    private func csvRow(from card: CardExportDTO) -> String {
+    private static func csvRow(
+        from card: CardExportDTO,
+        formatter: ISO8601DateFormatter
+    ) -> String {
         let fields: [String?] = [
             card.lastName,
             card.firstName,
@@ -64,7 +62,7 @@ class ExportService {
             card.address,
             card.website,
             card.notes,
-            card.createdAt.map { Self.iso8601Formatter.string(from: $0) }
+            card.createdAt.map { formatter.string(from: $0) }
         ]
         return fields
             .map { escapeCsv($0 ?? "") }
@@ -72,7 +70,7 @@ class ExportService {
     }
 
     /// CSV のフィールドをクォートしてエスケープする
-    private func escapeCsv(_ value: String) -> String {
+    private static func escapeCsv(_ value: String) -> String {
         if value.contains(",") || value.contains("\"") || value.contains("\n") {
             let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
             return "\"\(escaped)\""
@@ -84,24 +82,24 @@ class ExportService {
 
     /// 複数の名刺 DTO を vCard 3.0 形式の文字列に変換する
     func vCardString(from cards: [CardExportDTO]) -> String {
+        Self.makeVCardString(from: cards)
+    }
+
+    fileprivate static func makeVCardString(from cards: [CardExportDTO]) -> String {
         cards.map { vCard(from: $0) }.joined(separator: "\n")
     }
 
     /// vCard を一時ファイルに書き出して URL を返す
     func exportVCard(from cards: [CardExportDTO]) throws -> URL {
-        let vcf = vCardString(from: cards)
-        let url = temporaryFileURL(name: "meishi_export", ext: "vcf")
-        do {
-            try vcf.write(to: url, atomically: true, encoding: .utf8)
-            AppLogger.export.info("vCardエクスポート完了: \(cards.count, privacy: .public)件")
-        } catch {
-            AppLogger.export.error("vCardエクスポート失敗: \(error)")
-            throw ExportError.vcardWriteFailed(error)
-        }
-        return url
+        try Self.writeVCard(from: cards)
     }
 
-    private func vCard(from card: CardExportDTO) -> String {
+    /// 全件の文字列生成とファイルI/OをMainActor外で実行する。
+    func exportVCardInBackground(from cards: [CardExportDTO]) async throws -> URL {
+        try await fileWorker.exportVCard(from: cards)
+    }
+
+    private static func vCard(from card: CardExportDTO) -> String {
         var lines = ["BEGIN:VCARD", "VERSION:3.0"]
 
         let last  = card.lastName  ?? ""
@@ -140,7 +138,7 @@ class ExportService {
     }
 
     /// vCard の特殊文字をエスケープする（RFC 6350）
-    private func vcEscape(_ value: String) -> String {
+    private static func vcEscape(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ",",  with: "\\,")
@@ -150,10 +148,48 @@ class ExportService {
 
     // MARK: - ヘルパー
 
-    private func temporaryFileURL(name: String, ext: String) -> URL {
-        let timestamp = Int(Date().timeIntervalSince1970)
+    private static func temporaryFileURL(name: String, ext: String) -> URL {
         return FileManager.default
             .temporaryDirectory
-            .appendingPathComponent("\(name)_\(timestamp).\(ext)")
+            .appendingPathComponent("\(name)_\(UUID().uuidString).\(ext)")
+    }
+
+    fileprivate static func writeCSV(from cards: [CardExportDTO]) throws -> URL {
+        let csv = makeCSVString(from: cards)
+        let url = temporaryFileURL(name: "meishi_export", ext: "csv")
+        var data = Data([0xEF, 0xBB, 0xBF])
+        data.append(contentsOf: csv.utf8)
+        do {
+            try data.write(to: url, options: .atomic)
+            AppLogger.export.info("CSVエクスポート完了: \(cards.count, privacy: .public)件")
+            return url
+        } catch {
+            AppLogger.export.error("CSVエクスポート失敗: \(error)")
+            throw ExportError.csvWriteFailed(error)
+        }
+    }
+
+    fileprivate static func writeVCard(from cards: [CardExportDTO]) throws -> URL {
+        let vcf = makeVCardString(from: cards)
+        let url = temporaryFileURL(name: "meishi_export", ext: "vcf")
+        do {
+            try vcf.write(to: url, atomically: true, encoding: .utf8)
+            AppLogger.export.info("vCardエクスポート完了: \(cards.count, privacy: .public)件")
+            return url
+        } catch {
+            AppLogger.export.error("vCardエクスポート失敗: \(error)")
+            throw ExportError.vcardWriteFailed(error)
+        }
+    }
+}
+
+/// 大量データの文字列生成とファイル書込みを直列化するworker。
+private actor ExportFileWorker {
+    func exportCSV(from cards: [CardExportDTO]) throws -> URL {
+        try ExportService.writeCSV(from: cards)
+    }
+
+    func exportVCard(from cards: [CardExportDTO]) throws -> URL {
+        try ExportService.writeVCard(from: cards)
     }
 }

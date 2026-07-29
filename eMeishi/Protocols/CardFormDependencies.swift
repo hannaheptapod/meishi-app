@@ -27,6 +27,11 @@ extension CardFieldClassifier: CardFieldClassifierProtocol {}
 protocol LocalLLMServiceProtocol {
     var isModelAvailable: Bool { get }
     func classifyUnclassifiedLines(_ lines: [String]) async -> CardFieldClassifier.ParsedCard?
+    func resolveFields(request: CardFieldResolutionRequest) async -> [CardFieldDecision]
+}
+
+extension LocalLLMServiceProtocol {
+    func resolveFields(request: CardFieldResolutionRequest) async -> [CardFieldDecision] { [] }
 }
 
 extension LocalLLMService: LocalLLMServiceProtocol {}

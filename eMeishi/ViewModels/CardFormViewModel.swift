@@ -7,52 +7,134 @@ import os
 import FoundationModels
 #endif
 
+nonisolated struct CardFormPhoneField: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var value: String
+
+    init(id: UUID = UUID(), value: String) {
+        self.id = id
+        self.value = value
+    }
+}
+
 // 名刺の新規作成・編集フォームのViewModel
 @MainActor
 class CardFormViewModel: ObservableObject {
 
     @Published var lastName: String = ""
-    @Published var lastNameReading: String = ""
+    @Published var lastNameReading: String = "" {
+        didSet { markReadingEdited(.lastName) }
+    }
     @Published var firstName: String = ""
-    @Published var firstNameReading: String = ""
+    @Published var firstNameReading: String = "" {
+        didSet { markReadingEdited(.firstName) }
+    }
     @Published var company: String = ""
-    @Published var companyReading: String = ""
+    @Published var companyReading: String = "" {
+        didSet { markReadingEdited(.company) }
+    }
     @Published var department: String = ""
     @Published var title: String = ""
     @Published var email: String = ""
-    @Published var phones: [String] = [""]
+    @Published var phoneFields: [CardFormPhoneField] = [CardFormPhoneField(value: "")]
     @Published var address: String = ""
     @Published var website: String = ""
     @Published var notes: String = ""
     @Published var selectedTags: Set<UUID> = []
     @Published var suggestedTagIDs: Set<UUID> = []
     @Published var isLoadingTagSuggestions: Bool = false
+    @Published private(set) var readingCandidates: [ReadingCandidate] = []
 
     // OCR処理中フラグ・エラーメッセージ
     @Published var isProcessingOCR: Bool = false
     @Published var ocrStage: String = "名刺を読み取り中..."
     @Published var ocrErrorMessage: String? = nil
+    @Published var saveErrorMessage: String? = nil
+    @Published var ocrProcessingState: OCRProcessingState = .idle
+    @Published var canContinueOCRInBackground = false
+    @Published private(set) var isLoadingEditSnapshot = false
+    @Published private(set) var editLoadErrorMessage: String?
+    @Published private(set) var isSaving = false
 
     // モデル未取得時にダウンロード同意アラートを表示するフラグ
     @Published var shouldPromptLLMDownload: Bool = false
 
     // 撮影した名刺画像（保存用）
-    var capturedImageData: Data? = nil
+    @Published private(set) var capturedImageData: Data? = nil {
+        didSet {
+            capturedImageRevision = UUID()
+            if isEditing, !isApplyingEditSnapshot {
+                didChangeCapturedImage = true
+            }
+        }
+    }
+    @Published private(set) var capturedImageRevision = UUID()
+
+    /// 永続化形式は従来どおり文字列配列のまま維持し、フォーム上の行IDだけを分離する。
+    var phones: [String] {
+        get { phoneFields.map(\.value) }
+        set {
+            let normalized = newValue.isEmpty ? [""] : newValue
+            phoneFields = normalized.enumerated().map { index, value in
+                if phoneFields.indices.contains(index) {
+                    return CardFormPhoneField(id: phoneFields[index].id, value: value)
+                }
+                return CardFormPhoneField(value: value)
+            }
+        }
+    }
 
     // 編集中かどうかを外部から確認できるように公開
-    var isEditing: Bool { card != nil }
+    var isEditing: Bool { editReference != nil }
+    var needsEditSnapshotLoad: Bool {
+        isEditing && editGeneration == nil && editLoadErrorMessage == nil
+    }
 
     private let context: NSManagedObjectContext
-    private var card: BusinessCard?
+    private let coordinatorReference: PersistentStoreCoordinatorReference
+    private let editReference: CardFormEditReference?
+    private let persistenceWorker: CardFormPersistenceWorker
+    private var editGeneration: CardFormEditGeneration?
     private let ocrService: OCRServiceProtocol
     private let classifier: CardFieldClassifierProtocol
     private let llmService: LocalLLMServiceProtocol
     private let autoTagService: AutoTagServiceProtocol
     private let settings: SettingsProviding
+    private(set) var ocrJobID = OCRJobID()
     private var ocrTask: Task<Void, Never>?
+    private var etaTickerTask: Task<Void, Never>?
+    private var tagSuggestionTask: Task<Void, Never>?
+    private var ocrCancellationTask: Task<Void, Never>?
+    private var ocrCancellationGeneration = UUID()
+    private var tagSuggestionGeneration = UUID()
+    private var isApplyingReadingResolution = false
+    private var isApplyingEditSnapshot = false
+    private var didChangeCapturedImage = false
+    private var editedReadingTargets = Set<ReadingTarget>()
 
     deinit {
         ocrTask?.cancel()
+        etaTickerTask?.cancel()
+        tagSuggestionTask?.cancel()
+        ocrCancellationTask?.cancel()
+    }
+
+    func appendPhoneField() {
+        phoneFields.append(CardFormPhoneField(value: ""))
+    }
+
+    func removePhoneField(id: UUID) {
+        guard phoneFields.count > 1 else { return }
+        phoneFields.removeAll { $0.id == id }
+        if phoneFields.isEmpty {
+            phoneFields = [CardFormPhoneField(value: "")]
+        }
+    }
+
+    /// OCRを開始せずに、既に正規化済みの画像をフォームへ設定する。
+    /// スクリーンショット用の合成フォームなど、準備済み入力の生成経路で使用する。
+    func setPreparedImageData(_ data: Data?) {
+        capturedImageData = data
     }
 
     // MARK: - 初期化（新規作成）
@@ -65,7 +147,11 @@ class CardFormViewModel: ObservableObject {
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = nil
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
@@ -73,56 +159,46 @@ class CardFormViewModel: ObservableObject {
         self.settings     = settings     ?? SettingsStore.shared
     }
 
-    // MARK: - 初期化（カメラ撮影画像からOCR）
+    // MARK: - 初期化（正規化済みDataからOCR）
 
-    init(image: UIImage,
+    /// 写真取込み・カメラ・未完了キューで共通利用する初期化経路。
+    /// 保存用Dataは既に向き補正・外周補正・圧縮済みのため、そのまま保持する。
+    /// OCR用UIImageの展開だけを画像処理actorへ委譲し、MainActorでは再圧縮しない。
+    init(normalizedImageData: Data,
          context: NSManagedObjectContext? = nil,
          ocrService: OCRServiceProtocol? = nil,
          classifier: CardFieldClassifierProtocol? = nil,
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = nil
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
         self.autoTagService = autoTagService ?? AutoTagService.shared
         self.settings     = settings     ?? SettingsStore.shared
-        // 矩形検出前にオリジナル画像をいったんセットしておく（検出後に上書き）
-        self.capturedImageData = image.jpegData(compressionQuality: 0.8)
-        // init 時点でフラグを立てることで、最初のレンダリングからインジケーターを表示
+        self.capturedImageData = normalizedImageData
         self.isProcessingOCR = true
         ocrTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            // 矩形検出 → パースペクティブ補正済みの名刺画像を取得
-            let cardImage = await self.ocrService.detectAndCropCard(from: image)
-            guard !Task.isCancelled else { return }
-            // 補正済み画像で保存データを上書き
-            self.capturedImageData = cardImage.jpegData(compressionQuality: 0.8)
-            await populateFromOCR(image: cardImage)
-        }
-    }
-
-    // MARK: - 初期化（切り抜き済み画像からOCR・矩形検出スキップ）
-
-    init(croppedImage: UIImage,
-         context: NSManagedObjectContext? = nil,
-         ocrService: OCRServiceProtocol? = nil,
-         classifier: CardFieldClassifierProtocol? = nil,
-         llmService: LocalLLMServiceProtocol? = nil,
-         autoTagService: AutoTagServiceProtocol? = nil,
-         settings: SettingsProviding? = nil) {
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
-        self.ocrService   = ocrService   ?? OCRService()
-        self.classifier   = classifier   ?? CardFieldClassifier()
-        self.llmService   = llmService   ?? LocalLLMService.shared
-        self.autoTagService = autoTagService ?? AutoTagService.shared
-        self.settings     = settings     ?? SettingsStore.shared
-        self.capturedImageData = croppedImage.jpegData(compressionQuality: 0.8)
-        self.isProcessingOCR = true
-        ocrTask = Task { [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            await populateFromOCR(image: croppedImage)
+            do {
+                let decoded = try await CardImageProcessingService.shared
+                    .decodeNormalizedImage(from: normalizedImageData)
+                try Task.checkCancellation()
+                let image = decoded.image
+                try await self.beginOCRProcessing(image: image)
+                try await self.setOCRPhase(.textRecognition)
+                await self.populateFromOCR(image: image)
+            } catch is CancellationError {
+                await self.finishCancelledOCR()
+                self.isProcessingOCR = false
+            } catch {
+                await self.finishOCRFailure(message: error.localizedDescription)
+            }
         }
     }
 
@@ -135,88 +211,407 @@ class CardFormViewModel: ObservableObject {
          llmService: LocalLLMServiceProtocol? = nil,
          autoTagService: AutoTagServiceProtocol? = nil,
          settings: SettingsProviding? = nil) {
-        self.card = card
-        self.context      = context      ?? PersistenceController.shared.container.viewContext
+        let resolvedContext = context ?? card.managedObjectContext
+            ?? PersistenceController.shared.container.viewContext
+        self.context = resolvedContext
+        self.coordinatorReference = Self.makeCoordinatorReference(for: resolvedContext)
+        self.editReference = CardFormEditReference(
+            objectURI: card.objectID.uriRepresentation()
+        )
+        self.persistenceWorker = CardFormPersistenceWorker()
         self.ocrService   = ocrService   ?? OCRService()
         self.classifier   = classifier   ?? CardFieldClassifier()
         self.llmService   = llmService   ?? LocalLLMService.shared
         self.autoTagService = autoTagService ?? AutoTagService.shared
         self.settings     = settings     ?? SettingsStore.shared
-        lastName        = card.lastName        ?? ""
-        lastNameReading = card.lastNameReading ?? ""
-        firstName       = card.firstName       ?? ""
-        firstNameReading = card.firstNameReading ?? ""
-        company        = card.company        ?? ""
-        companyReading = card.companyReading ?? ""
-        department = card.department ?? ""
-        title      = card.title      ?? ""
-        email     = card.email     ?? ""
-        let stored = card.phoneList
-        phones    = stored.isEmpty ? [""] : stored
-        address   = card.address   ?? ""
-        website   = card.website   ?? ""
-        notes     = card.notes     ?? ""
-        selectedTags = Set(card.tagArray.compactMap { $0.id })
+        isLoadingEditSnapshot = true
+    }
+
+    private static func makeCoordinatorReference(
+        for context: NSManagedObjectContext
+    ) -> PersistentStoreCoordinatorReference {
+        if let coordinator = context.persistentStoreCoordinator
+            ?? context.parent?.persistentStoreCoordinator {
+            return PersistentStoreCoordinatorReference(coordinator: coordinator)
+        }
+        preconditionFailure("CardFormViewModel requires a context connected to a persistent store")
+    }
+
+    // MARK: - 編集スナップショット
+
+    /// Viewが所有するTaskから呼び出し、結果の適用前にView側で世代を照合する。
+    /// 読込み中はフォーム本体を表示せず、MainActor上で個別フィールドをfaultさせない。
+    func beginEditSnapshotLoading() {
+        guard isEditing, editGeneration == nil else { return }
+        isLoadingEditSnapshot = true
+        editLoadErrorMessage = nil
+    }
+
+    func loadEditSnapshot() async throws -> CardFormEditSnapshot {
+        guard let editReference else {
+            throw CardFormPersistenceError.invalidObjectReference
+        }
+        return try await persistenceWorker.loadEditSnapshot(
+            reference: editReference,
+            coordinatorReference: coordinatorReference
+        )
+    }
+
+    /// 全項目をloading shellの背後で設定し、最後に一度だけフォーム表示へ切り替える。
+    func applyEditSnapshot(_ snapshot: CardFormEditSnapshot) {
+        guard editReference?.objectURI == snapshot.generation.objectURI else { return }
+        isApplyingEditSnapshot = true
+        isApplyingReadingResolution = true
+
+        lastName = snapshot.lastName
+        lastNameReading = snapshot.lastNameReading
+        firstName = snapshot.firstName
+        firstNameReading = snapshot.firstNameReading
+        company = snapshot.company
+        companyReading = snapshot.companyReading
+        department = snapshot.department
+        title = snapshot.title
+        email = snapshot.email
+        phones = snapshot.phones
+        address = snapshot.address
+        website = snapshot.website
+        notes = snapshot.notes
+        selectedTags = snapshot.selectedTagIDs
+        capturedImageData = snapshot.imageData
+
+        editGeneration = snapshot.generation
+        didChangeCapturedImage = false
+        editedReadingTargets.removeAll()
+        isApplyingReadingResolution = false
+        isApplyingEditSnapshot = false
+        editLoadErrorMessage = nil
+        isLoadingEditSnapshot = false
+    }
+
+    func cancelEditSnapshotLoading() {
+        if editGeneration == nil {
+            isLoadingEditSnapshot = false
+        }
+    }
+
+    func finishEditSnapshotLoading(with error: Error) {
+        guard editGeneration == nil else { return }
+        isLoadingEditSnapshot = false
+        editLoadErrorMessage = error.localizedDescription
     }
 
     // MARK: - OCR + AI意味分析
 
     func populateFromOCR(image: UIImage) async {
         isProcessingOCR = true
-        ocrStage = "文字を認識中..."
         ocrErrorMessage = nil
+        var didFail = false
 
         do {
+            if ocrProcessingState == .idle {
+                try await beginOCRProcessing(image: image)
+                try await setOCRPhase(.textRecognition)
+            }
             let lines = try await ocrService.recognizeText(from: image)
+            try Task.checkCancellation()
             guard !lines.isEmpty else {
-                ocrErrorMessage = "テキストを認識できませんでした"
-                isProcessingOCR = false
+                await finishOCRFailure(message: "テキストを認識できませんでした")
                 return
             }
 
-            ocrStage = "フィールドを分析中..."
+            await updateRecognitionWorkload(lines)
+            try await setOCRPhase(.fieldAnalysis)
 
             switch settings.readingMethod {
             case .automatic:
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) {
-                    await populateWithFoundationModels(lines: lines)
+                    try await populateWithFoundationModels(lines: lines)
                 } else {
-                    await populateWithLocalLLMOrClassifier(lines: lines)
+                    try await populateWithLocalLLMOrClassifier(lines: lines)
                 }
                 #else
-                await populateWithLocalLLMOrClassifier(lines: lines)
+                try await populateWithLocalLLMOrClassifier(lines: lines)
                 #endif
             case .appleIntelligence:
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) {
-                    await populateWithFoundationModelsOnly(lines: lines)
+                    try await populateWithFoundationModelsOnly(lines: lines)
                 } else {
                     ocrErrorMessage = "Apple Intelligence は iOS 26 以降で利用できます。標準読み取りで処理しました。"
-                    populateWithClassifier(lines: lines)
+                    try await runUnifiedPipeline(lines: lines, llmBackend: .none)
                 }
                 #else
                 ocrErrorMessage = "Apple Intelligence は現在利用できません。標準読み取りで処理しました。"
-                populateWithClassifier(lines: lines)
+                try await runUnifiedPipeline(lines: lines, llmBackend: .none)
                 #endif
             case .localLLM:
                 ocrStage = "AIモデルで分析中..."
-                await populateWithLocalLLMOnly(lines: lines)
+                try await populateWithLocalLLMOnly(lines: lines)
             }
+            try Task.checkCancellation()
+
+            guard hasAnyResolvedField else {
+                await finishOCRFailure(message: "名刺の項目を判別できませんでした。画像を確認して再試行してください。")
+                return
+            }
+
+            try await setOCRPhase(.saving)
+            try Task.checkCancellation()
+            guard let completed = await OCRProcessingCoordinator.shared.complete(jobID: ocrJobID) else {
+                throw CancellationError()
+            }
+            ocrProcessingState = completed
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: completed)
+            OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: true)
+            canContinueOCRInBackground = false
+            isProcessingOCR = false
+            stopETATicker()
+
+            // 完了した同一ジョブだけがAIタグ提案を開始できる。
+            requestTagSuggestions()
+        } catch is CancellationError {
+            didFail = true
+            await finishCancelledOCR()
         } catch {
-            ocrErrorMessage = "OCR処理に失敗しました: \(error.localizedDescription)"
+            didFail = true
+            await finishOCRFailure(message: "OCR処理に失敗しました: \(error.localizedDescription)")
         }
 
+        if didFail { isProcessingOCR = false }
+    }
+
+    private func finishOCRFailure(message: String) async {
+        // Vision/Core MLなどキャンセル非協調の処理は、停止後に通常Errorを返す場合がある。
+        // Coordinatorの終端状態を正とし、キャンセル済みジョブをfailedへ戻さない。
+        if await isOCRJobCancelled() {
+            await finishCancelledOCR()
+            return
+        }
+
+        guard let failed = await OCRProcessingCoordinator.shared.fail(jobID: ocrJobID, message: message) else {
+            // 別の終端遷移が先行した場合も、遅れて届いたErrorで表示状態を上書きしない。
+            if let terminal = await OCRProcessingCoordinator.shared.currentState(jobID: ocrJobID) {
+                ocrProcessingState = terminal
+                switch terminal.phase {
+                case .failed:
+                    ocrErrorMessage = terminal.errorMessage
+                case .cancelled, .completed:
+                    ocrErrorMessage = nil
+                default:
+                    break
+                }
+            }
+            isProcessingOCR = false
+            canContinueOCRInBackground = false
+            stopETATicker()
+            return
+        }
+
+        ocrErrorMessage = message
+        isProcessingOCR = false
+        ocrProcessingState = failed
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: failed)
+        OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
+        canContinueOCRInBackground = false
+        stopETATicker()
+    }
+
+    func cancelOCR() {
+        _ = beginOCRCancellation()
+    }
+
+    /// バッチのスキップ時は旧OCRの終了完了後に次の名刺へ進み、
+    /// 旧Live Activityの残留や新しいOCRへの終了処理の競合を防ぐ。
+    func cancelOCRAndWait() async {
+        await beginOCRCancellation().value
+    }
+
+    @discardableResult
+    private func beginOCRCancellation() -> Task<Void, Never> {
+        if let ocrCancellationTask {
+            return ocrCancellationTask
+        }
+        let generation = UUID()
+        ocrCancellationGeneration = generation
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performOCRCancellation()
+            guard self.ocrCancellationGeneration == generation else { return }
+            self.ocrCancellationTask = nil
+        }
+        ocrCancellationTask = task
+        return task
+    }
+
+    private func performOCRCancellation() async {
+        let task = ocrTask
+        task?.cancel()
         isProcessingOCR = false
 
-        // OCR完了後にAIタグ提案を非同期で実行
-        requestTagSuggestions()
+        // キャンセル非対応の処理が残っていても、表示は即時終了する。
+        await finishCancelledOCR()
+
+        // 旧タスクが完全に終了するまで、新しいバッチ項目を開始させない。
+        await task?.value
+        ocrTask = nil
+
+        // 旧タスクの終了処理が状態を書き戻した場合にも最終状態を揃える。
+        await finishCancelledOCR()
+    }
+
+    private func finishCancelledOCR() async {
+        ocrErrorMessage = nil
+        isProcessingOCR = false
+        if let cancelled = await OCRProcessingCoordinator.shared.cancel(jobID: ocrJobID) {
+            ocrProcessingState = cancelled
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: cancelled)
+        }
+        OCRBackgroundTaskManager.shared.finish(jobID: ocrJobID, success: false)
+        canContinueOCRInBackground = false
+        stopETATicker()
+    }
+
+    private func isOCRJobCancelled() async -> Bool {
+        if Task.isCancelled { return true }
+        return await OCRProcessingCoordinator.shared.currentState(jobID: ocrJobID)?.phase == .cancelled
+    }
+
+    private func beginOCRProcessing(image: UIImage) async throws {
+        try Task.checkCancellation()
+        let started = await OCRProcessingCoordinator.shared.start(
+            jobID: ocrJobID,
+            totalItems: 1,
+            workload: makeInitialWorkload(image: image)
+        )
+        guard !started.phase.isTerminal else { throw CancellationError() }
+        ocrProcessingState = started
+        ocrStage = ocrProcessingState.phase.title
+        canContinueOCRInBackground = OCRBackgroundTaskManager.shared.begin(jobID: ocrJobID, totalItems: 1) { [weak self] in
+            self?.cancelOCR()
+        }
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: ocrProcessingState)
+        startETATicker()
+#if DEBUG
+        try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
+#endif
+        try Task.checkCancellation()
+    }
+
+    private func setOCRPhase(_ phase: OCRProcessingPhase) async throws {
+        try Task.checkCancellation()
+        guard let state = await OCRProcessingCoordinator.shared.transition(jobID: ocrJobID, to: phase) else {
+            throw CancellationError()
+        }
+        ocrProcessingState = state
+        ocrStage = phase.title
+        OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+#if DEBUG
+        try await OCRProcessingCoordinator.shared.waitForConfiguredTestDelay(jobID: ocrJobID)
+#endif
+        try Task.checkCancellation()
+    }
+
+    private func updateImageWorkload(_ image: UIImage) async {
+        let metrics = Self.imageMetrics(image: image, data: capturedImageData)
+        if let state = await OCRProcessingCoordinator.shared.updateImageMetrics(
+            jobID: ocrJobID,
+            megapixels: metrics.megapixels,
+            megabytes: metrics.megabytes
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
+    }
+
+    private func updateRecognitionWorkload(_ lines: [RecognizedLine]) async {
+        let characterCount = lines.reduce(0) { $0 + $1.text.count }
+        if let state = await OCRProcessingCoordinator.shared.updateRecognitionMetrics(
+            jobID: ocrJobID,
+            lineCount: lines.count,
+            characterCount: characterCount
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
+    }
+
+    private func startETATicker() {
+        etaTickerTask?.cancel()
+        let jobID = ocrJobID
+        etaTickerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled,
+                      let self,
+                      self.isProcessingOCR,
+                      self.ocrJobID == jobID,
+                      let state = await OCRProcessingCoordinator.shared.refreshEstimate(jobID: jobID) else {
+                    return
+                }
+                self.ocrProcessingState = state
+                OCRBackgroundTaskManager.shared.update(jobID: jobID, state: state)
+            }
+        }
+    }
+
+    private func stopETATicker() {
+        etaTickerTask?.cancel()
+        etaTickerTask = nil
+    }
+
+    private func makeInitialWorkload(image: UIImage) -> OCRProcessingWorkload {
+        let metrics = Self.imageMetrics(image: image, data: capturedImageData)
+        let backend = expectedAIBackend
+        return OCRProcessingWorkload(
+            imageMegapixels: metrics.megapixels,
+            imageMegabytes: metrics.megabytes,
+            recognizedLineCount: 0,
+            recognizedCharacterCount: 0,
+            ambiguousSpanCount: 0,
+            aiInputTokenEstimate: 0,
+            aiOutputTokenEstimate: 0,
+            aiBackend: backend,
+            aiRequired: backend == .none ? false : nil
+        )
+    }
+
+    private static func imageMetrics(image: UIImage, data: Data?) -> (megapixels: Double, megabytes: Double) {
+        let pixelWidth = Double(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let pixelHeight = Double(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        return (
+            megapixels: max(0.01, pixelWidth * pixelHeight / 1_000_000),
+            megabytes: Double(data?.count ?? 0) / 1_048_576
+        )
+    }
+
+    private var expectedAIBackend: OCRAIWorkloadBackend {
+        switch settings.readingMethod {
+        case .automatic:
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
+                return .foundationModels
+            }
+            #endif
+            return llmService.isModelAvailable ? .localLLM : .none
+        case .appleIntelligence:
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability {
+                return .foundationModels
+            }
+            #endif
+            return .none
+        case .localLLM:
+            return llmService.isModelAvailable ? .localLLM : .none
+        }
     }
 
     // MARK: - AIタグ提案
 
     /// OCR完了後に既存タグから該当するものをAIで提案する
     func requestTagSuggestions() {
+        guard ocrProcessingState.phase != .cancelled,
+              ocrProcessingState.phase != .failed else { return }
         // 既にタグが選択されている場合（編集時）はスキップ
         guard !isEditing, selectedTags.isEmpty else { return }
 
@@ -231,26 +626,49 @@ class CardFormViewModel: ObservableObject {
         // 空の場合はスキップ
         guard !cardInfo.company.isEmpty || !cardInfo.title.isEmpty || !cardInfo.department.isEmpty || !cardInfo.address.isEmpty else { return }
 
+        tagSuggestionTask?.cancel()
+        let generation = UUID()
+        tagSuggestionGeneration = generation
         isLoadingTagSuggestions = true
-        Task {
-            defer { isLoadingTagSuggestions = false }
+        tagSuggestionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.tagSuggestionGeneration == generation {
+                    self.isLoadingTagSuggestions = false
+                    self.tagSuggestionTask = nil
+                }
+            }
 
-            let tagInfos = fetchAllTags().compactMap { tag -> AutoTagService.TagInfo? in
-                guard let id = tag.id, let name = tag.name else { return nil }
-                return AutoTagService.TagInfo(id: id, name: name)
+            let tagSnapshots: [CardFormTagInfoSnapshot]
+            do {
+                tagSnapshots = try await self.persistenceWorker.loadTagInfos(
+                    coordinatorReference: self.coordinatorReference
+                )
+            } catch {
+                guard !(error is CancellationError) else { return }
+                AppLogger.persistence.error("タグ候補の読込みに失敗しました: \(error)")
+                return
+            }
+            let tagInfos = tagSnapshots.map {
+                AutoTagService.TagInfo(id: $0.id, name: $0.name)
             }
             guard !tagInfos.isEmpty else { return }
 
-            let suggested = await autoTagService.suggestTags(cardInfo: cardInfo, tags: tagInfos)
-            suggestedTagIDs = Set(suggested)
+            let suggested = await self.autoTagService.suggestTags(cardInfo: cardInfo, tags: tagInfos)
+            guard !Task.isCancelled,
+                  self.tagSuggestionGeneration == generation,
+                  self.ocrProcessingState.phase != .cancelled,
+                  self.ocrProcessingState.phase != .failed else { return }
+            self.suggestedTagIDs = Set(suggested)
         }
     }
 
-    /// タグ一覧を取得（CardListViewModelに依存しないよう独自フェッチ）
-    private func fetchAllTags() -> [Tag] {
-        let request = Tag.fetchRequest()
-        request.sortDescriptors = [NSSortDescriptor(keyPath: \Tag.sortOrder, ascending: true)]
-        return (try? context.fetch(request)) ?? []
+    /// フォームが閉じた後にタグ提案が状態を書き戻さないよう、View所有の処理を終了する。
+    func cancelTagSuggestions() {
+        tagSuggestionGeneration = UUID()
+        tagSuggestionTask?.cancel()
+        tagSuggestionTask = nil
+        isLoadingTagSuggestions = false
     }
 
     /// AI提案タグを適用する
@@ -268,143 +686,180 @@ class CardFormViewModel: ObservableObject {
 
     /// 全 Tier 共通の分類パイプライン。
     ///
-    /// 1. ルールベース前段処理（classifyStructuredFields）— 全 Tier 共通・1回だけ実行
-    /// 2. 未分類行を LLM バックエンドに送信（Foundation Models / Qwen / なし）
-    /// 3. LLM 結果を OCR テキストで照合バリデーション — 全 Tier 共通
-    /// 4. ルールベース結果と LLM 結果をマージ — 全 Tier 共通
-    private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async {
-        // --- Step 1: ルールベース前段処理（全 Tier 共通） ---
+    /// 1. 全 OCR span から候補と初期割り当てを生成
+    /// 2. 曖昧な span だけを、名刺全体の文脈付きで LLM に照会
+    /// 3. span ID と候補集合で応答を検証し、OCR 原文から値を再構成
+    private func runUnifiedPipeline(lines: [RecognizedLine], llmBackend: LLMBackend) async throws {
+        try Task.checkCancellation()
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
         var result = ruleResult.parsed
-        let ocrTexts = lines.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var assignments = ruleResult.assignments
+        let neededFields = missingSemanticFields(in: ruleResult.parsed)
+        let relevantAmbiguousSpanIDs = ruleResult.ambiguousSpanIDs.filter { spanID in
+            ruleResult.candidates.contains { candidate in
+                candidate.spanIDs.contains(spanID) && neededFields.contains(candidate.field)
+            }
+        }
+        let request = CardFieldResolutionRequest(
+            spans: ruleResult.spans,
+            candidates: ruleResult.candidates,
+            assignments: ruleResult.assignments,
+            ambiguousSpanIDs: relevantAmbiguousSpanIDs
+        )
+        AppLogger.pipeline.info(
+            "項目解析: spans=\(ruleResult.spans.count, privacy: .public) assignments=\(ruleResult.assignments.count, privacy: .public) AI対象=\(relevantAmbiguousSpanIDs.count, privacy: .public)"
+        )
 
-        // 未分類行が空ならルールベース結果のみで完了
-        guard !ruleResult.unclassifiedLines.isEmpty else {
+        // ルール分類後に初めて確定するAI実行有無・入力規模をETAへ反映する。
+        // トークン数は日本語・英数字混在を考慮した文字数ベースの概算で、
+        // 実測時間から学習する端末補正により継続的に補正される。
+        let inputCharacterCount = request.spans.reduce(0) { $0 + $1.text.count }
+        let inputTokenEstimate = max(
+            32,
+            Int(ceil(Double(inputCharacterCount) / 2)) + request.ambiguousSpanIDs.count * 12
+        )
+        let outputTokenEstimate = max(1, request.ambiguousSpanIDs.count * 8)
+        let aiRequired = llmBackend != .none && !request.ambiguousSpanIDs.isEmpty
+        if let state = await OCRProcessingCoordinator.shared.updateAIPlan(
+            jobID: ocrJobID,
+            backend: llmBackend.workloadBackend,
+            required: aiRequired,
+            ambiguousSpanCount: request.ambiguousSpanIDs.count,
+            inputTokenEstimate: inputTokenEstimate,
+            outputTokenEstimate: outputTokenEstimate
+        ) {
+            ocrProcessingState = state
+            OCRBackgroundTaskManager.shared.update(jobID: ocrJobID, state: state)
+        }
+
+        guard !request.ambiguousSpanIDs.isEmpty else {
             AppLogger.pipeline.info("全フィールドがルールベースで解決済み")
-            apply(result)
+            applyResolved(result, spans: ruleResult.spans, assignments: assignments)
             return
         }
 
-        // --- Step 2: LLM バックエンドで未分類行を分類 ---
-        let llmResult: CardFieldClassifier.ParsedCard? = await runLLMBackend(
-            llmBackend,
-            unclassifiedLines: ruleResult.unclassifiedLines,
-            baseParsed: result
-        )
-
-        // --- Step 3: LLM 結果の OCR テキスト照合バリデーション + マージ（全 Tier 共通） ---
-        if let llm = llmResult {
-            if !llm.lastName.isEmpty && result.lastName.isEmpty { result.lastName = llm.lastName }
-            if !llm.firstName.isEmpty && result.firstName.isEmpty { result.firstName = llm.firstName }
-
-            // department/title/company は OCR テキストに存在するか照合（ハルシネーション防止）
-            if !llm.department.isEmpty && result.department.isEmpty {
-                if existsInOCR(llm.department, ocrTexts: ocrTexts) {
-                    result.department = llm.department
-                } else {
-                    AppLogger.pipeline.info("部署ハルシネーション除去: \(llm.department, privacy: .private)")
-                }
-            }
-            if !llm.title.isEmpty && result.title.isEmpty {
-                if existsInOCR(llm.title, ocrTexts: ocrTexts) {
-                    result.title = llm.title
-                } else {
-                    AppLogger.pipeline.info("役職ハルシネーション除去: \(llm.title, privacy: .private)")
-                }
-            }
-            if !llm.company.isEmpty && result.company.isEmpty {
-                if existsInOCR(llm.company, ocrTexts: ocrTexts) {
-                    result.company = llm.company
-                } else {
-                    AppLogger.pipeline.info("会社名ハルシネーション除去: \(llm.company, privacy: .private)")
-                }
-            }
+        if llmBackend != .none {
+            try await setOCRPhase(.aiAssistance)
         }
 
-        apply(result)
+        let decisions = await runLLMBackend(llmBackend, request: request)
+        try Task.checkCancellation()
+
+        let validated = CardFieldResolver().validate(decisions: decisions, request: request)
+        if !validated.isEmpty {
+            assignments.append(contentsOf: validated)
+            merge(validated, into: &result)
+        }
+        applyResolved(result, spans: ruleResult.spans, assignments: assignments)
+    }
+
+    private func missingSemanticFields(
+        in parsed: CardFieldClassifier.ParsedCard
+    ) -> Set<CardFieldKind> {
+        var fields = Set<CardFieldKind>()
+        if parsed.lastName.isEmpty && parsed.firstName.isEmpty { fields.insert(.personName) }
+        if parsed.company.isEmpty { fields.insert(.company) }
+        if parsed.department.isEmpty { fields.insert(.department) }
+        if parsed.title.isEmpty { fields.insert(.title) }
+        return fields
+    }
+
+    private var hasAnyResolvedField: Bool {
+        !lastName.isEmpty || !firstName.isEmpty || !company.isEmpty
+            || !department.isEmpty || !title.isEmpty || !email.isEmpty
+            || phones.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            || !address.isEmpty || !website.isEmpty
     }
 
     /// LLM バックエンドの種別
-    private enum LLMBackend {
+    private enum LLMBackend: Equatable {
         case foundationModels
         case qwen
         case none  // Tier 3: ルールベースのみ
+
+        var workloadBackend: OCRAIWorkloadBackend {
+            switch self {
+            case .foundationModels: .foundationModels
+            case .qwen: .localLLM
+            case .none: .none
+            }
+        }
     }
 
     /// LLM バックエンド固有の推論を実行。ルールベース処理は呼び出し元で完了済み。
     private func runLLMBackend(
         _ backend: LLMBackend,
-        unclassifiedLines: [String],
-        baseParsed: CardFieldClassifier.ParsedCard
-    ) async -> CardFieldClassifier.ParsedCard? {
+        request: CardFieldResolutionRequest
+    ) async -> [CardFieldDecision] {
         switch backend {
         case .foundationModels:
             #if canImport(FoundationModels)
             if #available(iOS 26.0, *) {
-                return await runFoundationModelsLLM(
-                    unclassifiedLines: unclassifiedLines,
-                    baseParsed: baseParsed
-                )
+                return await runFoundationModelsLLM(request: request)
             }
             #endif
-            return nil
+            return []
 
         case .qwen:
-            return await llmService.classifyUnclassifiedLines(unclassifiedLines)
+            return await llmService.resolveFields(request: request)
 
         case .none:
-            return nil
+            return []
         }
     }
 
     #if canImport(FoundationModels)
-    /// Foundation Models 固有の推論（未分類行のみ処理）
+    /// Foundation Models 固有の推論。出力は span ID とフィールドだけに限定する。
     @available(iOS 26.0, *)
     private func runFoundationModelsLLM(
-        unclassifiedLines: [String],
-        baseParsed: CardFieldClassifier.ParsedCard
-    ) async -> CardFieldClassifier.ParsedCard? {
-        let unclassifiedText = unclassifiedLines.joined(separator: "\n")
-        var contextHints: [String] = []
-        if !baseParsed.company.isEmpty { contextHints.append("会社名: \(baseParsed.company)") }
-        if !baseParsed.department.isEmpty { contextHints.append("部署: \(baseParsed.department)") }
-        if !baseParsed.title.isEmpty { contextHints.append("役職: \(baseParsed.title)") }
-        let contextBlock = contextHints.isEmpty ? "" : "\n既に判明している情報:\n\(contextHints.joined(separator: "\n"))\n"
-
+        request: CardFieldResolutionRequest
+    ) async -> [CardFieldDecision] {
+        let spanText = request.spans.sorted { $0.readingOrder < $1.readingOrder }
+            .map { "[\($0.id)] \($0.text)" }
+            .joined(separator: "\n")
+        let candidatesBySpan = Dictionary(grouping: request.candidates) { $0.spanIDs.first ?? "" }
+        let targetText = request.ambiguousSpanIDs.prefix(4).map { id in
+            let allowed = Set(candidatesBySpan[id, default: []].map(\.field.rawValue)).sorted().joined(separator: ",")
+            return "[\(id)] allowed=\(allowed)"
+        }.joined(separator: "\n")
         let session = LanguageModelSession()
         let prompt = """
-            以下は名刺から読み取ったテキストのうち、まだ分類できていない行です。各フィールドに分類してください。
-            姓と名は必ず分けてください。
-            重要: テキストに明記されていない情報は絶対に推測せず、空文字列にしてください。
-            特に部署名・役職はテキストに明記されている場合のみ設定し、推測は禁止です。
-            \(contextBlock)
-            未分類テキスト:
-            \(unclassifiedText)
+            名刺全体を見て、対象 span を許可されたフィールドへ分類してください。
+            span の文字列を生成・修正せず、spanID と field だけを返してください。
+            field は personName, company, department, title のいずれかです。
+
+            名刺全体:
+            \(spanText)
+
+            対象と許可フィールド:
+            \(targetText)
             """
         do {
-            let response = try await session.respond(to: prompt, generating: ParsedCard.self)
-            let p = response.content
-            // Foundation Models の出力を CardFieldClassifier.ParsedCard に変換
-            var llm = CardFieldClassifier.ParsedCard()
-            llm.lastName = p.lastName
-            llm.firstName = p.firstName
-            llm.company = p.company
-            llm.department = p.department
-            llm.title = p.title
-            return llm
+            let response = try await session.respond(to: prompt, generating: GeneratedFieldDecisions.self)
+            return response.content.decisions.compactMap { item in
+                guard let field = CardFieldKind(rawValue: item.field) else { return nil }
+                return CardFieldDecision(spanID: item.spanID, field: field)
+            }
         } catch {
             AppLogger.pipeline.error("Foundation Models 推論エラー: \(error)")
-            return nil
+            return []
         }
     }
     #endif
 
-    /// LLM出力値がOCRテキストに存在するか照合する
-    private func existsInOCR(_ value: String, ocrTexts: [String]) -> Bool {
-        guard !value.isEmpty else { return true }
-        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let joined = ocrTexts.joined(separator: "\n")
-        return joined.contains(v) || ocrTexts.contains { $0.contains(v) || v.contains($0) }
+    private func merge(_ assignments: [FieldAssignment], into result: inout CardFieldClassifier.ParsedCard) {
+        for assignment in assignments {
+            switch assignment.field {
+            case .personName where result.lastName.isEmpty && result.firstName.isEmpty:
+                let split = NameProcessor.splitName(assignment.value)
+                result.lastName = split.lastName
+                result.firstName = split.firstName
+            case .company where result.company.isEmpty: result.company = assignment.value
+            case .department where result.department.isEmpty: result.department = assignment.value
+            case .title where result.title.isEmpty: result.title = assignment.value
+            default: break
+            }
+        }
     }
 
     // MARK: - Tier 別エントリポイント（統一パイプラインへのディスパッチ）
@@ -412,86 +867,115 @@ class CardFormViewModel: ObservableObject {
     #if canImport(FoundationModels)
     // 自動モード: Foundation Models → LocalLLM → Classifier の順にフォールバック
     @available(iOS 26.0, *)
-    private func populateWithFoundationModels(lines: [RecognizedLine]) async {
+    private func populateWithFoundationModels(lines: [RecognizedLine]) async throws {
         switch SystemLanguageModel.default.availability {
         case .available:
-            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
-            await populateWithLocalLLMOrClassifier(lines: lines)
+            try await populateWithLocalLLMOrClassifier(lines: lines)
         }
     }
 
     // 明示指定モード: Apple Intelligence のみ（利用不可の場合はエラー表示 + Classifier）
     @available(iOS 26.0, *)
-    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async {
+    private func populateWithFoundationModelsOnly(lines: [RecognizedLine]) async throws {
         switch SystemLanguageModel.default.availability {
         case .available:
-            await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .foundationModels)
         default:
             ocrErrorMessage = "Apple Intelligence が利用できません（設定を確認してください）。標準読み取りで処理しました。"
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
         }
     }
     #endif
 
     // 明示指定モード: AIアシスト（Qwen）
-    private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async {
+    private func populateWithLocalLLMOnly(lines: [RecognizedLine]) async throws {
         guard llmService.isModelAvailable else {
             ocrErrorMessage = "AIアシストのモデルが未取得です。設定からダウンロードしてください。標準読み取りで処理しました。"
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
+        try await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
     // 自動モード: LocalLLM → Classifier のフォールバック
-    private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async {
+    private func populateWithLocalLLMOrClassifier(lines: [RecognizedLine]) async throws {
         if !llmService.isModelAvailable {
             shouldPromptLLMDownload = true
-            await runUnifiedPipeline(lines: lines, llmBackend: .none)
+            try await runUnifiedPipeline(lines: lines, llmBackend: .none)
             return
         }
-        await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
+        try await runUnifiedPipeline(lines: lines, llmBackend: .qwen)
     }
 
     private func populateWithClassifier(lines: [RecognizedLine]) {
-        // Tier 3: ルールベースのみ（統一パイプラインの llmBackend: .none と同等だが同期版）
         let ruleResult = classifier.classifyStructuredFields(lines: lines)
-        apply(ruleResult.parsed)
+        applyResolved(ruleResult.parsed, spans: ruleResult.spans, assignments: ruleResult.assignments)
     }
 
     /// ParsedCard の内容をフォームフィールドに反映する共通ヘルパー
     private func apply(_ parsed: CardFieldClassifier.ParsedCard) {
-        let lastR: String
-        let firstR: String
-        if !parsed.lastNameReading.isEmpty {
-            // 優先1: フリガナ行（Classifier由来）
-            lastR = parsed.lastNameReading
-            firstR = parsed.firstNameReading.isEmpty
-                ? NameReadingGenerator.generateReading(from: parsed.firstName) : parsed.firstNameReading
-        } else if let emailReading = NameReadingGenerator.inferReadingFromEmail(
-            email: parsed.email, lastName: parsed.lastName, firstName: parsed.firstName
-        ) {
-            // 優先2: メールアドレス由来
-            lastR = emailReading.lastNameReading
-            firstR = emailReading.firstNameReading
-        } else {
-            // 優先3: CFStringTokenizer
-            lastR = NameReadingGenerator.generateReading(from: parsed.lastName)
-            firstR = NameReadingGenerator.generateReading(from: parsed.firstName)
-        }
-        // 会社名読みは法人格を除いた読みで保存する（OCR/LLM由来でも除去する）
-        let companyR: String = {
-            let raw = parsed.companyReading.isEmpty
-                ? NameReadingGenerator.generateReading(from: parsed.company)
-                : parsed.companyReading
-            return BusinessCard.stripLegalEntityReading(from: raw)
-        }()
-        apply(lastName: parsed.lastName, lastNameReading: Self.sanitizeReading(lastR),
-              firstName: parsed.firstName, firstNameReading: Self.sanitizeReading(firstR),
-              company: parsed.company, companyReading: companyR,
+        apply(lastName: parsed.lastName, lastNameReading: Self.sanitizeReading(parsed.lastNameReading),
+              firstName: parsed.firstName, firstNameReading: Self.sanitizeReading(parsed.firstNameReading),
+              company: parsed.company, companyReading: BusinessCard.stripLegalEntityReading(from: parsed.companyReading),
               department: parsed.department, title: parsed.title, phones: parsed.phones,
               email: parsed.email, address: parsed.address, website: parsed.website)
+    }
+
+    private func applyResolved(
+        _ parsed: CardFieldClassifier.ParsedCard,
+        spans: [CardTextSpan],
+        assignments: [FieldAssignment]
+    ) {
+        var correctedParsed = parsed
+        if let corrected = NameReadingGenerator.correctedNameSplitUsingEmail(
+            lastName: parsed.lastName,
+            firstName: parsed.firstName,
+            email: parsed.email
+        ) {
+            correctedParsed.lastName = corrected.lastName
+            correctedParsed.firstName = corrected.firstName
+        }
+        let resolution = NameReadingGenerator.resolveReadings(
+            parsed: correctedParsed,
+            spans: spans,
+            assignments: assignments
+        )
+        readingCandidates = resolution.candidates
+        var resolved = correctedParsed
+        resolved.lastNameReading = editedReadingTargets.contains(.lastName)
+            ? lastNameReading
+            : resolution.automaticValues[.lastName] ?? ""
+        resolved.firstNameReading = editedReadingTargets.contains(.firstName)
+            ? firstNameReading
+            : resolution.automaticValues[.firstName] ?? ""
+        resolved.companyReading = editedReadingTargets.contains(.company)
+            ? companyReading
+            : resolution.automaticValues[.company] ?? ""
+        isApplyingReadingResolution = true
+        apply(resolved)
+        isApplyingReadingResolution = false
+    }
+
+    func readingCandidates(for target: ReadingTarget) -> [ReadingCandidate] {
+        Array(readingCandidates.filter { $0.target == target }.prefix(3))
+    }
+
+    func selectReadingCandidate(_ candidate: ReadingCandidate) {
+        isApplyingReadingResolution = true
+        switch candidate.target {
+        case .lastName: lastNameReading = candidate.reading
+        case .firstName: firstNameReading = candidate.reading
+        case .company: companyReading = candidate.reading
+        }
+        isApplyingReadingResolution = false
+        editedReadingTargets.insert(candidate.target)
+    }
+
+    private func markReadingEdited(_ target: ReadingTarget) {
+        guard !isApplyingReadingResolution else { return }
+        editedReadingTargets.insert(target)
     }
 
     private static func sanitizeReading(_ reading: String) -> String {
@@ -524,77 +1008,90 @@ class CardFormViewModel: ObservableObject {
 
     // MARK: - 保存
 
-    func save() {
-        let target = card ?? {
-            let newCard = BusinessCard(context: context)
-            newCard.id = UUID()
-            newCard.createdAt = Date()
-            return newCard
-        }()
-
-        target.lastName        = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.lastNameReading = lastNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstName       = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.firstNameReading = firstNameReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.company        = company.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 会社名読み：空なら自動生成、いずれの場合も法人格を除去して保存
-        let companyReadingRaw = companyReading.trimmingCharacters(in: .whitespacesAndNewlines)
-        let companyReadingFinal: String = {
-            let raw = companyReadingRaw.isEmpty
-                ? NameReadingGenerator.generateReading(from: company.trimmingCharacters(in: .whitespacesAndNewlines))
-                : companyReadingRaw
-            return BusinessCard.stripLegalEntityReading(from: raw)
-        }()
-        target.companyReading = companyReadingFinal
-        target.department = department.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.title      = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.email     = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.phone     = phones
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        target.address   = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.website   = website.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.notes     = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        target.imageData = capturedImageData
-        target.updatedAt = Date()
-
-        // タグのリレーションを更新
-        let tagRequest = Tag.fetchRequest()
-        if let allTags = try? context.fetch(tagRequest) {
-            // 既存のタグをすべて外す
-            if let currentTags = target.tags as? Set<Tag> {
-                for tag in currentTags {
-                    target.removeFromTags(tag)
-                }
-            }
-            // 選択されたタグを紐づけ
-            for tag in allTags where selectedTags.contains(tag.id ?? UUID()) {
-                target.addToTags(tag)
-            }
+    func save() async throws {
+        saveErrorMessage = nil
+        guard !isSaving else {
+            throw CardFormPersistenceError.saveAlreadyInProgress
         }
+        if isEditing, editGeneration == nil {
+            let error = CardFormPersistenceError.invalidObjectReference
+            saveErrorMessage = error.localizedDescription
+            throw error
+        }
+
+        isSaving = true
+        defer { isSaving = false }
+
+        let trimmed: (String) -> String = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let imageUpdate: CardFormImageUpdate = isEditing && !didChangeCapturedImage
+            ? .preserveExisting
+            : .replace(capturedImageData)
+        let payload = CardFormSavePayload(
+            lastName: trimmed(lastName),
+            lastNameReading: trimmed(lastNameReading),
+            firstName: trimmed(firstName),
+            firstNameReading: trimmed(firstNameReading),
+            company: trimmed(company),
+            // 空欄は「読みを確定できない」という有効な状態。保存直前には再生成しない。
+            companyReading: BusinessCard.stripLegalEntityReading(from: trimmed(companyReading)),
+            department: trimmed(department),
+            title: trimmed(title),
+            email: trimmed(email),
+            phone: phones.map(trimmed).filter { !$0.isEmpty }.joined(separator: "\n"),
+            address: trimmed(address),
+            website: trimmed(website),
+            notes: trimmed(notes),
+            imageUpdate: imageUpdate,
+            selectedTagIDs: selectedTags
+        )
 
         do {
-            try context.save()
+            let result = try await persistenceWorker.save(
+                payload: payload,
+                editing: editGeneration,
+                coordinatorReference: coordinatorReference
+            )
+            mergeSaveResultIntoViewContext(result)
+            editGeneration = result.generation
+            didChangeCapturedImage = false
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            saveErrorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "名刺を保存できませんでした。入力内容を確認して、もう一度お試しください。"
             AppLogger.persistence.error("名刺の保存に失敗しました: \(error)")
+            throw error
         }
+    }
+
+    private func mergeSaveResultIntoViewContext(_ result: CardFormSaveResult) {
+        guard let objectID = coordinatorReference.coordinator.managedObjectID(
+            forURIRepresentation: result.generation.objectURI
+        ) else { return }
+        let key = result.changeKind == .inserted
+            ? NSInsertedObjectIDsKey
+            : NSUpdatedObjectIDsKey
+        NSManagedObjectContext.mergeChanges(
+            fromRemoteContextSave: [key: [objectID]],
+            into: [context]
+        )
     }
 }
 
-// MARK: - ParsedCard（Foundation Models @Generable 定義）
+// MARK: - Foundation Models 構造化出力
 #if canImport(FoundationModels)
 @available(iOS 26.0, *)
 @Generable
-struct ParsedCard {
-    @Guide(description: "姓（ファミリーネーム）。該当なしなら空文字列「」を返す")      var lastName: String
-    @Guide(description: "名（ファーストネーム）。該当なしなら空文字列「」を返す")      var firstName: String
-    @Guide(description: "会社名。該当なしなら空文字列「」を返す")                      var company: String
-    @Guide(description: "部署名。該当なしなら空文字列「」を返す")                      var department: String
-    @Guide(description: "役職。該当なしなら空文字列「」を返す")                        var title: String
-    @Guide(description: "電話番号。該当なしなら空文字列「」を返す")                    var phone: String
-    @Guide(description: "メールアドレス。該当なしなら空文字列「」を返す")              var email: String
-    @Guide(description: "住所。該当なしなら空文字列「」を返す")                        var address: String
-    @Guide(description: "WebサイトURL。該当なしなら空文字列「」を返す")               var website: String
+struct GeneratedFieldDecision {
+    @Guide(description: "入力にある span ID") var spanID: String
+    @Guide(description: "personName, company, department, title のいずれか") var field: String
+}
+
+@available(iOS 26.0, *)
+@Generable
+struct GeneratedFieldDecisions {
+    @Guide(description: "曖昧な span の分類結果") var decisions: [GeneratedFieldDecision]
 }
 #endif

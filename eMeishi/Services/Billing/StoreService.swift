@@ -3,6 +3,11 @@ import StoreKit
 @MainActor
 final class StoreService {
 
+    enum PurchaseRestoreResult: Sendable {
+        case restored
+        case nothingToRestore
+    }
+
     static let shared = StoreService()
 
     private var transactionListener: Task<Void, Error>?
@@ -61,8 +66,9 @@ final class StoreService {
 
     // MARK: - 復元
 
-    func restorePurchases() async {
-        try? await AppStore.sync()
+    func restorePurchases() async throws -> PurchaseRestoreResult {
+        try await AppStore.sync()
         await EntitlementStore.shared.refresh()
+        return EntitlementStore.shared.hasPro ? .restored : .nothingToRestore
     }
 }

@@ -2,14 +2,14 @@ import Testing
 import CoreData
 @testable import eMeishi
 
-// MARK: - マージロジック テスト（DuplicateMergeView.merge() の CoreData 相当）
+// MARK: - マージロジック テスト
 
 @MainActor
 struct MergeLogicTests {
 
     let context = makeTestContext()
 
-    /// DuplicateMergeView.merge() と同等のロジックを実行するヘルパー
+    /// 本番のDuplicateMergeServiceを選択しやすいBool指定で呼ぶヘルパー。
     @discardableResult
     private func performMerge(
         cardA: BusinessCard,
@@ -24,31 +24,22 @@ struct MergeLogicTests {
         websiteChoice:    Bool = true,
         notesChoice:      Bool = true
     ) -> BusinessCard {
-        guard !cardB.isDeleted, cardB.managedObjectContext != nil else { return cardA }
-
-        if !nameChoice {
-            cardA.lastName         = cardB.lastName         ?? ""
-            cardA.lastNameReading  = cardB.lastNameReading  ?? ""
-            cardA.firstName        = cardB.firstName        ?? ""
-            cardA.firstNameReading = cardB.firstNameReading ?? ""
-        }
-        cardA.company    = companyChoice    ? (cardA.company    ?? "") : (cardB.company    ?? "")
-        cardA.department = departmentChoice ? (cardA.department ?? "") : (cardB.department ?? "")
-        cardA.title      = titleChoice      ? (cardA.title      ?? "") : (cardB.title      ?? "")
-        cardA.phone      = phoneChoice      ? (cardA.phone      ?? "") : (cardB.phone      ?? "")
-        cardA.email      = emailChoice      ? (cardA.email      ?? "") : (cardB.email      ?? "")
-        cardA.address    = addressChoice    ? (cardA.address    ?? "") : (cardB.address    ?? "")
-        cardA.website    = websiteChoice    ? (cardA.website    ?? "") : (cardB.website    ?? "")
-        cardA.notes      = notesChoice      ? (cardA.notes      ?? "") : (cardB.notes      ?? "")
-        if cardA.imageData == nil { cardA.imageData = cardB.imageData }
-
-        if let bTags = cardB.tags as? Set<eMeishi.Tag> {
-            for tag in bTags { cardA.addToTags(tag) }
-        }
-
-        cardA.updatedAt = Date()
-        context.delete(cardB)
-        // テストヘルパーでは save しない（save 後は isDeleted が false にリセットされるため）
+        var selection = DuplicateMergeSelection()
+        selection.name = nameChoice ? .a : .b
+        selection.company = companyChoice ? .a : .b
+        selection.department = departmentChoice ? .a : .b
+        selection.title = titleChoice ? .a : .b
+        selection.phone = phoneChoice ? .a : .b
+        selection.email = emailChoice ? .a : .b
+        selection.address = addressChoice ? .a : .b
+        selection.website = websiteChoice ? .a : .b
+        selection.notes = notesChoice ? .a : .b
+        try? DuplicateMergeService.apply(
+            cardA: cardA,
+            cardB: cardB,
+            selection: selection,
+            in: context
+        )
         return cardA
     }
 
@@ -71,6 +62,18 @@ struct MergeLogicTests {
         let b = makeCard(context: context, department: "開発部")
         performMerge(cardA: a, cardB: b, departmentChoice: false)
         #expect(a.department == "開発部")
+    }
+
+    @Test func mergeCompanyChoiceBAlsoTransfersReading() {
+        let a = makeCard(context: context, company: "旧会社")
+        a.companyReading = "きゅうがいしゃ"
+        let b = makeCard(context: context, company: "ABC商事")
+        b.companyReading = "えーびーしーしょうじ"
+
+        performMerge(cardA: a, cardB: b, companyChoice: false)
+
+        #expect(a.company == "ABC商事")
+        #expect(a.companyReading == "えーびーしーしょうじ")
     }
 
     @Test func mergeDepartmentChoiceA() {

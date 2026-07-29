@@ -1,67 +1,119 @@
 import SwiftUI
 import CoreData
-import FoundationModels
+
+@MainActor
+private enum SettingsDateFormatters {
+    static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    static let absolute: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+nonisolated enum SettingsAlertDestination: Equatable, Sendable {
+    case restartRequired
+    case purchaseRestore(message: String)
+}
+
+nonisolated enum SettingsPresentation: Equatable, Sendable {
+    case deleteAllConfirmation
+    case seedConfirmation
+    case paywall
+    case alert(SettingsAlertDestination)
+}
+
+nonisolated private enum SettingsConfirmationCommit: Equatable, Sendable {
+    case deleteAllCards
+    case seedSampleData
+}
+
+nonisolated private enum SettingsRestoreOutcome: Sendable {
+    case restored
+    case nothingToRestore
+    case failed
+}
 
 // 設定画面
 struct SettingsView: View {
 
     @EnvironmentObject private var listViewModel: CardListViewModel
     @EnvironmentObject private var entitlementStore: EntitlementStore
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var settings = SettingsStore.shared
-
-    @Environment(\.dismiss) private var dismiss
 
     @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
 
-    @State private var showDeleteAllConfirm = false
     @State private var modelError: String? = nil
     @State private var isTogglingLock = false
-    @State private var isShowingPaywall = false
+    @State private var isRestoringPurchases = false
+    @State private var lockTask: Task<Void, Never>?
+    @State private var lockTaskGate = SecondaryViewTaskGate()
+    @State private var purchaseRestoreTask: Task<Void, Never>?
+    @State private var purchaseRestoreTaskGate = SecondaryViewTaskGate()
+    @State private var biometricType: AuthenticationService.BiometricType = .none
+    @State private var presentationState = QueuedPresentationState<SettingsPresentation>()
+    @State private var confirmationCommitState = DismissalCommitState<SettingsConfirmationCommit>()
+    @AppStorage("cloudKitContainerUnavailable")
+    private var cloudKitContainerUnavailable = false
 #if DEBUG
-    @State private var showSeedConfirm = false
+    @AppStorage(OCRProcessingCoordinator.debugDelayDefaultsKey)
+    private var ocrDebugPhaseDelaySeconds = 0.0
 #endif
 
     var body: some View {
-        NavigationStack {
-            List {
-                proSection
-                iCloudSection
-                securitySection
-                advancedLinkSection
-                dataSection
+        List {
+            proSection
+            iCloudSection
+            securitySection
+            advancedLinkSection
+            dataSection
 #if DEBUG
-                debugSection
+            debugSection
 #endif
-                appInfoSection
-            }
-            .navigationTitle("設定")
-            .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("すべての名刺を削除しますか？", isPresented: $showDeleteAllConfirm, titleVisibility: .visible) {
-                Button("すべて削除", role: .destructive) { listViewModel.deleteAllCards() }
-            } message: {
-                Text("この操作は取り消せません。")
-            }
-#if DEBUG
-            .confirmationDialog("サンプル名刺を50件追加しますか？", isPresented: $showSeedConfirm, titleVisibility: .visible) {
-                Button("挿入") { listViewModel.seedSampleData() }
-            } message: {
-                Text("既存のデータは削除されません。")
-            }
-#endif
-            .sheet(isPresented: $isShowingPaywall) {
-                PaywallView(context: .aiSearch)
-                    .environmentObject(entitlementStore)
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                }
-            }
+            appInfoSection
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle("設定")
+        .navigationBarTitleDisplayMode(.large)
+        .confirmationDialog(
+            settingsConfirmationTitle,
+            isPresented: settingsConfirmationBinding,
+            titleVisibility: .visible
+        ) {
+            settingsConfirmationActions
+        } message: {
+            Text(settingsConfirmationMessage)
+        }
+        .sheet(item: paywallPresentationBinding, onDismiss: {
+            completeSheetDismissal()
+        }) { _ in
+            PaywallView(context: .general)
+                .environmentObject(entitlementStore)
+        }
+        .alert(item: settingsAlertBinding, content: settingsAlert)
+        .background {
+            PresentationDismissalObserver(
+                activeID: activeNonSheetRequestID,
+                dismissingID: dismissingNonSheetRequestID,
+                onDismissalCompleted: completeNonSheetPresentationDismissal
+            )
+            .frame(width: 0, height: 0)
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            biometricType = AuthenticationService.shared.refreshAvailableBiometricType()
+        }
+        .onDisappear(perform: cancelViewOwnedTasks)
     }
 
     // MARK: - Pro
@@ -77,16 +129,18 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .font(.subheadline)
                 Button("Pro の新機能を見る") {
-                    isShowingPaywall = true
+                    presentationState.request(.paywall)
                 }
             } else {
                 Button("eMeishi Pro にアップグレード") {
-                    isShowingPaywall = true
+                    presentationState.request(.paywall)
                 }
                 .fontWeight(.semibold)
+                .disabled(isRestoringPurchases)
                 Button("購入を復元") {
-                    Task { await StoreService.shared.restorePurchases() }
+                    startPurchaseRestore()
                 }
+                .disabled(isRestoringPurchases)
                 .foregroundStyle(.secondary)
             }
         }
@@ -94,43 +148,37 @@ struct SettingsView: View {
 
     // MARK: - iCloud 同期
 
-    @State private var showRestartAlert = false
-
     private var iCloudSection: some View {
-        let cloudKitFailed = UserDefaults.standard.bool(forKey: "cloudKitContainerUnavailable")
-
-        return Section {
-            Toggle(isOn: $settings.iCloudSyncEnabled) {
-                Label("iCloud同期", systemImage: "icloud")
-            }
-            .onChange(of: settings.iCloudSyncEnabled) {
-                showRestartAlert = true
+        Section {
+            Toggle(isOn: iCloudSyncBinding) {
+                SettingsStateLabel(
+                    title: "iCloud同期",
+                    detail: iCloudStatusText(cloudKitFailed: cloudKitContainerUnavailable),
+                    systemImage: cloudKitContainerUnavailable ? "exclamationmark.icloud" : "icloud"
+                )
             }
             // cloudKitContainerUnavailable フラグが立っている場合は警告を表示
-            if settings.iCloudSyncEnabled && cloudKitFailed {
+            if settings.iCloudSyncEnabled && cloudKitContainerUnavailable {
                 Label("iCloudに接続できません。iCloudにサインインしているか確認してください。", systemImage: "exclamationmark.icloud")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            if PersistenceController.shared.iCloudSyncEnabled && !cloudKitFailed {
+            if PersistenceController.shared.iCloudSyncEnabled && !cloudKitContainerUnavailable {
                 if syncMonitor.isSyncing {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         Text("同期中...").foregroundStyle(.secondary)
                     }
-                } else {
-                    Button {
-                        syncMonitor.triggerSync()
-                    } label: {
-                        Label("今すぐ同期", systemImage: "arrow.triangle.2.circlepath.icloud")
-                    }
-                }
-                if let date = syncMonitor.lastSyncDate {
-                    LabeledContent("最終同期", value: lastSyncText(date))
                 } else if syncMonitor.lastSyncFailed {
-                    Label("同期に失敗しました", systemImage: "exclamationmark.icloud")
+                    Label("直前の同期に失敗しました", systemImage: "exclamationmark.icloud")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                } else {
+                    Label("自動同期は有効です", systemImage: "checkmark.icloud")
+                        .foregroundStyle(.secondary)
+                }
+                if let date = syncMonitor.lastSyncDate {
+                    LabeledContent("最終成功", value: lastSyncText(date))
                 }
             }
         } header: {
@@ -142,29 +190,18 @@ struct SettingsView: View {
                 Text("有効にすると、名刺データがあなたのiCloudに保存され、同じApple IDのデバイス間で同期されます。データは開発者を含む第三者からアクセスできません。")
             }
         }
-        .alert("アプリの再起動が必要です", isPresented: $showRestartAlert) {
-            Button("OK") {}
-        } message: {
-            Text("iCloud同期の設定変更はアプリを再起動すると反映されます。")
-        }
     }
 
     private func lastSyncText(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.unitsStyle = .full
-        let interval = Date().timeIntervalSince(date)
+        let now = Date()
+        let interval = now.timeIntervalSince(date)
         if interval < 60 {
             return "たった今"
         }
         if interval < 86400 {
-            return formatter.localizedString(for: date, relativeTo: Date())
+            return SettingsDateFormatters.relative.localizedString(for: date, relativeTo: now)
         }
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "ja_JP")
-        df.dateStyle = .short
-        df.timeStyle = .short
-        return df.string(from: date)
+        return SettingsDateFormatters.absolute.string(from: date)
     }
 
     // MARK: - 高度な設定（リンク）
@@ -174,7 +211,11 @@ struct SettingsView: View {
             NavigationLink {
                 AdvancedSettingsView(modelError: $modelError)
             } label: {
-                Label("高度な設定", systemImage: "gearshape.2")
+                SettingsStateLabel(
+                    title: "高度な設定",
+                    detail: "読み取り・AIモデル・書き出し",
+                    systemImage: "gearshape.2"
+                )
             }
         }
     }
@@ -184,7 +225,11 @@ struct SettingsView: View {
     private var securitySection: some View {
         Section {
             Toggle(isOn: appLockBinding) {
-                Label(appLockLabel, systemImage: appLockIcon)
+                SettingsStateLabel(
+                    title: appLockLabel,
+                    detail: settings.isAppLockEnabled ? "有効" : "無効",
+                    systemImage: appLockIcon
+                )
             }
             .disabled(isTogglingLock || biometricType == .none)
 
@@ -205,10 +250,6 @@ struct SettingsView: View {
                 Text("有効にすると、アプリを開くときに\(biometricDisplayName)での認証が必要になります。")
             }
         }
-    }
-
-    private var biometricType: AuthenticationService.BiometricType {
-        AuthenticationService.shared.availableBiometricType()
     }
 
     private var biometricDisplayName: String {
@@ -235,23 +276,114 @@ struct SettingsView: View {
         }
     }
 
+    private func iCloudStatusText(cloudKitFailed: Bool) -> String {
+        guard settings.iCloudSyncEnabled else { return "無効" }
+        if cloudKitFailed { return "接続を確認してください" }
+        if syncMonitor.isSyncing { return "同期中" }
+        return "有効"
+    }
+
+    /// 画面背後の設定値が CloudKit リセット等で更新された場合は通知せず、
+    /// ユーザーがこの Toggle を操作した場合だけ再起動案内を提示する。
+    private var iCloudSyncBinding: Binding<Bool> {
+        Binding(
+            get: { settings.iCloudSyncEnabled },
+            set: { newValue in
+                guard settings.iCloudSyncEnabled != newValue else { return }
+                settings.iCloudSyncEnabled = newValue
+                presentationState.request(.alert(.restartRequired))
+            }
+        )
+    }
+
     private var appLockBinding: Binding<Bool> {
         Binding(
             get: { settings.isAppLockEnabled },
             set: { newValue in
-                isTogglingLock = true
-                Task {
-                    let reason = newValue
-                        ? "アプリロックを有効にするために認証してください"
-                        : "アプリロックを無効にするために認証してください"
-                    let success = await AuthenticationService.shared.authenticate(reason: reason)
-                    if success {
-                        settings.isAppLockEnabled = newValue
-                    }
-                    isTogglingLock = false
-                }
+                startLockToggle(newValue: newValue)
             }
         )
+    }
+
+    private func startPurchaseRestore() {
+        guard let operationID = purchaseRestoreTaskGate.begin() else { return }
+        isRestoringPurchases = true
+        purchaseRestoreTask = Task { @MainActor in
+            let outcome: SettingsRestoreOutcome
+            do {
+                switch try await StoreService.shared.restorePurchases() {
+                case .restored:
+                    outcome = .restored
+                case .nothingToRestore:
+                    outcome = .nothingToRestore
+                }
+            } catch {
+                outcome = .failed
+            }
+
+            guard !Task.isCancelled,
+                  purchaseRestoreTaskGate.finish(operationID) else { return }
+            purchaseRestoreTask = nil
+            isRestoringPurchases = false
+
+            switch outcome {
+            case .restored:
+                presentationState.request(
+                    .alert(.purchaseRestore(message: "購入情報を復元しました。"))
+                )
+            case .nothingToRestore:
+                presentationState.request(
+                    .alert(.purchaseRestore(message: "復元できる購入が見つかりませんでした。"))
+                )
+            case .failed:
+                presentationState.request(
+                    .alert(.purchaseRestore(
+                        message: "購入情報を復元できませんでした。通信状態を確認して、もう一度お試しください。"
+                    ))
+                )
+            }
+        }
+    }
+
+    private func startLockToggle(newValue: Bool) {
+        guard let operationID = lockTaskGate.begin() else { return }
+        isTogglingLock = true
+        let reason = newValue
+            ? "アプリロックを有効にするために認証してください"
+            : "アプリロックを無効にするために認証してください"
+
+        lockTask = Task { @MainActor in
+            let success = await AuthenticationService.shared.authenticate(reason: reason)
+            guard !Task.isCancelled,
+                  lockTaskGate.finish(operationID) else { return }
+            lockTask = nil
+            isTogglingLock = false
+            if success {
+                settings.isAppLockEnabled = newValue
+            }
+        }
+    }
+
+    private func cancelViewOwnedTasks() {
+        purchaseRestoreTaskGate.cancel()
+        purchaseRestoreTask?.cancel()
+        purchaseRestoreTask = nil
+        isRestoringPurchases = false
+
+        lockTaskGate.cancel()
+        lockTask?.cancel()
+        lockTask = nil
+        isTogglingLock = false
+
+#if DEBUG
+        uploadTaskGate.cancel()
+        uploadTask?.cancel()
+        uploadTask = nil
+        isUploading = false
+#endif
+
+        confirmationCommitState.removeAll()
+        presentationState.removeAll()
     }
 
     // MARK: - データ管理
@@ -259,10 +391,11 @@ struct SettingsView: View {
     private var dataSection: some View {
         Section("データ管理") {
             Button(role: .destructive) {
-                showDeleteAllConfirm = true
+                presentationState.request(.deleteAllConfirmation)
             } label: {
                 Label("すべての名刺を削除", systemImage: "trash")
             }
+            .disabled(isRestoringPurchases)
             if let err = listViewModel.errorMessage {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
@@ -274,23 +407,28 @@ struct SettingsView: View {
 #if DEBUG
     @State private var ckUploadStatus: String = ""
     @State private var isUploading = false
+    @State private var uploadTask: Task<Void, Never>?
+    @State private var uploadTaskGate = SecondaryViewTaskGate()
 
     private var debugSection: some View {
         Section("開発者向け") {
+            Picker("OCRテスト速度", selection: $ocrDebugPhaseDelaySeconds) {
+                Text("通常").tag(0.0)
+                Text("低速（各段階3秒）").tag(3.0)
+                Text("非常に低速（各段階10秒）").tag(10.0)
+            }
+            Text("進捗・残り時間・バックグラウンド表示の確認用です。実測時間の学習には人工遅延を含めません。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Button {
-                showSeedConfirm = true
+                presentationState.request(.seedConfirmation)
             } label: {
                 Label("サンプルデータを50件挿入", systemImage: "doc.badge.plus")
             }
+            .disabled(isRestoringPurchases)
             Button {
-                isUploading = true
-                ckUploadStatus = "アップロード中..."
-                Task {
-                    await CloudKitModelUploader.uploadCorrectModels { status in
-                        ckUploadStatus = status
-                        if !status.contains("中") { isUploading = false }
-                    }
-                }
+                startDebugModelUpload()
             } label: {
                 Label("CloudKit モデルを正しいバージョンに更新", systemImage: "icloud.and.arrow.up")
             }
@@ -300,17 +438,43 @@ struct SettingsView: View {
             }
         }
     }
+
+    /// デバッグ専用アップロードは画面所有の操作として扱い、画面終了時に取消す。
+    /// status callbackにも操作IDを要求し、取消後の表示更新を拒否する。
+    private func startDebugModelUpload() {
+        guard let operationID = uploadTaskGate.begin() else { return }
+        isUploading = true
+        ckUploadStatus = "アップロード中..."
+        uploadTask = Task { @MainActor in
+            await CloudKitModelUploader.uploadCorrectModels { status in
+                guard uploadTaskGate.accepts(operationID) else { return }
+                ckUploadStatus = status
+            }
+            guard !Task.isCancelled,
+                  uploadTaskGate.finish(operationID) else { return }
+            uploadTask = nil
+            isUploading = false
+        }
+    }
 #endif
 
     // MARK: - アプリ情報
 
     private var appInfoSection: some View {
         Section("アプリ情報") {
-            Link(destination: URL(string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html")!) {
-                Label("プライバシーポリシー", systemImage: "hand.raised")
+            if let privacyURL = URL(
+                string: "https://hannaheptapod.github.io/meishi-app/privacy-policy.html"
+            ) {
+                Link(destination: privacyURL) {
+                    Label("プライバシーポリシー", systemImage: "hand.raised")
+                }
             }
-            Link(destination: URL(string: "https://hannaheptapod.github.io/meishi-app/support.html")!) {
-                Label("サポート", systemImage: "questionmark.circle")
+            if let supportURL = URL(
+                string: "https://hannaheptapod.github.io/meishi-app/support.html"
+            ) {
+                Link(destination: supportURL) {
+                    Label("サポート", systemImage: "questionmark.circle")
+                }
             }
             LabeledContent("バージョン", value: appVersion)
         }
@@ -320,254 +484,206 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
 
-}
-
-// MARK: - 高度な設定画面
-
-private struct AdvancedSettingsView: View {
-
-    @ObservedObject private var settings = SettingsStore.shared
-    @ObservedObject private var llm = LocalLLMService.shared
-    @ObservedObject private var zoneReset = CloudKitZoneResetService.shared
-    @Binding var modelError: String?
-    @State private var showDeleteModelConfirm = false
-    @State private var showZoneResetConfirm = false
-    @State private var showZoneResetResult = false
-    @State private var zoneResetSucceeded = false
-
-    var body: some View {
-        List {
-            // AIエンジン
-            Section {
-                readingMethodRow(.automatic, icon: "wand.and.sparkles") {
-                    EmptyView()
-                }
-
-                if #available(iOS 18.0, *) {
-                    readingMethodRow(.appleIntelligence, icon: "apple.intelligence") {
-                        appleIntelligenceStatusText
-                    }
-                } else {
-                    readingMethodRow(.appleIntelligence, icon: "brain") {
-                        Text("非対応").foregroundStyle(.secondary)
-                    }
-                }
-
-                aiAssistRow
-
-                if let err = modelError {
-                    Text(err).font(.caption).foregroundStyle(.red)
-                }
-            } header: {
-                Text("AIエンジン")
-            } footer: {
-                Text("名刺の分析やAI検索に使用するエンジンを選択します。「自動」は利用できる最高精度のエンジンを使用します。")
+    private var settingsConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { activeSettingsConfirmation != nil },
+            set: { isPresented in
+                guard !isPresented, activeSettingsConfirmation != nil else { return }
+                finishActivePresentation()
             }
+        )
+    }
 
-            // 重複検出
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("検出感度")
-                        Spacer()
-                        Text(thresholdLabel).foregroundStyle(.secondary)
-                    }
-                    Slider(value: $settings.duplicateThreshold, in: 0.5...1.0, step: 0.05)
-                        .accessibilityLabel("重複検出感度")
-                        .accessibilityValue(thresholdLabel)
-                }
-            } header: {
-                Text("重複チェック")
-            } footer: {
-                Text("「低」にするほど名前が少し違っていても重複として検出します。「高」にするほど完全一致に近い場合のみ検出します。")
-            }
-
-            // 書き出し
-            Section {
-                Toggle("Excelで開けるCSV形式にする", isOn: $settings.csvIncludesBOM)
-                Picker("連絡先ファイルの形式", selection: $settings.vCardVersion) {
-                    Text("vCard 3.0（標準）").tag("3.0")
-                    Text("vCard 4.0").tag("4.0")
-                }
-            } header: {
-                Text("書き出し")
-            }
-
-            // iCloud 同期のトラブルシューティング
-            Section {
-                Button(role: .destructive) {
-                    showZoneResetConfirm = true
-                } label: {
-                    if zoneReset.isResetting {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("リセット中...").foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Label("iCloud同期をリセット", systemImage: "arrow.counterclockwise.icloud")
-                    }
-                }
-                .disabled(zoneReset.isResetting)
-                if let err = zoneReset.lastError {
-                    Text(err).font(.caption).foregroundStyle(.red)
-                }
-            } header: {
-                Text("iCloud")
-            } footer: {
-                Text("同期の不具合が続く場合のみ使用してください。iCloud上の名刺データを削除します。この端末のローカルデータは残ります。他のデバイスでiCloud同期を有効にしていると、そちらのクラウド側データも影響を受けます。")
-            }
-        }
-        .navigationTitle("高度な設定")
-        .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("AIデータを削除しますか？", isPresented: $showDeleteModelConfirm, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                do {
-                    try llm.deleteModel()
-                } catch {
-                    modelError = error.localizedDescription
-                }
-            }
-        } message: {
-            Text("削除すると自動モードに切り替わります。再ダウンロードはいつでも可能です。")
-        }
-        .confirmationDialog(
-            "iCloud同期をリセットしますか？",
-            isPresented: $showZoneResetConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("リセット", role: .destructive) {
-                Task {
-                    let ok = await zoneReset.resetCoreDataZone()
-                    zoneResetSucceeded = ok
-                    if ok { settings.iCloudSyncEnabled = false }
-                    showZoneResetResult = true
-                }
-            }
-        } message: {
-            Text("この操作は取り消せません。実行後はアプリを再起動する必要があります。")
-        }
-        .alert(
-            zoneResetSucceeded ? "リセットしました" : "リセットに失敗しました",
-            isPresented: $showZoneResetResult
-        ) {
-            Button("OK") {}
-        } message: {
-            if zoneResetSucceeded {
-                Text("iCloud上のデータを削除しました。アプリを再起動してからiCloud同期を有効にすると、ローカルのデータがクラウドに再アップロードされます。")
-            } else {
-                Text(zoneReset.lastError ?? "時間をおいて再度お試しください。")
-            }
+    private var activeSettingsConfirmation: SettingsPresentation? {
+        guard let destination = presentationState.active?.destination else { return nil }
+        switch destination {
+        case .deleteAllConfirmation, .seedConfirmation:
+            return destination
+        case .paywall, .alert:
+            return nil
         }
     }
 
-    // MARK: - 読み取り方法行
+    private var settingsConfirmationTitle: String {
+        switch activeSettingsConfirmation {
+        case .deleteAllConfirmation:
+            return "すべての名刺を削除しますか？"
+        case .seedConfirmation:
+            return "サンプル名刺を50件追加しますか？"
+        case .paywall, .alert, nil:
+            return ""
+        }
+    }
+
+    private var settingsConfirmationMessage: String {
+        switch activeSettingsConfirmation {
+        case .deleteAllConfirmation:
+            return "この操作は取り消せません。"
+        case .seedConfirmation:
+            return "既存のデータは削除されません。"
+        case .paywall, .alert, nil:
+            return ""
+        }
+    }
 
     @ViewBuilder
-    private func readingMethodRow<S: View>(
-        _ method: ReadingMethod,
-        icon: String,
-        @ViewBuilder status: () -> S
-    ) -> some View {
-        HStack {
-            Label(method.displayName, systemImage: icon)
+    private var settingsConfirmationActions: some View {
+        switch activeSettingsConfirmation {
+        case .deleteAllConfirmation:
+            Button("すべて削除", role: .destructive) {
+                scheduleConfirmationCommit(.deleteAllCards)
+            }
+        case .seedConfirmation:
+#if DEBUG
+            Button("挿入") {
+                scheduleConfirmationCommit(.seedSampleData)
+            }
+#endif
+        case .paywall, .alert, nil:
+            EmptyView()
+        }
+    }
+
+    private var paywallPresentationBinding: Binding<QueuedPresentationRequest<SettingsPresentation>?> {
+        Binding(
+            get: {
+                guard let active = presentationState.active,
+                      active.destination == .paywall
+                else { return nil }
+                return active
+            },
+            set: { newValue in
+                guard newValue == nil,
+                      let active = presentationState.active,
+                      active.destination == .paywall
+                else { return }
+                _ = presentationState.clearActive(requestID: active.id)
+            }
+        )
+    }
+
+    private var settingsAlertBinding: Binding<QueuedPresentationRequest<SettingsPresentation>?> {
+        Binding(
+            get: {
+                guard let active = presentationState.active,
+                      case .alert = active.destination
+                else { return nil }
+                return active
+            },
+            set: { newValue in
+                guard newValue == nil,
+                      let active = presentationState.active,
+                      case .alert = active.destination
+                else { return }
+                finishActivePresentation(expectedID: active.id)
+            }
+        )
+    }
+
+    private func finishActivePresentation(expectedID: UUID? = nil) {
+        guard let active = presentationState.active,
+              expectedID == nil || active.id == expectedID,
+              presentationState.clearActive(requestID: active.id)
+        else { return }
+
+    }
+
+    private var activeNonSheetRequestID: UUID? {
+        guard let request = presentationState.active else { return nil }
+        if case .paywall = request.destination { return nil }
+        return request.id
+    }
+
+    private var dismissingNonSheetRequestID: UUID? {
+        guard let request = presentationState.dismissing else { return nil }
+        if case .paywall = request.destination { return nil }
+        return request.id
+    }
+
+    private func completeNonSheetPresentationDismissal(requestID: UUID) {
+        let commit = confirmationCommitState.take(afterDismissing: requestID)
+        if let commit {
+            performConfirmationCommit(commit)
+        }
+        presentationState.presentNext(afterDismissing: requestID)
+    }
+
+    /// 破壊的なデータ更新は確認ダイアログの背後で開始せず、
+    /// UIKit が実 dismissal を通知した後にだけ実行する。
+    private func scheduleConfirmationCommit(_ action: SettingsConfirmationCommit) {
+        guard let active = presentationState.active else { return }
+        switch active.destination {
+        case .deleteAllConfirmation, .seedConfirmation:
+            guard confirmationCommitState.schedule(action, for: active.id) else { return }
+            finishActivePresentation(expectedID: active.id)
+        case .paywall, .alert:
+            break
+        }
+    }
+
+    private func performConfirmationCommit(_ action: SettingsConfirmationCommit) {
+        switch action {
+        case .deleteAllCards:
+            listViewModel.deleteAllCards()
+        case .seedSampleData:
+#if DEBUG
+            listViewModel.seedSampleData()
+#endif
+        }
+    }
+
+    /// sheetは実際のdismiss animation完了後にだけ次のpresentationへ進める。
+    private func completeSheetDismissal() {
+        guard let requestID = presentationState.dismissing?.id else { return }
+        presentationState.presentNext(afterDismissing: requestID)
+    }
+
+    private func settingsAlert(
+        _ request: QueuedPresentationRequest<SettingsPresentation>
+    ) -> Alert {
+        guard case .alert(let destination) = request.destination else {
+            return Alert(
+                title: Text("エラー"),
+                dismissButton: .cancel(Text("OK"))
+            )
+        }
+
+        switch destination {
+        case .restartRequired:
+            return Alert(
+                title: Text("アプリの再起動が必要です"),
+                message: Text("iCloud同期の設定変更はアプリを再起動すると反映されます。"),
+                dismissButton: .default(Text("OK"))
+            )
+        case .purchaseRestore(let message):
+            return Alert(
+                title: Text("購入の復元"),
+                message: Text(message),
+                dismissButton: .cancel(Text("OK"))
+            )
+        }
+    }
+
+}
+
+private struct SettingsStateLabel: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: systemImage)
                 .symbolRenderingMode(.monochrome)
-            Spacer()
-            if settings.readingMethod != method {
-                status()
-            }
-            if settings.readingMethod == method {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
-                    .fontWeight(.semibold)
-                    .padding(.leading, 4)
-            }
-        }
-        .foregroundStyle(.primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            settings.readingMethod = method
-        }
-    }
-
-    private var aiAssistRow: some View {
-        HStack {
-            Label("AIアシスト", systemImage: "sparkles")
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(.primary)
-            Spacer()
-
-            if settings.readingMethod != .localLLM {
-                if llm.isDownloading {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("\(Int(llm.downloadProgress * 100))%")
-                            .foregroundStyle(.secondary)
-                    }
-                } else if llm.isModelAvailable {
-                    Text("利用可能").foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 8) {
-                        Text("未取得").foregroundStyle(.secondary)
-                        Button("取得する") {
-                            Task {
-                                do {
-                                    try await llm.downloadModel()
-                                } catch {
-                                    modelError = error.localizedDescription
-                                }
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                    }
-                }
-            }
-
-            if settings.readingMethod == .localLLM {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor)
-                    .fontWeight(.semibold)
-                    .padding(.leading, 4)
-            }
-        }
-        .foregroundStyle(.primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            settings.readingMethod = .localLLM
-        }
-        .swipeActions(edge: .trailing) {
-            if llm.isModelAvailable {
-                Button(role: .destructive) {
-                    showDeleteModelConfirm = true
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-            }
-        }
-    }
-
-    @available(iOS 18.0, *)
-    private var appleIntelligenceStatusText: some View {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            return Text("利用可能").foregroundStyle(.secondary)
-        case .unavailable(.deviceNotEligible):
-            return Text("非対応").foregroundStyle(.secondary)
-        case .unavailable(.appleIntelligenceNotEnabled):
-            return Text("オフ").foregroundStyle(.secondary)
-        case .unavailable(.modelNotReady):
-            return Text("準備中").foregroundStyle(.secondary)
-        default:
-            return Text("利用不可").foregroundStyle(.secondary)
-        }
-    }
-
-    private var thresholdLabel: String {
-        switch settings.duplicateThreshold {
-        case ..<0.65: return "低"
-        case ..<0.80: return "中"
-        default:      return "高"
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -575,4 +691,5 @@ private struct AdvancedSettingsView: View {
 #Preview {
     SettingsView()
         .environmentObject(CardListViewModel())
+        .environmentObject(EntitlementStore.shared)
 }

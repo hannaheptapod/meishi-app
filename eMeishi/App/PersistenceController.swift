@@ -1,15 +1,19 @@
 import CoreData
 import CloudKit
 import os
+import UIKit
 
 // CoreData スタックの管理（iCloud 同期対応）
 struct PersistenceController {
 
+    @MainActor private static var readingMigrationTask: Task<Void, Never>?
+    @MainActor private static var readingMigrationGeneration = UUID()
+
     // アプリ全体で共有するシングルトン
     static let shared = PersistenceController()
 
-    /// CoreData ストア読み込みエラー（nil なら正常）
-    private(set) var loadError: NSError?
+    /// 非同期ストア読み込みの進行・失敗を UI へ公開する。
+    let storeLoadMonitor: PersistentStoreLoadMonitor
 
     // PreviewやテストでもアクセスできるようにPreview用インスタンスを用意
     static var preview: PersistenceController = {
@@ -72,6 +76,8 @@ struct PersistenceController {
         cards[0].isFavorite = true
         cards[2].isFavorite = true
         cards[4].isFavorite = true
+        cards[0].imageData = ScreenshotMockSupport.mockBusinessCardImage()
+            .jpegData(compressionQuality: 0.88)
 
         // タグ付与
         cards[0].addToTags(tagImportant); cards[0].addToTags(tagIT) // 山田太郎: 重要+IT
@@ -116,6 +122,9 @@ struct PersistenceController {
         // 同期を無効化したい場合は cloudKitContainerOptions = nil で制御する。
         container = NSPersistentCloudKitContainer(name: "BusinessCard",
                                                   managedObjectModel: Self.managedObjectModel)
+        storeLoadMonitor = PersistentStoreLoadMonitor(
+            expectedStoreCount: container.persistentStoreDescriptions.count
+        )
 
         if inMemory {
             // テスト・プレビュー用：ディスクに書き込まない
@@ -161,14 +170,25 @@ struct PersistenceController {
                 description.cloudKitContainerOptions = nil
             }
         }
-        var loadErr: NSError?
+        let loadMonitor = storeLoadMonitor
+        let loadedContainer = container
+        let shouldScheduleMigrations = !inMemory
         container.loadPersistentStores { _, error in
+            let failure = error.map { PersistentStoreLoadFailure(error: $0) }
             if let error = error as NSError? {
-                AppLogger.persistence.error("CoreData の読み込みに失敗しました: \(error), \(error.userInfo)")
-                loadErr = error
+                AppLogger.persistence.error(
+                    "CoreData の読み込みに失敗しました: \(error), \(error.userInfo)"
+                )
+            }
+
+            Task { @MainActor in
+                let didFinishSuccessfully = loadMonitor.recordCompletion(failure: failure)
+                guard didFinishSuccessfully, shouldScheduleMigrations else { return }
+
+                // 読み移行はストア読み込み成功後にだけ開始する。失敗ストアへ fetch しない。
+                Self.scheduleReadingMigrations(in: loadedContainer)
             }
         }
-        self.loadError = loadErr
         // 別スレッドからの変更を自動マージ（本番ストアのみ）
         // in-memory テストストアでは無効化する。有効にすると Swift Testing の並列実行で
         // 複数の PersistenceController(inMemory: true) が同時に
@@ -212,9 +232,57 @@ struct PersistenceController {
             }
         }
 
-        // 既存データの companyReading から法人格を除去（一度だけ実行）
-        if !inMemory {
-            Self.migrateCompanyReadings(context: container.viewContext)
+    }
+
+    @MainActor
+    private static func scheduleReadingMigrations(in container: NSPersistentContainer) {
+        let defaults = UserDefaults.standard
+        let legalEntityKey = "didMigrateCompanyReadingLegalEntity"
+        let latinInitialismKey = "didMigrateCompanyReadingLatinInitialisms"
+        let migrateLegalEntity = !defaults.bool(forKey: legalEntityKey)
+        let migrateLatinInitialism = !defaults.bool(forKey: latinInitialismKey)
+        guard migrateLegalEntity || migrateLatinInitialism else { return }
+
+        readingMigrationTask?.cancel()
+        let generation = UUID()
+        readingMigrationGeneration = generation
+        let coordinatorReference = PersistentStoreCoordinatorReference(
+            coordinator: container.persistentStoreCoordinator
+        )
+
+        readingMigrationTask = Task { @MainActor in
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            defer {
+                if readingMigrationGeneration == generation {
+                    readingMigrationTask = nil
+                }
+            }
+
+            let result = await CompanyReadingMigrationWorker.shared.migrate(
+                coordinatorReference: coordinatorReference,
+                migrateLegalEntity: migrateLegalEntity,
+                migrateLatinInitialism: migrateLatinInitialism
+            )
+            guard !Task.isCancelled, readingMigrationGeneration == generation else { return }
+
+            if let failureMessage = result.failureMessage {
+                AppLogger.persistence.error("会社名読みの移行保存に失敗しました: \(failureMessage)")
+                return
+            }
+            // 完了フラグはbackground contextの保存成功後にだけ記録する。
+            if result.completedLegalEntity {
+                defaults.set(true, forKey: legalEntityKey)
+            }
+            if result.completedLatinInitialism {
+                defaults.set(true, forKey: latinInitialismKey)
+            }
+
+            let elapsedMilliseconds = Int(
+                (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+            )
+            AppLogger.performance.info(
+                "会社名読み移行が完了しました: changed=\(result.changedCount) \(elapsedMilliseconds)ms"
+            )
         }
     }
 
@@ -232,28 +300,106 @@ struct PersistenceController {
         }
     }
 
-    /// 既存データの companyReading に法人格が含まれていれば除去する
-    private static func migrateCompanyReadings(context: NSManagedObjectContext) {
-        let key = "didMigrateCompanyReadingLegalEntity"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
+}
 
-        let request = BusinessCard.fetchRequest()
-        guard let cards = try? context.fetch(request) else { return }
+nonisolated struct CompanyReadingMigrationResult: Sendable {
+    let completedLegalEntity: Bool
+    let completedLatinInitialism: Bool
+    let changedCount: Int
+    let failureMessage: String?
+}
 
-        var changed = false
-        for card in cards {
-            guard let reading = card.companyReading, !reading.isEmpty else { continue }
-            let stripped = LegalEntityTerms.stripReading(from: reading)
-            if stripped != reading {
-                card.companyReading = stripped
-                changed = true
+/// 起動後の全件移行をUIのMainActorから分離する。
+/// NSManagedObjectはactor境界を越えず、private context内でKVC値だけを処理する。
+actor CompanyReadingMigrationWorker {
+    static let shared = CompanyReadingMigrationWorker()
+
+    func migrate(
+        coordinatorReference: PersistentStoreCoordinatorReference,
+        migrateLegalEntity: Bool,
+        migrateLatinInitialism: Bool
+    ) async -> CompanyReadingMigrationResult {
+        guard !Task.isCancelled else {
+            return cancelledResult()
+        }
+
+        let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinatorReference.coordinator
+        context.undoManager = nil
+        context.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
+
+        do {
+            return try await context.perform {
+                let request = NSFetchRequest<NSManagedObject>(entityName: "BusinessCard")
+                request.fetchBatchSize = 100
+                let cards = try context.fetch(request)
+                var changedCount = 0
+
+                for card in cards {
+                    if Task.isCancelled {
+                        context.rollback()
+                        return self.cancelledResult()
+                    }
+
+                    let originalReading = card.value(forKey: "companyReading") as? String ?? ""
+                    guard !originalReading.isEmpty else { continue }
+                    var reading = originalReading
+
+                    if migrateLegalEntity {
+                        reading = LegalEntityTerms.stripReading(from: reading)
+                    }
+
+                    if migrateLatinInitialism,
+                       let company = card.value(forKey: "company") as? String,
+                       company.contains(where: { $0.isASCII && $0.isLetter }) {
+                        let legacyReading = LegalEntityTerms.stripReading(
+                            from: NameReadingGenerator.generateReading(from: company)
+                        )
+                        let revisedReading = LegalEntityTerms.stripReading(
+                            from: NameReadingGenerator.generateCompanyReading(from: company)
+                        )
+                        if !revisedReading.isEmpty,
+                           reading == legacyReading,
+                           reading != revisedReading {
+                            reading = revisedReading
+                        }
+                    }
+
+                    guard reading != originalReading else { continue }
+                    card.setValue(reading, forKey: "companyReading")
+                    changedCount += 1
+                }
+
+                if context.hasChanges {
+                    try context.save()
+                }
+                return CompanyReadingMigrationResult(
+                    completedLegalEntity: migrateLegalEntity,
+                    completedLatinInitialism: migrateLatinInitialism,
+                    changedCount: changedCount,
+                    failureMessage: nil
+                )
             }
+        } catch {
+            await context.perform {
+                context.rollback()
+            }
+            return CompanyReadingMigrationResult(
+                completedLegalEntity: false,
+                completedLatinInitialism: false,
+                changedCount: 0,
+                failureMessage: String(describing: error)
+            )
         }
+    }
 
-        if changed {
-            try? context.save()
-        }
-        UserDefaults.standard.set(true, forKey: key)
+    private nonisolated func cancelledResult() -> CompanyReadingMigrationResult {
+        CompanyReadingMigrationResult(
+            completedLegalEntity: false,
+            completedLatinInitialism: false,
+            changedCount: 0,
+            failureMessage: nil
+        )
     }
 }
 

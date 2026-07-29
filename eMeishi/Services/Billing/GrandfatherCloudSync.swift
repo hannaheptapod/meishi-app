@@ -15,14 +15,34 @@ protocol GrandfatherCloudSyncing: Sendable {
     func writeMark() async
 }
 
+struct NoopGrandfatherCloudSync: GrandfatherCloudSyncing {
+    func fetchMark() async -> Bool { false }
+    func writeMark() async {}
+}
+
+enum GrandfatherCloudSyncFactory {
+    static let containerIdentifier = "iCloud.com.jinks.emeishi"
+
+    static func make(
+        entitlementChecker: any CloudKitEntitlementChecking = SignedCloudKitEntitlementChecker()
+    ) -> any GrandfatherCloudSyncing {
+        guard entitlementChecker.canCreateContainer(identifier: containerIdentifier) else {
+            return NoopGrandfatherCloudSync()
+        }
+        return LiveGrandfatherCloudSync(entitlementChecker: entitlementChecker)
+    }
+}
+
 struct LiveGrandfatherCloudSync: GrandfatherCloudSyncing {
 
-    private static let containerIdentifier = "iCloud.com.jinks.emeishi"
+    private static let containerIdentifier = GrandfatherCloudSyncFactory.containerIdentifier
     private static let recordType = "GrandfatherMark"
     private static let recordName = "GrandfatherMark-v1"
 
-    private var privateDatabase: CKDatabase {
-        CKContainer(identifier: Self.containerIdentifier).privateCloudDatabase
+    private let entitlementChecker: any CloudKitEntitlementChecking
+
+    init(entitlementChecker: any CloudKitEntitlementChecking = SignedCloudKitEntitlementChecker()) {
+        self.entitlementChecker = entitlementChecker
     }
 
     private var recordID: CKRecord.ID {
@@ -30,6 +50,7 @@ struct LiveGrandfatherCloudSync: GrandfatherCloudSyncing {
     }
 
     func fetchMark() async -> Bool {
+        guard let privateDatabase else { return false }
         do {
             _ = try await privateDatabase.record(for: recordID)
             return true
@@ -39,6 +60,7 @@ struct LiveGrandfatherCloudSync: GrandfatherCloudSyncing {
     }
 
     func writeMark() async {
+        guard let privateDatabase else { return }
         let record = CKRecord(recordType: Self.recordType, recordID: recordID)
         record["version"] = "0.0.0" as CKRecordValue
         do {
@@ -48,5 +70,12 @@ struct LiveGrandfatherCloudSync: GrandfatherCloudSyncing {
         } catch {
             // best-effort: オフライン / 未ログインは無視
         }
+    }
+
+    private var privateDatabase: CKDatabase? {
+        guard entitlementChecker.canCreateContainer(identifier: Self.containerIdentifier) else {
+            return nil
+        }
+        return CKContainer(identifier: Self.containerIdentifier).privateCloudDatabase
     }
 }

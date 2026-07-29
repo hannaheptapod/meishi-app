@@ -37,11 +37,11 @@ enum FieldDetector {
         "本部長", "部長", "副部長", "課長", "係長", "主任", "リーダー",
         "マネージャー", "シニアマネージャー", "ゼネラルマネージャー",
         "ディレクター", "プロデューサー", "エンジニア", "デザイナー",
-        "コンサルタント", "アナリスト", "スペシャリスト",
+        "コンサルタント", "アナリスト", "スペシャリスト", "アソシエイト",
         "President", "CEO", "CTO", "CFO", "COO", "CMO", "CIO",
         "Director", "Manager", "Senior", "Lead", "Principal",
         "Engineer", "Designer", "Consultant", "Analyst", "Specialist",
-        "Executive", "Officer", "Head of", "VP ", "Vice President"
+        "Executive", "Officer", "Associate", "Head of", "VP ", "Vice President"
     ]
 
     // MARK: - 判定メソッド

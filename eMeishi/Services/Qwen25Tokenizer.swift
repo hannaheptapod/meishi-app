@@ -4,7 +4,7 @@ import os
 /// Qwen2.5 BPEトークナイザー
 /// HuggingFace の tokenizer.json（BPE形式）から語彙とマージルールを読み込み、
 /// テキスト ↔ トークンID の変換を行う。
-final class Qwen25Tokenizer {
+nonisolated final class Qwen25Tokenizer {
 
     // MARK: - 特殊トークンID
 
@@ -275,7 +275,7 @@ final class Qwen25Tokenizer {
 
 // MARK: - BPE ペア（Hashable キー）
 
-struct BPEPair: Hashable, Sendable {
+nonisolated struct BPEPair: Hashable, Sendable {
     let first: String
     let second: String
     init(_ first: String, _ second: String) {

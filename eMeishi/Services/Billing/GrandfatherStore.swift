@@ -21,7 +21,7 @@ final class GrandfatherStore {
     static let shared = GrandfatherStore(
         transactionProvider: LiveAppTransactionProvider(),
         detector: LiveExistingUserDetector(persistenceController: .shared),
-        cloudSync: LiveGrandfatherCloudSync(),
+        cloudSync: GrandfatherCloudSyncFactory.make(),
         currentVersionProvider: {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         }
