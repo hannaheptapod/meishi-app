@@ -132,6 +132,14 @@ actor OCRService {
     /// 旧絶対値 5.3 / 重み和 8.7 = 0.609 と同じ分割になる値。
     private static let minimumAcceptableCardScore: CGFloat = 0.61
 
+    /// 名刺外周として意味を持つ最小面積（正規化）。これ未満はロゴ・QR 相当。
+    private static let minimumCardArea: CGFloat = 0.055
+
+    /// 画像の大部分を占める矩形はテーブル面や背景枠の可能性が高いため、
+    /// この閾値を超えた面積分だけ減点を漸増させる（寄り撮影の正当な大矩形は残す）。
+    private static let oversizedAreaThreshold: CGFloat = 0.70
+    private static let oversizedAreaPenaltyWeight: CGFloat = 3.0
+
     private struct CardRectangleMetrics {
         let area: CGFloat
         let shortLongAspect: CGFloat
@@ -196,11 +204,16 @@ actor OCRService {
         confidence: Float
     ) -> CGFloat? {
         let area = metrics.area
-        // ロゴやQRコード程度の小矩形は候補から外し、画面をほぼ覆う矩形も除外する。
-        guard (0.055...0.92).contains(area) else { return nil }
+        // ロゴやQRコード程度の小矩形は候補から外す。大面積側は足切りでなく
+        // 漸増ペナルティで扱う（寄り撮影では名刺が画面の大半を占めるため）。
+        guard area >= minimumCardArea else { return nil }
+        // 画像の外縁とほぼ一致する矩形は枠検出の誤りであり名刺ではない。
+        guard !(area > 0.90 && metrics.edgeInset < 0.005) else { return nil }
 
         let shortLongAspect = metrics.shortLongAspect
-        guard (0.32...0.90).contains(shortLongAspect) else { return nil }
+        // 上限 0.95: 写真と名刺のアスペクトが近い構図では正規化座標上の比が
+        // 1.0 へ近づくため、旧上限 0.90 では寄り撮影の正当な外周を弾いていた。
+        guard (0.32...0.95).contains(shortLongAspect) else { return nil }
         guard metrics.oppositeSideBalance > 0.55 else { return nil }
 
         let businessCardAspect: CGFloat = 0.58
@@ -215,6 +228,10 @@ actor OCRService {
         let centralityScore = max(0, 1 - metrics.centerOffset / 0.42)
         // 占有率が低い矩形はロゴ・QR・罫線ブロックの可能性が高いため、面積スコアとは別に減点を漸増させる（#187）。
         let smallAreaPenalty = area < 0.14 ? (0.14 - area) / 0.14 * 1.8 : 0
+        // 画面をほぼ覆う矩形（テーブル面・背景枠）は超過分に応じて減点する。
+        let oversizedAreaPenalty = area > oversizedAreaThreshold
+            ? (area - oversizedAreaThreshold) * oversizedAreaPenaltyWeight
+            : 0
 
         let weightedSum = CGFloat(confidence) * CardScoreWeight.confidence
             + aspectScore * CardScoreWeight.aspect
@@ -223,6 +240,7 @@ actor OCRService {
             + shapeScore * CardScoreWeight.shape
             + centralityScore * CardScoreWeight.centrality
             - smallAreaPenalty
+            - oversizedAreaPenalty
         return weightedSum / CardScoreWeight.total
     }
 

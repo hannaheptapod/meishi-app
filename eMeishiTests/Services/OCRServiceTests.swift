@@ -92,6 +92,39 @@ struct OCRServiceTests {
         #expect(index == 1)
     }
 
+    // 寄り撮影では名刺が画面の大半を占め、正規化座標のアスペクト比が 1.0 へ
+    // 近づく。旧実装は上限 0.90 の足切りで候補ゼロ（= 無補正）にしていた。
+    @Test func bestCardRectAcceptsCloseUpCardFillingFrame() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.01, y: 0.03, width: 0.98, height: 0.92), 0.95),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 0)
+    }
+
+    // 画像の外縁とほぼ一致する矩形は枠検出の誤りとして明示的に棄却する。
+    @Test func bestCardRectRejectsFullFrameRectangle() {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0, y: 0, width: 1.0, height: 0.97), 1.0),
+        ]
+
+        #expect(OCRService.bestCardRectIndex(candidates: candidates) == nil)
+    }
+
+    // 画面の大半を覆う背景パネルより、名刺比率の矩形を優先する（漸増ペナルティ）。
+    @Test func bestCardRectPrefersCardOverBackgroundPanel() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.02, y: 0.10, width: 0.96, height: 0.78), 0.90),
+            (CGRect(x: 0.15, y: 0.30, width: 0.70, height: 0.42), 1.0),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 1)
+    }
+
     // 補正後アスペクト検証: 名刺の実比率（日本 0.604 / US 0.571）を含む範囲を通す。
     @Test func isPlausibleCardAspectAcceptsBusinessCardProportions() {
         #expect(OCRService.isPlausibleCardAspect(CGSize(width: 91, height: 55)))
