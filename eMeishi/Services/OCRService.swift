@@ -415,12 +415,67 @@ actor OCRService {
         return sortForReadingOrder(mergedVertical + mergedHorizontal, preferVertical: true)
     }
 
+    // MARK: - カラム境界推定
+
+    /// 列境界とみなす最小の空白帯幅（正規化 X）。
+    private static let minimumColumnGap: CGFloat = 0.08
+    /// 列境界として意味を持つ位置の範囲。端に寄った空白は余白でしかない。
+    private static let columnBoundaryRange: ClosedRange<CGFloat> = 0.30...0.70
+    /// 境界の両側に最低限必要な行数。片側 1 行では列とは言えない。
+    private static let minimumLinesPerColumn = 2
+
+    /// 行群の X 区間をユニオンし、中央付近にある最大の空白帯を列境界として返す。
+    /// 左右 2 カラム名刺で、別カラムの行同士が横結合されるのを防ぐ。
+    static func columnBoundary(for lines: [RecognizedLine]) -> CGFloat? {
+        guard lines.count >= minimumLinesPerColumn * 2 else { return nil }
+
+        // X 区間を minX 昇順でマージし、連続グループ間のギャップを求める
+        let intervals = lines
+            .map { (min: $0.boundingBox.minX, max: $0.boundingBox.maxX) }
+            .sorted { $0.min < $1.min }
+        var mergedIntervals: [(min: CGFloat, max: CGFloat)] = []
+        for interval in intervals {
+            if var last = mergedIntervals.last, interval.min <= last.max {
+                last.max = max(last.max, interval.max)
+                mergedIntervals[mergedIntervals.count - 1] = last
+            } else {
+                mergedIntervals.append(interval)
+            }
+        }
+        guard mergedIntervals.count >= 2 else { return nil }
+
+        // 最大ギャップを列境界候補にする
+        var bestBoundary: (center: CGFloat, width: CGFloat)?
+        for (lhs, rhs) in zip(mergedIntervals, mergedIntervals.dropFirst()) {
+            let width = rhs.min - lhs.max
+            if width > (bestBoundary?.width ?? 0) {
+                bestBoundary = (center: (lhs.max + rhs.min) / 2, width: width)
+            }
+        }
+        guard let boundary = bestBoundary,
+              boundary.width >= minimumColumnGap,
+              columnBoundaryRange.contains(boundary.center) else { return nil }
+
+        // 両側に列と呼べる行数があるかを確認する
+        let leftCount = lines.filter { $0.boundingBox.midX < boundary.center }.count
+        let rightCount = lines.count - leftCount
+        guard leftCount >= minimumLinesPerColumn, rightCount >= minimumLinesPerColumn else {
+            return nil
+        }
+        return boundary.center
+    }
+
     private static func mergeHorizontalFragments(_ lines: [RecognizedLine]) -> [RecognizedLine] {
         guard lines.count > 1 else { return lines }
 
         // インデックス管理用
         var used = Set<Int>()
         var result: [RecognizedLine] = []
+        // 列境界を跨ぐ結合は別カラムのフィールド混合になるため禁止する
+        let boundary = columnBoundary(for: lines)
+        if let boundary {
+            AppLogger.ocr.debug("列境界を検出: x=\(boundary, privacy: .public)")
+        }
 
         // Y 座標降順（Vision座標系: 上が大きい → 名刺の上から処理）
         let indexed = lines.enumerated().sorted {
@@ -442,6 +497,12 @@ actor OCRService {
 
                 // 同一行判定: Y 中心の差が行の高さの 60% 以内
                 guard abs(candidate.boundingBox.midY - anchor.boundingBox.midY) < maxH * 0.6 else {
+                    continue
+                }
+
+                // 列境界を跨ぐ候補は別カラムのフィールドとみなし結合しない
+                if let boundary,
+                   (anchor.boundingBox.midX < boundary) != (candidate.boundingBox.midX < boundary) {
                     continue
                 }
 

@@ -242,6 +242,36 @@ struct OCRServiceTests {
         #expect(merged.allSatisfy { $0.textDirection == .topToBottom })
     }
 
+    // 左右 2 カラム名刺では、行同士が近くても列境界を跨ぐ結合をしない。
+    @Test func mergeAdjacentFragmentsDoesNotMergeAcrossColumnBoundary() {
+        let lines = [
+            makeLine("田中", midX: 0.225, midY: 0.70, width: 0.25, height: 0.06),
+            makeLine("営業部", midX: 0.575, midY: 0.70, width: 0.25, height: 0.06),
+            makeLine("花子", midX: 0.225, midY: 0.58, width: 0.25, height: 0.06),
+            makeLine("本社", midX: 0.575, midY: 0.58, width: 0.25, height: 0.06),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines)
+        let texts = merged.map { $0.text }
+
+        #expect(merged.count == 4)
+        #expect(texts.contains("田中"))
+        #expect(texts.contains("営業部"))
+        #expect(!texts.contains("田中営業部"))
+    }
+
+    // 単一カラムのレイアウトでは列境界を検出しない。
+    @Test func columnBoundaryReturnsNilForSingleColumnLayout() {
+        let lines = [
+            makeLine("サンプル株式会社", midX: 0.40, midY: 0.72, width: 0.40, height: 0.05),
+            makeLine("田中 花子", midX: 0.35, midY: 0.62, width: 0.30, height: 0.05),
+            makeLine("営業部", midX: 0.30, midY: 0.54, width: 0.20, height: 0.05),
+            makeLine("課長", midX: 0.55, midY: 0.54, width: 0.15, height: 0.05),
+        ]
+
+        #expect(OCRService.columnBoundary(for: lines) == nil)
+    }
+
     // 横位置の名刺を縦向きに撮ると画像は縦長になるが、横書き行（.leftToRight）が
     // 検出されていれば縦書き名刺ではない。形状フォールバックで縦結合しない。
     @Test func mergeAdjacentFragmentsIgnoresPortraitAspectWhenHorizontalTextDetected() {
