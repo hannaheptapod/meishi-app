@@ -59,7 +59,8 @@ flowchart TD
 
 ```text
 meishi-app/
-├── AGENTS.md
+├── AGENTS.md                                   # AI エージェント向け開発ルール（単一ソース）
+├── CLAUDE.md                                   # AGENTS.md へのポインタ（@AGENTS.md）
 ├── README.md
 ├── eMeishi/
 │   ├── Info.plist                              # Release 用（UIFileSharingEnabled=false）
@@ -212,7 +213,7 @@ meishi-app/
 │   ├── check-test-fixture-privacy.sh           # テストfixtureへの個人情報混入防止
 │   ├── cloudkit-models.sh                      # 10MiB分割・再開・stable/rollback CLI
 │   └── tests/cloudkit-models-test.sh           # CLIマニフェスト・チャンク検証
-├── docs/                                       # GitHub PagesとUIライフサイクル監査台帳
+├── docs/                                       # GitHub Pages・UIライフサイクル監査台帳・リリースフロー手順
 ├── metadata/                                   # App Store Connect メタデータ
 │   ├── app_info.yaml                           # アプリ基本情報（カテゴリ・URL 等）
 │   └── version/<x.y.z>/ja.json                 # バージョンごとの description・keywords・whatsNew
