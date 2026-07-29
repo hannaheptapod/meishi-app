@@ -74,32 +74,44 @@ actor OCRService {
     }
 
     static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
-        observations
+        let scored = observations
             .enumerated()
             .compactMap { index, observation in
                 cardRectangleScore(
                     metrics: cardRectangleMetrics(for: observation),
-                    confidence: observation.confidence,
-                    visionOrder: index
-                ).map { (observation: observation, score: $0) }
+                    confidence: observation.confidence
+                ).map { (index: index, score: $0) }
             }
-            .filter { $0.score >= minimumAcceptableCardScore }
-            .max { $0.score < $1.score }?
-            .observation
+        return bestScoredIndex(scored).map { observations[$0] }
     }
 
     static func bestCardRectIndex(candidates: [(rect: CGRect, confidence: Float)]) -> Int? {
-        candidates
+        let scored = candidates
             .enumerated()
             .compactMap { index, candidate in
                 cardRectangleScore(
                     metrics: cardRectangleMetrics(for: candidate.rect),
-                    confidence: candidate.confidence,
-                    visionOrder: index
+                    confidence: candidate.confidence
                 ).map { (index: index, score: $0) }
             }
+        return bestScoredIndex(scored)
+    }
+
+    /// 同点とみなすスコア差（正規化値）。この幅の中では Vision 返却順を優先する。
+    private static let cardScoreTieTolerance: CGFloat = 0.01
+
+    /// 最良候補の index を返す。Vision 返却順への依存を減点でなく
+    /// タイブレークとして表現する: スコアをトレランス幅でバケット化し、
+    /// 同一バケット内は Vision index 昇順（= 先に返された候補）を選ぶ。
+    private static func bestScoredIndex(_ scored: [(index: Int, score: CGFloat)]) -> Int? {
+        scored
             .filter { $0.score >= minimumAcceptableCardScore }
-            .max { $0.score < $1.score }?
+            .map { (index: $0.index, bucket: Int(($0.score / cardScoreTieTolerance).rounded())) }
+            .sorted {
+                if $0.bucket != $1.bucket { return $0.bucket > $1.bucket }
+                return $0.index < $1.index
+            }
+            .first?
             .index
     }
 
@@ -181,8 +193,7 @@ actor OCRService {
     /// 名刺外周らしさの正規化スコア（0〜1）。足切り条件を満たさない候補は nil。
     private static func cardRectangleScore(
         metrics: CardRectangleMetrics,
-        confidence: Float,
-        visionOrder: Int
+        confidence: Float
     ) -> CGFloat? {
         let area = metrics.area
         // ロゴやQRコード程度の小矩形は候補から外し、画面をほぼ覆う矩形も除外する。
@@ -204,7 +215,6 @@ actor OCRService {
         let centralityScore = max(0, 1 - metrics.centerOffset / 0.42)
         // 占有率が低い矩形はロゴ・QR・罫線ブロックの可能性が高いため、面積スコアとは別に減点を漸増させる（#187）。
         let smallAreaPenalty = area < 0.14 ? (0.14 - area) / 0.14 * 1.8 : 0
-        let orderPenalty = CGFloat(visionOrder) * 0.04
 
         let weightedSum = CGFloat(confidence) * CardScoreWeight.confidence
             + aspectScore * CardScoreWeight.aspect
@@ -213,7 +223,6 @@ actor OCRService {
             + shapeScore * CardScoreWeight.shape
             + centralityScore * CardScoreWeight.centrality
             - smallAreaPenalty
-            - orderPenalty
         return weightedSum / CardScoreWeight.total
     }
 

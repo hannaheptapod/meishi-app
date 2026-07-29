@@ -92,6 +92,32 @@ struct OCRServiceTests {
         #expect(index == 1)
     }
 
+    // Vision の返却順はスコア順ではないため、順序が変わっても同じ矩形を選ぶ。
+    @Test func bestCardRectIsIndependentOfVisionOrder() throws {
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (CGRect(x: 0.72, y: 0.28, width: 0.14, height: 0.14), 0.99),
+            (CGRect(x: 0.34, y: 0.38, width: 0.32, height: 0.20), 0.99),
+            (CGRect(x: 0.08, y: 0.22, width: 0.84, height: 0.49), 0.88),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 2)
+    }
+
+    // スコア差がトレランス未満の同点候補では Vision が先に返した候補を選ぶ。
+    @Test func bestCardRectFallsBackToVisionOrderOnNearTie() throws {
+        let cardRect = CGRect(x: 0.12, y: 0.24, width: 0.62, height: 0.36)
+        let candidates: [(rect: CGRect, confidence: Float)] = [
+            (cardRect, 1.0),
+            (cardRect, 1.0),
+        ]
+
+        let index = try #require(OCRService.bestCardRectIndex(candidates: candidates))
+
+        #expect(index == 0)
+    }
+
     // スコア正規化（0〜1）後も旧絶対値 5.3（= 0.609）と同じ分割で採否が決まる。
     // 下の候補は confidence 以外の項が同一で、閾値 0.61 を挟んで採用・棄却が分かれる。
     @Test func bestCardRectScoreThresholdMatchesLegacyAbsoluteScale() {
