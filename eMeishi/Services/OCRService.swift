@@ -386,20 +386,29 @@ actor OCRService {
     /// 1つの名前を複数の observation に分割することがある。
     /// 同一行（Y座標近接）かつ X 方向に近い短い断片を結合し、
     /// 下流の分類ロジックに安定した行を渡す。
+    ///
+    /// - Parameter isVerticalCard: 画像が縦長かどうかの補助情報。縦書き判定の
+    ///   主役は Vision の textDirection で、この値は横書きの証拠が 1 行もない
+    ///   場合のフォールバックにだけ使う。
     static func mergeAdjacentFragments(
         _ lines: [RecognizedLine],
         isVerticalCard: Bool = false
     ) -> [RecognizedLine] {
         guard lines.count > 1 else { return lines }
 
-        let shouldUseVerticalMerge = lines.contains { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        // 主判定は Vision の textDirection。画像が縦長でも横書き行が検出されて
+        // いれば横位置の名刺を縦向きに撮っただけであり、形状フォールバックは使わない。
+        let hasHorizontalEvidence = lines.contains { $0.textDirection == .leftToRight }
+        let allowsAspectFallback = isVerticalCard && !hasHorizontalEvidence
+
+        let shouldUseVerticalMerge = lines.contains { isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
 
         guard shouldUseVerticalMerge else {
             return mergeHorizontalFragments(lines)
         }
 
-        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
-        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, isVerticalCard: isVerticalCard) }
+        let verticalCandidates = lines.filter { isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
+        let horizontalCandidates = lines.filter { !isVerticalMergeCandidate($0, allowsAspectFallback: allowsAspectFallback) }
 
         let mergedVertical = mergeVerticalFragments(verticalCandidates)
         let mergedHorizontal = mergeHorizontalFragments(horizontalCandidates)
@@ -570,7 +579,7 @@ actor OCRService {
         return sortForReadingOrder(result, preferVertical: true)
     }
 
-    private static func isVerticalMergeCandidate(_ line: RecognizedLine, isVerticalCard: Bool) -> Bool {
+    private static func isVerticalMergeCandidate(_ line: RecognizedLine, allowsAspectFallback: Bool) -> Bool {
         let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         guard !isContactLike(text), !isMostlyASCII(text) else { return false }
@@ -579,7 +588,7 @@ actor OCRService {
         }
         guard hasJapanese else { return false }
         if line.textDirection == .topToBottom { return true }
-        guard isVerticalCard else { return false }
+        guard allowsAspectFallback else { return false }
         return line.boundingBox.height > line.boundingBox.width * 1.4
     }
 

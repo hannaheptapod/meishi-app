@@ -242,6 +242,34 @@ struct OCRServiceTests {
         #expect(merged.allSatisfy { $0.textDirection == .topToBottom })
     }
 
+    // 横位置の名刺を縦向きに撮ると画像は縦長になるが、横書き行（.leftToRight）が
+    // 検出されていれば縦書き名刺ではない。形状フォールバックで縦結合しない。
+    @Test func mergeAdjacentFragmentsIgnoresPortraitAspectWhenHorizontalTextDetected() {
+        let lines = [
+            makeLine("役員", midX: 0.30, midY: 0.70, width: 0.05, height: 0.09, textDirection: .leftToRight),
+            makeLine("秘書", midX: 0.30, midY: 0.55, width: 0.05, height: 0.09, textDirection: .leftToRight),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines, isVerticalCard: true)
+        let texts = merged.map { $0.text }
+
+        #expect(texts.contains("役員"))
+        #expect(texts.contains("秘書"))
+        #expect(!texts.contains("役員秘書"))
+    }
+
+    // 横長画像でも Vision が .topToBottom を報告した行は縦書きとして結合する。
+    @Test func mergeAdjacentFragmentsUsesVerticalModeForLandscapeCardWithTopToBottomText() {
+        let lines = [
+            makeLine("山", midX: 0.62, midY: 0.78, width: 0.04, height: 0.05, textDirection: .topToBottom),
+            makeLine("田", midX: 0.62, midY: 0.70, width: 0.04, height: 0.05, textDirection: .topToBottom),
+        ]
+
+        let merged = OCRService.mergeAdjacentFragments(lines, isVerticalCard: false)
+
+        #expect(merged.map { $0.text } == ["山田"])
+    }
+
     @Test func mergeAdjacentFragmentsDoesNotVerticallyMergeAsciiContacts() {
         let lines = [
             makeLine("hanako", midX: 0.72, midY: 0.82, width: 0.18, height: 0.04),
