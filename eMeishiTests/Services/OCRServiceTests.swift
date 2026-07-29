@@ -92,6 +92,22 @@ struct OCRServiceTests {
         #expect(index == 1)
     }
 
+    // スコア正規化（0〜1）後も旧絶対値 5.3（= 0.609）と同じ分割で採否が決まる。
+    // 下の候補は confidence 以外の項が同一で、閾値 0.61 を挟んで採用・棄却が分かれる。
+    @Test func bestCardRectScoreThresholdMatchesLegacyAbsoluteScale() {
+        let boundaryRect = CGRect(x: 0.30, y: 0.35, width: 0.40, height: 0.24)
+
+        let justAbove = OCRService.bestCardRectIndex(
+            candidates: [(rect: boundaryRect, confidence: 0.92)]
+        )
+        let justBelow = OCRService.bestCardRectIndex(
+            candidates: [(rect: boundaryRect, confidence: 0.78)]
+        )
+
+        #expect(justAbove == 0)
+        #expect(justBelow == nil)
+    }
+
     @Test func mergeAdjacentFragmentsKeepsHorizontalNameMerge() {
         let lines = [
             makeLine("田中", midX: 0.42, midY: 0.70, width: 0.12, height: 0.06),

@@ -76,15 +76,12 @@ actor OCRService {
     static func bestCardRectangle(from observations: [RectangleObservation]) -> RectangleObservation? {
         observations
             .enumerated()
-            .map { index, observation in
-                (
-                    observation: observation,
-                    score: cardRectangleScore(
-                        metrics: cardRectangleMetrics(for: observation),
-                        confidence: observation.confidence,
-                        visionOrder: index
-                    )
-                )
+            .compactMap { index, observation in
+                cardRectangleScore(
+                    metrics: cardRectangleMetrics(for: observation),
+                    confidence: observation.confidence,
+                    visionOrder: index
+                ).map { (observation: observation, score: $0) }
             }
             .filter { $0.score >= minimumAcceptableCardScore }
             .max { $0.score < $1.score }?
@@ -94,24 +91,34 @@ actor OCRService {
     static func bestCardRectIndex(candidates: [(rect: CGRect, confidence: Float)]) -> Int? {
         candidates
             .enumerated()
-            .map { index, candidate in
-                (
-                    index: index,
-                    score: cardRectangleScore(
-                        metrics: cardRectangleMetrics(for: candidate.rect),
-                        confidence: candidate.confidence,
-                        visionOrder: index
-                    )
-                )
+            .compactMap { index, candidate in
+                cardRectangleScore(
+                    metrics: cardRectangleMetrics(for: candidate.rect),
+                    confidence: candidate.confidence,
+                    visionOrder: index
+                ).map { (index: index, score: $0) }
             }
             .filter { $0.score >= minimumAcceptableCardScore }
             .max { $0.score < $1.score }?
             .index
     }
 
-    /// 名刺外周として採用する最低スコア。ロゴ・QR・罫線などの局所矩形しか
+    /// スコア各項の重み。正規化の分母 total と常に一致させるため一元管理する。
+    private enum CardScoreWeight {
+        static let confidence: CGFloat = 1.5
+        static let aspect: CGFloat = 1.5
+        static let area: CGFloat = 2.5
+        static let edge: CGFloat = 1.4
+        static let shape: CGFloat = 1.0
+        static let centrality: CGFloat = 0.8
+        /// 全項目が満点のときの重み和（= 8.7）。スコアを 0〜1 へ正規化する分母。
+        static let total: CGFloat = confidence + aspect + area + edge + shape + centrality
+    }
+
+    /// 名刺外周として採用する最低スコア（正規化値）。ロゴ・QR・罫線などの局所矩形しか
     /// 検出できなかった場合は候補なし（= 元画像維持）へ倒すための下限（#187）。
-    private static let minimumAcceptableCardScore: CGFloat = 5.3
+    /// 旧絶対値 5.3 / 重み和 8.7 = 0.609 と同じ分割になる値。
+    private static let minimumAcceptableCardScore: CGFloat = 0.61
 
     private struct CardRectangleMetrics {
         let area: CGFloat
@@ -171,18 +178,19 @@ actor OCRService {
         )
     }
 
+    /// 名刺外周らしさの正規化スコア（0〜1）。足切り条件を満たさない候補は nil。
     private static func cardRectangleScore(
         metrics: CardRectangleMetrics,
         confidence: Float,
         visionOrder: Int
-    ) -> CGFloat {
+    ) -> CGFloat? {
         let area = metrics.area
         // ロゴやQRコード程度の小矩形は候補から外し、画面をほぼ覆う矩形も除外する。
-        guard (0.055...0.92).contains(area) else { return -1 }
+        guard (0.055...0.92).contains(area) else { return nil }
 
         let shortLongAspect = metrics.shortLongAspect
-        guard (0.32...0.90).contains(shortLongAspect) else { return -1 }
-        guard metrics.oppositeSideBalance > 0.55 else { return -1 }
+        guard (0.32...0.90).contains(shortLongAspect) else { return nil }
+        guard metrics.oppositeSideBalance > 0.55 else { return nil }
 
         let businessCardAspect: CGFloat = 0.58
         let aspectScore = max(0, 1 - abs(shortLongAspect - businessCardAspect) / 0.35)
@@ -198,14 +206,15 @@ actor OCRService {
         let smallAreaPenalty = area < 0.14 ? (0.14 - area) / 0.14 * 1.8 : 0
         let orderPenalty = CGFloat(visionOrder) * 0.04
 
-        return CGFloat(confidence) * 1.5
-            + aspectScore * 1.5
-            + areaScore * 2.5
-            + edgeScore * 1.4
-            + shapeScore
-            + centralityScore * 0.8
+        let weightedSum = CGFloat(confidence) * CardScoreWeight.confidence
+            + aspectScore * CardScoreWeight.aspect
+            + areaScore * CardScoreWeight.area
+            + edgeScore * CardScoreWeight.edge
+            + shapeScore * CardScoreWeight.shape
+            + centralityScore * CardScoreWeight.centrality
             - smallAreaPenalty
             - orderPenalty
+        return weightedSum / CardScoreWeight.total
     }
 
     private static func distance(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
