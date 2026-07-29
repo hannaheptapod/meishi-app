@@ -757,7 +757,10 @@ final class EMeishiUITests: XCTestCase {
             return
         }
 
-        XCTAssertFalse(cardSearchField.exists, "検索欄を設定のNavigation Itemへ持ち越さない")
+        XCTAssertFalse(
+            cardSearchField.isHittable,
+            "設定表示中は背面に保持した一覧検索欄を操作対象にしない"
+        )
         XCTAssertFalse(nativeTabBar.isHittable)
 
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -782,7 +785,10 @@ final class EMeishiUITests: XCTestCase {
         duplicateAction.tap()
 
         XCTAssertTrue(app.navigationBars.staticTexts["重複チェック"].waitForExistence(timeout: Self.shortTimeout))
-        XCTAssertFalse(cardSearchField.exists, "検索欄を重複確認のNavigation Itemへ持ち越さない")
+        XCTAssertFalse(
+            cardSearchField.isHittable,
+            "重複確認表示中は背面に保持した一覧検索欄を操作対象にしない"
+        )
         XCTAssertFalse(nativeTabBar.isHittable)
 
         app.navigationBars.buttons.element(boundBy: 0).tap()
