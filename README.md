@@ -59,7 +59,7 @@ flowchart TD
 
 ```text
 meishi-app/
-├── CLAUDE.md
+├── AGENTS.md
 ├── README.md
 ├── eMeishi/
 │   ├── Info.plist                              # Release 用（UIFileSharingEnabled=false）
