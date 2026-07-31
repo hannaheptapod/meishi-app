@@ -74,7 +74,10 @@ struct CardAdditionFlowStateTests {
         #expect(state == .dismissingCamera(to: .prepareBatch))
         state.send(.cameraDismissed)
         #expect(state == .preparingCameraBatch)
+        #expect(state.presentation == .alert)
         state.send(.cameraPreparationSucceeded)
+        #expect(state == .dismissingAlert(to: .batchReview))
+        state.send(.alertDismissed)
         #expect(state == .batchReview)
     }
 
@@ -131,6 +134,30 @@ struct CardAdditionFlowStateTests {
         #expect(dismissalFirst == .dismissingPhotoPicker(shouldImport: true))
         dismissalFirst.send(.photoPickerDismissed)
         #expect(dismissalFirst == .importingPhotos)
+    }
+
+    @Test
+    func photoImportPresentsProgressAlertAndWaitsForItsDismissalBeforeReview() {
+        var state = CardAdditionFlowState.importingPhotos
+        #expect(state.presentation == .alert)
+
+        state.send(.photoImportSucceeded)
+        #expect(state == .dismissingAlert(to: .batchReview))
+        #expect(state.presentation == nil)
+        state.send(.alertDismissed)
+        #expect(state == .batchReview)
+    }
+
+    @Test
+    func photoImportFailurePresentsMessageOnlyAfterProgressAlertDismissal() {
+        let message = CardAdditionMessage(title: "写真の読込み", message: "合成テスト用メッセージ")
+        var state = CardAdditionFlowState.importingPhotos
+
+        state.send(.photoImportFailed(message))
+        #expect(state == .dismissingAlert(to: .message(message)))
+        state.send(.alertDismissed)
+        #expect(state == .message(message))
+        #expect(state.presentation == .alert)
     }
 
     @Test
