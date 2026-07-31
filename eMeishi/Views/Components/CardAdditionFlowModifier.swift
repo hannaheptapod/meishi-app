@@ -65,42 +65,11 @@ struct CardAdditionFlowModifier: ViewModifier {
                     onDismissalCompleted: completeObservedPresentationDismissal
                 )
                 .frame(width: 0, height: 0)
-            }
-            .overlay {
-                if flowState == .importingPhotos
-                    || flowState == .preparingCameraBatch
-                    || flowState == .cancellingBatch {
-                    ZStack {
-                        Color.black.opacity(0.12)
-                            .ignoresSafeArea()
-                        VStack(spacing: AppTheme.Spacing.medium) {
-                            ProgressView(
-                                flowState == .cancellingBatch
-                                    ? "キャンセル中"
-                                    : (flowState == .preparingCameraBatch
-                                        ? "撮影内容を準備中"
-                                        : "写真を読み込み中")
-                            )
-                            if flowState != .cancellingBatch {
-                                Button("キャンセル", role: .cancel) {
-                                    cancelBatchPreparation()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                            .padding(AppTheme.Spacing.large)
-                            .background(.regularMaterial, in: .rect(
-                                cornerRadius: AppTheme.contentCornerRadius,
-                                style: .continuous
-                            ))
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(
-                        flowState == .preparingCameraBatch
-                            ? "撮影内容を準備中"
-                            : (flowState == .cancellingBatch ? "キャンセル中" : "写真を読み込み中")
-                    )
-                }
+                BatchProgressAlertPresenter(
+                    title: progressAlertTitle,
+                    onCancel: { cancelBatchPreparation() }
+                )
+                .frame(width: 0, height: 0)
             }
             .onChange(of: navigationState.isCardAdditionRequested) { _, requested in
                 if requested {
@@ -219,6 +188,20 @@ struct CardAdditionFlowModifier: ViewModifier {
                 }
             }
         )
+    }
+
+    /// 進行アラートのタイトル。SwiftUIの`.alert(item:)`はitemをnilへ戻す
+    /// programmatic dismissを取りこぼすことがあるため、進行表示だけは
+    /// BatchProgressAlertPresenterでUIAlertControllerを直接提示・取り下げる。
+    private var progressAlertTitle: String? {
+        switch flowState {
+        case .importingPhotos:
+            "写真を読み込み中"
+        case .preparingCameraBatch:
+            "撮影内容を準備中"
+        default:
+            nil
+        }
     }
 
     // MARK: - Presented content
@@ -422,10 +405,12 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func prepareCameraBatch(generation: UUID) async {
+        let progressAlertShownAt = ContinuousClock.now
         do {
             try Task.checkCancellation()
             try await PendingOCRStore.shared.persist(batchInputs, queueID: generation)
             try Task.checkCancellation()
+            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
             guard batchGeneration == generation,
                   flowState == .preparingCameraBatch else { return }
             isPendingQueueAvailable = true
@@ -434,6 +419,7 @@ struct CardAdditionFlowModifier: ViewModifier {
         } catch is CancellationError {
             return
         } catch {
+            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
             guard batchGeneration == generation,
                   flowState == .preparingCameraBatch else { return }
             isPendingQueueAvailable = false
@@ -454,6 +440,7 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func importSelectedPhotos(_ items: [PhotosPickerItem], generation: UUID) async {
+        let progressAlertShownAt = ContinuousClock.now
         defer {
             if batchGeneration == generation {
                 selectedPhotoItems = []
@@ -472,6 +459,9 @@ struct CardAdditionFlowModifier: ViewModifier {
 
         guard !batchInputs.isEmpty else {
             let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
+            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
+            guard batchGeneration == generation,
+                  flowState == .importingPhotos else { return }
             flowState.send(.photoImportFailed(CardAdditionMessage(
                 title: "写真の読込み",
                 message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
@@ -496,10 +486,21 @@ struct CardAdditionFlowModifier: ViewModifier {
             isPendingQueueAvailable = false
             batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
         }
+        await delayUntilProgressAlertSettled(since: progressAlertShownAt)
         guard batchGeneration == generation,
               flowState == .importingPhotos else { return }
         beginCardMutationSessionIfNeeded()
         flowState.send(.photoImportSucceeded)
+    }
+
+    /// 進行アラートのpresentation animation完了前にitemをnilへ戻すと、
+    /// SwiftUIがdismiss要求を取りこぼしてアラートが画面に残留する。
+    /// 最低表示時間を保証して、遷移イベントを必ずanimation完了後に送る。
+    private func delayUntilProgressAlertSettled(since start: ContinuousClock.Instant) async {
+        let minimumDwell: Duration = .milliseconds(800)
+        let elapsed = ContinuousClock.now - start
+        guard elapsed < minimumDwell else { return }
+        try? await Task.sleep(for: minimumDwell - elapsed)
     }
 
     private func loadPendingOCR() async {
@@ -593,7 +594,7 @@ struct CardAdditionFlowModifier: ViewModifier {
         switch flowState {
         case .photoPicker:
             .photoPicker
-        case .pendingOCRPrompt, .launchAlert, .message:
+        case .pendingOCRPrompt, .launchAlert, .message, .importingPhotos, .preparingCameraBatch:
             .alert
         default:
             nil
