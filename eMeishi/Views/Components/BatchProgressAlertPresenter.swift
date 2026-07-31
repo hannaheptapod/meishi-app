@@ -10,6 +10,9 @@ import UIKit
 struct BatchProgressAlertPresenter: UIViewControllerRepresentable {
     /// 表示するタイトル。nilで取り下げ。表示中のタイトル変更にも追随する
     let title: String?
+    /// presentation animationの実完了通知。呼び出し側はこれを受けてから
+    /// 取り下げを伴う状態遷移を送る（固定時間待機の代わり）
+    let onPresented: () -> Void
     let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -22,6 +25,7 @@ struct BatchProgressAlertPresenter: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: ProbeViewController, context: Context) {
         let coordinator = context.coordinator
+        coordinator.onPresented = onPresented
         coordinator.onCancel = onCancel
 
         if let title {
@@ -56,6 +60,7 @@ struct BatchProgressAlertPresenter: UIViewControllerRepresentable {
     @MainActor
     final class Coordinator {
         private(set) weak var presentedAlert: UIAlertController?
+        var onPresented: () -> Void = {}
         var onCancel: () -> Void = {}
 
         func present(title: String, from controller: UIViewController) {
@@ -71,7 +76,11 @@ struct BatchProgressAlertPresenter: UIViewControllerRepresentable {
                 self?.onCancel()
             })
             presentedAlert = alert
-            controller.present(alert, animated: true)
+            controller.present(alert, animated: true) { [weak self, weak alert] in
+                // キャンセル等で別状態へ移った後に届いた完了通知は無視する
+                guard let self, let alert, self.presentedAlert === alert else { return }
+                self.onPresented()
+            }
         }
 
         func dismissIfNeeded() {

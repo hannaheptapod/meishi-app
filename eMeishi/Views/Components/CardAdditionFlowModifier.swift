@@ -29,6 +29,8 @@ struct CardAdditionFlowModifier: ViewModifier {
     @State private var shouldAutoPromptPendingOCR = true
     @State private var contextRefreshDeferralToken: UUID?
     @State private var didSaveCardInCurrentSheet = false
+    @State private var isProgressAlertPresented = false
+    @State private var pendingProgressAlertWork: (() -> Void)?
 
     func body(content: Content) -> some View {
         content
@@ -67,6 +69,13 @@ struct CardAdditionFlowModifier: ViewModifier {
                 .frame(width: 0, height: 0)
                 BatchProgressAlertPresenter(
                     title: progressAlertTitle,
+                    onPresented: {
+                        isProgressAlertPresented = true
+                        if let work = pendingProgressAlertWork {
+                            pendingProgressAlertWork = nil
+                            work()
+                        }
+                    },
                     onCancel: { cancelBatchPreparation() }
                 )
                 .frame(width: 0, height: 0)
@@ -85,6 +94,10 @@ struct CardAdditionFlowModifier: ViewModifier {
                 presentDeferredPromptOrRequest()
             }
             .onChange(of: flowState) { _, state in
+                if state != .importingPhotos && state != .preparingCameraBatch {
+                    isProgressAlertPresented = false
+                    pendingProgressAlertWork = nil
+                }
                 guard state == .idle else { return }
                 presentDeferredPromptOrRequest()
             }
@@ -405,26 +418,27 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func prepareCameraBatch(generation: UUID) async {
-        let progressAlertShownAt = ContinuousClock.now
         do {
             try Task.checkCancellation()
             try await PendingOCRStore.shared.persist(batchInputs, queueID: generation)
             try Task.checkCancellation()
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .preparingCameraBatch else { return }
-            isPendingQueueAvailable = true
-            beginCardMutationSessionIfNeeded()
-            flowState.send(.cameraPreparationSucceeded)
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .preparingCameraBatch else { return }
+                isPendingQueueAvailable = true
+                beginCardMutationSessionIfNeeded()
+                flowState.send(.cameraPreparationSucceeded)
+            }
         } catch is CancellationError {
             return
         } catch {
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .preparingCameraBatch else { return }
-            isPendingQueueAvailable = false
-            batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-            flowState.send(.cameraPreparationFailed)
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .preparingCameraBatch else { return }
+                isPendingQueueAvailable = false
+                batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+                flowState.send(.cameraPreparationFailed)
+            }
         }
     }
 
@@ -440,7 +454,6 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func importSelectedPhotos(_ items: [PhotosPickerItem], generation: UUID) async {
-        let progressAlertShownAt = ContinuousClock.now
         defer {
             if batchGeneration == generation {
                 selectedPhotoItems = []
@@ -459,13 +472,14 @@ struct CardAdditionFlowModifier: ViewModifier {
 
         guard !batchInputs.isEmpty else {
             let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .importingPhotos else { return }
-            flowState.send(.photoImportFailed(CardAdditionMessage(
-                title: "写真の読込み",
-                message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
-            )))
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .importingPhotos else { return }
+                flowState.send(.photoImportFailed(CardAdditionMessage(
+                    title: "写真の読込み",
+                    message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
+                )))
+            }
             return
         }
 
@@ -486,21 +500,23 @@ struct CardAdditionFlowModifier: ViewModifier {
             isPendingQueueAvailable = false
             batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
         }
-        await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-        guard batchGeneration == generation,
-              flowState == .importingPhotos else { return }
-        beginCardMutationSessionIfNeeded()
-        flowState.send(.photoImportSucceeded)
+        performWhenProgressAlertSettled {
+            guard batchGeneration == generation,
+                  flowState == .importingPhotos else { return }
+            beginCardMutationSessionIfNeeded()
+            flowState.send(.photoImportSucceeded)
+        }
     }
 
-    /// 進行アラートのpresentation animation完了前にitemをnilへ戻すと、
-    /// SwiftUIがdismiss要求を取りこぼしてアラートが画面に残留する。
-    /// 最低表示時間を保証して、遷移イベントを必ずanimation完了後に送る。
-    private func delayUntilProgressAlertSettled(since start: ContinuousClock.Instant) async {
-        let minimumDwell: Duration = .milliseconds(800)
-        let elapsed = ContinuousClock.now - start
-        guard elapsed < minimumDwell else { return }
-        try? await Task.sleep(for: minimumDwell - elapsed)
+    /// 進行アラートのpresentation animation完了前に取り下げを伴う遷移を送ると、
+    /// dismiss要求がanimationと競合してアラートが画面に残留する。
+    /// UIAlertControllerのpresent完了通知（onPresented）を受けるまで処理を保留する。
+    private func performWhenProgressAlertSettled(_ work: @escaping () -> Void) {
+        if isProgressAlertPresented {
+            work()
+        } else {
+            pendingProgressAlertWork = work
+        }
     }
 
     private func loadPendingOCR() async {
