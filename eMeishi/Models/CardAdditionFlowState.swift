@@ -25,6 +25,7 @@ nonisolated enum CardAdditionPostSheetDestination: Equatable, Sendable {
 nonisolated enum CardAdditionPostAlertDestination: Equatable, Sendable {
     case idle
     case batchReview
+    case message(CardAdditionMessage)
 }
 
 /// 名刺追加フローで表示するエラー。表示状態に値を含めることで、
@@ -78,10 +79,11 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
             .fullScreenCover
         case .photoPicker:
             .photoPicker
-        case .pendingOCRPrompt, .launchAlert, .message:
+        // 読み込み・準備の進行表示はシステム標準アラートで提示する
+        case .pendingOCRPrompt, .launchAlert, .message, .importingPhotos, .preparingCameraBatch:
             .alert
-        case .idle, .dismissingSheet, .dismissingCamera, .preparingCameraBatch,
-             .cancellingBatch, .dismissingPhotoPicker, .importingPhotos, .dismissingAlert:
+        case .idle, .dismissingSheet, .dismissingCamera,
+             .cancellingBatch, .dismissingPhotoPicker, .dismissingAlert:
             nil
         }
     }
@@ -143,11 +145,12 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
         case (.dismissingPhotoPicker(let shouldImport), .photoPickerDismissed):
             self = shouldImport ? .importingPhotos : .idle
 
+        // 進行アラートが画面階層から外れてから次のpresentationを開始する
         case (.importingPhotos, .photoImportSucceeded):
-            self = .batchReview
+            self = .dismissingAlert(to: .batchReview)
 
         case (.importingPhotos, .photoImportFailed(let message)):
-            self = .message(message)
+            self = .dismissingAlert(to: .message(message))
 
         case (.camera, .cameraFinished(let hasImages)):
             self = .dismissingCamera(to: hasImages ? .prepareBatch : .idle)
@@ -162,7 +165,7 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
 
         case (.preparingCameraBatch, .cameraPreparationSucceeded),
              (.preparingCameraBatch, .cameraPreparationFailed):
-            self = .batchReview
+            self = .dismissingAlert(to: .batchReview)
 
         case (.idle, .pendingOCRFound):
             self = .pendingOCRPrompt
@@ -182,11 +185,15 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
                 self = .idle
             case .batchReview:
                 self = .batchReview
+            case .message(let message):
+                self = .message(message)
             }
 
-        case (.idle, .showMessage(let message)),
-             (.importingPhotos, .showMessage(let message)):
+        case (.idle, .showMessage(let message)):
             self = .message(message)
+
+        case (.importingPhotos, .showMessage(let message)):
+            self = .dismissingAlert(to: .message(message))
 
         // 永続キューを破棄し終えるまでは次の追加処理を開始しない。
         case (.preparingCameraBatch, .beginBatchCancellation),
