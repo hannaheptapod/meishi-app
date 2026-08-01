@@ -43,6 +43,22 @@ struct ContentView: View {
             }
         }
         .cardAdditionFlow()
+        // 設定は幅クラスに関わらずルートからのsheetで提示する。
+        // Split Viewのdetail列に出すと一覧の選択状態と無関係な画面が詳細位置を占有する
+        .sheet(isPresented: $navigationState.isSettingsPresented) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完了") {
+                                navigationState.isSettingsPresented = false
+                            }
+                            .fontWeight(.semibold)
+                            .accessibilityIdentifier("settingsDoneButton")
+                        }
+                    }
+            }
+        }
         .environmentObject(cardListViewModel)
         .environmentObject(navigationState)
         .overlay(alignment: .bottomTrailing) {
@@ -346,8 +362,6 @@ struct ContentView: View {
     @ViewBuilder
     private func cardRouteContent(_ route: CardListRoute) -> some View {
         switch route {
-        case .settings:
-            SettingsView()
         case .duplicates:
             DuplicateListView(pairs: $cardListViewModel.duplicatePairs, onMerge: {
                 cardListViewModel.fetchCards()

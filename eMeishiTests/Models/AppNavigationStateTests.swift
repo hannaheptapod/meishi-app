@@ -54,14 +54,14 @@ struct AppNavigationStateTests {
     @Test func additionRequestPreservesSelectedTabAndNavigationState() {
         let state = AppNavigationState()
         state.selectedTab = .insights
-        state.showCardRoute(.settings)
+        state.showCardRoute(.duplicates)
         state.insightsPath.append("synthetic-insight-detail")
 
         state.requestCardAddition()
 
         #expect(state.isCardAdditionRequested)
         #expect(state.selectedTab == .insights)
-        #expect(state.activeCardsRoute == .settings)
+        #expect(state.activeCardsRoute == .duplicates)
         #expect(state.insightsPath.count == 1)
     }
 
@@ -82,9 +82,9 @@ struct AppNavigationStateTests {
     @Test func cardNavigationUsesTheCanonicalRoute() {
         let state = AppNavigationState()
 
-        state.showCardRoute(.settings)
+        state.showCardRoute(.duplicates)
 
-        #expect(state.activeCardsRoute == .settings)
+        #expect(state.activeCardsRoute == .duplicates)
         #expect(state.selectedCardURI == nil)
     }
 
@@ -113,20 +113,25 @@ struct AppNavigationStateTests {
         #expect(state.selectedCardURI == nil)
     }
 
-    @Test func settingsSelectsCardsAndUsesTheCanonicalRoute() {
+    @Test func settingsSelectsCardsAndPresentsAsRootSheet() {
         let state = AppNavigationState()
         state.selectedTab = .insights
+        let syntheticURI = URL(string: "x-coredata://synthetic/card/settings-sheet")!
+        state.showCardDetail(syntheticURI)
 
         state.showSettings()
 
         #expect(state.selectedTab == .cards)
-        #expect(state.activeCardsRoute == .settings)
+        #expect(state.isSettingsPresented)
+        // 設定はsheet提示なのでSplit Viewのdetail列（route）を奪わない
+        #expect(state.activeCardsRoute == .detail(syntheticURI))
     }
 
     @Test func navigationBackReturnsEveryDestinationToTheCardsRoot() {
         let state = AppNavigationState()
+        let syntheticURI = URL(string: "x-coredata://synthetic/card/back-route")!
 
-        for route in [CardListRoute.settings, .duplicates] {
+        for route in [CardListRoute.detail(syntheticURI), .duplicates] {
             state.showCardRoute(route)
             state.returnToCardsRoot()
 
