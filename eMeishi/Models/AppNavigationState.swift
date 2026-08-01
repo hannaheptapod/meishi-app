@@ -4,7 +4,6 @@ import SwiftUI
 
 nonisolated enum CardListRoute: Hashable, Sendable {
     case detail(URL)
-    case settings
     case duplicates
 }
 
@@ -52,6 +51,9 @@ final class AppNavigationState: ObservableObject {
     @Published var externalFilter: CardListExternalFilter?
     @Published var isCardAdditionRequested = false
     @Published var isAISearchPaywallRequested = false
+    /// 設定はコンテンツ階層（一覧→詳細）に属さないため、Split Viewのdetail列ではなく
+    /// ルートからのsheetとして提示する
+    @Published var isSettingsPresented = false
     @Published private(set) var cardListRootMode: CardListRootMode = .browsing
     @Published private(set) var isCardListBackgroundInteractionBlocked = false
 
@@ -119,8 +121,8 @@ final class AppNavigationState: ObservableObject {
 
     func showSettings() {
         selectedTab = .cards
-        showCardRoute(.settings)
         cardListRootMode = .browsing
+        isSettingsPresented = true
     }
 
     func setCardListSelectionActive(_ isActive: Bool) {
