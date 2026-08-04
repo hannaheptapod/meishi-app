@@ -4,7 +4,7 @@
     "bundle_id": "com.jinks.emeishi",
     "project": "eMeishi.xcodeproj",
     "scheme": "eMeishi",
-    "simulator_udid": "740123E4-03DB-4069-ABD0-3E444AF48965"
+    "simulator_udid": "6F2968B1-9C55-41B4-9A3A-B8434AE50760"
   },
   "paths": {
     "plan": ".asc/screenshots.json",
@@ -18,12 +18,12 @@
   },
   "devices": {
     "iphone": {
-      "udid": "740123E4-03DB-4069-ABD0-3E444AF48965",
+      "udid": "6F2968B1-9C55-41B4-9A3A-B8434AE50760",
       "raw_dir": "./screenshots/raw/iphone69",
       "device_type": "APP_IPHONE_67"
     },
     "ipad": {
-      "udid": "709B3B5B-4D5B-49ED-9965-2AABD6A23FEF",
+      "udid": "BF344682-0630-4809-8DA8-0525B1E7E146",
       "raw_dir": "./screenshots/raw/ipad13",
       "device_type": "APP_IPAD_PRO_3GEN_129"
     }
