@@ -734,7 +734,7 @@ final class EMeishiUITests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsOpensFromMenuAndHidesRootNavigation() throws {
+    func testSettingsOpensFromMenuAsRootSheet() throws {
         let ellipsisMenu = app.buttons["ellipsisMenu"]
         XCTAssertTrue(ellipsisMenu.waitForExistence(timeout: Self.defaultTimeout))
         ellipsisMenu.tap()
@@ -743,33 +743,23 @@ final class EMeishiUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: Self.shortTimeout))
         settings.tap()
 
+        // 設定はSplit Viewのdetail列ではなく、幅クラス共通のルートsheetとして提示する
         XCTAssertTrue(app.navigationBars.staticTexts["設定"].waitForExistence(timeout: Self.shortTimeout))
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            XCTAssertEqual(app.searchFields.count, 1)
-            XCTAssertTrue(cardSearchField.isHittable, "Split Viewの一覧列は設定表示中も操作可能に保つ")
-            XCTAssertTrue(cardsTab.isHittable)
-            XCTAssertTrue(addButton.isHittable, "Split Viewでは一覧側の追加操作を維持する")
-
-            let card = cardRow("山田 太郎")
-            XCTAssertTrue(card.waitForExistence(timeout: Self.shortTimeout))
-            card.tap()
-            XCTAssertTrue(app.navigationBars.staticTexts["名刺詳細"].waitForExistence(timeout: Self.shortTimeout))
-            return
-        }
-
+        let done = app.buttons["settingsDoneButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: Self.shortTimeout))
         XCTAssertFalse(
             cardSearchField.isHittable,
-            "設定表示中は背面に保持した一覧検索欄を操作対象にしない"
+            "設定sheet表示中は背面に保持した一覧検索欄を操作対象にしない"
         )
         XCTAssertFalse(nativeTabBar.isHittable)
 
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(nativeTabBar.isHittable)
+        done.tap()
+        XCTAssertTrue(cardSearchField.waitForExistence(timeout: Self.shortTimeout))
+        XCTAssertTrue(cardSearchField.isHittable)
         XCTAssertTrue(
             addButton.isHittable,
             "追加ボタン復帰状態: exists=\(addButton.exists), frame=\(addButton.frame), appFrame=\(app.frame)"
         )
-        XCTAssertTrue(cardSearchField.isHittable)
     }
 
     @MainActor

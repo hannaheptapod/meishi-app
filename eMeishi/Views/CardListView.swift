@@ -475,7 +475,7 @@ struct CardListView: View {
             viewModel.submitUnifiedSearch()
         case "FormOCR":  requestPresentation(.sheet(.mockOCRForm))
         case "Paywall":  requestPresentation(.sheet(.paywall))
-        case "Settings": navigationState.showCardRoute(.settings)
+        case "Settings": navigationState.showSettings()
         default: break
         }
     }
@@ -571,7 +571,7 @@ struct CardListView: View {
                 .accessibilityIdentifier("tagManager")
                 Divider()
                 Button {
-                    navigationState.showCardRoute(.settings)
+                    navigationState.showSettings()
                 } label: {
                     Label("設定", systemImage: "gearshape")
                 }
