@@ -33,6 +33,8 @@ develop
 
 > **release/\* への push は「ASC 提出前」なら何回でも可。** TestFlight 検証で bug が見つかったら普通に修正 commit を積んで push する。合格ビルドが決まった時点（= ASC 提出開始時点）が境界線。**提出後は取り下げない限り push 禁止**（詳細はフェーズ 5）。
 
+> **push 直前の鮮度確認（必須）。** 手順 5 の push を実行する直前に `git fetch origin` → `git log origin/release/<x.y.z>..origin/develop` で develop 側の未取り込みコミットを確認する。pre-build-check（sentinel）を通した準備時点から develop が進んでいれば、push せずに差分内容を提示し、取り込み要否の判断を仰いでから pre-build-check をやり直す。ユーザーの push 承認は「その時点の最新意図」として扱い、準備済み内容の承認と解釈しない（v1.2.0 で #197 マージ済みなのに旧 HEAD を push し、修正が入らない TestFlight ビルドを作った事故の再発防止）。
+
 ## フェーズ 3: メタデータ準備（Xcode Cloud は動かない）
 
 ```
@@ -47,6 +49,8 @@ develop
 ```
 
 > **メタデータは build に無関係なので `release/*` に載せない。** develop 側で管理することで `release/*` の Archive に影響させない。
+
+> **What's New・スクリーンショット要否は変更全量から判断する（必須）。** 手順 2〜3 の前に `git log <前バージョンタグ>..origin/release/<x.y.z> --no-merges` の**全件**（`head` で切り捨てない）と各 PR 本文を列挙し、ユーザー向け変更として分類したリストをユーザーに提示して取捨選択の確認を得る。確認後に What's New を書く。スクリーンショットは既存画像の撮影時期（画像内の日付・git 履歴）と UI 変更の有無を突き合わせて撮り直し要否を判断する。セッション中に自分が触った変更だけから書かない（v1.2.0 で UI 全面刷新を見落とした What's New を PR 取り下げに至らせた事故の再発防止）。
 
 ## フェーズ 4: ストア提出（Xcode Cloud は動かない）
 
