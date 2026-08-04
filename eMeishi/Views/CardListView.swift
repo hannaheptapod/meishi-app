@@ -23,6 +23,7 @@ struct CardListView: View {
 
     @EnvironmentObject private var viewModel: CardListViewModel
     @EnvironmentObject private var navigationState: AppNavigationState
+    @EnvironmentObject private var rootPresentationRequests: AppRootPresentationRequests
     @State private var presentationState = CardListPresentationState()
     @State private var confirmationCommitState = DismissalCommitState<CardListConfirmationCommit>()
     @StateObject private var contextMenuInteractionGate = ContextMenuInteractionGate<CardListContextMenuAction>()
@@ -475,7 +476,9 @@ struct CardListView: View {
             viewModel.submitUnifiedSearch()
         case "FormOCR":  requestPresentation(.sheet(.mockOCRForm))
         case "Paywall":  requestPresentation(.sheet(.paywall))
-        case "Settings": navigationState.showSettings()
+        case "Settings":
+            navigationState.prepareForSettingsSheet()
+            rootPresentationRequests.requestSettingsSheet()
         default: break
         }
     }
@@ -571,7 +574,8 @@ struct CardListView: View {
                 .accessibilityIdentifier("tagManager")
                 Divider()
                 Button {
-                    navigationState.showSettings()
+                    navigationState.prepareForSettingsSheet()
+                    rootPresentationRequests.requestSettingsSheet()
                 } label: {
                     Label("設定", systemImage: "gearshape")
                 }

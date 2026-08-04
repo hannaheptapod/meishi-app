@@ -51,9 +51,6 @@ final class AppNavigationState: ObservableObject {
     @Published var externalFilter: CardListExternalFilter?
     @Published var isCardAdditionRequested = false
     @Published var isAISearchPaywallRequested = false
-    /// 設定はコンテンツ階層（一覧→詳細）に属さないため、Split Viewのdetail列ではなく
-    /// ルートからのsheetとして提示する
-    @Published var isSettingsPresented = false
     @Published private(set) var cardListRootMode: CardListRootMode = .browsing
     @Published private(set) var isCardListBackgroundInteractionBlocked = false
 
@@ -119,10 +116,11 @@ final class AppNavigationState: ObservableObject {
         isAISearchPaywallRequested = false
     }
 
-    func showSettings() {
+    /// 設定sheetを開く前のタブ・モード整理。設定の提示要求そのものは
+    /// AppRootPresentationRequestsが保持し、CardAdditionFlowStateが表示を所有する
+    func prepareForSettingsSheet() {
         selectedTab = .cards
         cardListRootMode = .browsing
-        isSettingsPresented = true
     }
 
     func setCardListSelectionActive(_ isActive: Bool) {

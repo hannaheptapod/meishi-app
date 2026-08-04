@@ -46,6 +46,7 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
     case idle
     case chooser
     case aiSearchPaywall
+    case settings
     case manualForm
     case batchReview
     case dismissingSheet(to: CardAdditionPostSheetDestination)
@@ -73,7 +74,7 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
 
     var presentation: Presentation? {
         switch self {
-        case .chooser, .aiSearchPaywall, .manualForm, .batchReview:
+        case .chooser, .aiSearchPaywall, .settings, .manualForm, .batchReview:
             .sheet
         case .camera:
             .fullScreenCover
@@ -96,6 +97,9 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
         case (.idle, .requestAISearchPaywall):
             self = .aiSearchPaywall
 
+        case (.idle, .requestSettings):
+            self = .settings
+
         case (.idle, .showLaunchAlert(let alert)):
             self = .launchAlert(alert)
 
@@ -104,6 +108,7 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
 
         case (.chooser, .sheetDismissRequested),
              (.aiSearchPaywall, .sheetDismissRequested),
+             (.settings, .sheetDismissRequested),
              (.manualForm, .sheetDismissRequested):
             self = .dismissingSheet(to: .idle)
 
@@ -218,6 +223,7 @@ nonisolated enum CardAdditionFlowState: Equatable, Sendable {
 nonisolated enum CardAdditionFlowEvent: Equatable, Sendable {
     case requestAddition
     case requestAISearchPaywall
+    case requestSettings
     case showLaunchAlert(AppLaunchAlert)
     case selectAction(CardAdditionAction)
     case sheetDismissRequested

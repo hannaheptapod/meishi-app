@@ -90,6 +90,11 @@ struct CardAdditionFlowModifier: ViewModifier {
                     presentRequestedRootSheetIfPossible()
                 }
             }
+            .onChange(of: rootPresentationRequests.isSettingsSheetPending) { _, requested in
+                if requested {
+                    presentRequestedRootSheetIfPossible()
+                }
+            }
             .onChange(of: rootPresentationRequests.queue) { _, _ in
                 presentDeferredPromptOrRequest()
             }
@@ -128,6 +133,8 @@ struct CardAdditionFlowModifier: ViewModifier {
                     .chooser
                 case .aiSearchPaywall:
                     .aiSearchPaywall
+                case .settings:
+                    .settings
                 case .manualForm:
                     .manualForm
                 case .batchReview:
@@ -139,7 +146,7 @@ struct CardAdditionFlowModifier: ViewModifier {
             set: { destination in
                 guard destination == nil else { return }
                 switch flowState {
-                case .chooser, .aiSearchPaywall, .manualForm, .batchReview:
+                case .chooser, .aiSearchPaywall, .settings, .manualForm, .batchReview:
                     flowState.send(.sheetDismissRequested)
                 default:
                     break
@@ -240,6 +247,20 @@ struct CardAdditionFlowModifier: ViewModifier {
             PaywallView(context: .aiSearch)
                 .environmentObject(entitlementStore)
 
+        case .settings:
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完了") {
+                                flowState.send(.sheetDismissRequested)
+                            }
+                            .fontWeight(.semibold)
+                            .accessibilityIdentifier("settingsDoneButton")
+                        }
+                    }
+            }
+
         case .manualForm:
             CardFormView(onSave: {
                 recordSuccessfulCardSave()
@@ -323,7 +344,7 @@ struct CardAdditionFlowModifier: ViewModifier {
     private func presentRequestedRootSheetIfPossible() {
         guard flowState == .idle else { return }
 
-        // 同じrootのsheet所有者を1つに固定し、AI検索のPaywallと追加フローが
+        // 同じrootのsheet所有者を1つに固定し、AI検索のPaywall・追加フロー・設定が
         // 同時に提示されないよう、先に届いたユーザー操作を状態機械へ取り込む。
         if navigationState.isAISearchPaywallRequested {
             flowState.send(.requestAISearchPaywall)
@@ -331,6 +352,8 @@ struct CardAdditionFlowModifier: ViewModifier {
         } else if navigationState.isCardAdditionRequested {
             flowState.send(.requestAddition)
             navigationState.consumeCardAdditionRequest()
+        } else if rootPresentationRequests.consumeSettingsSheetRequest() {
+            flowState.send(.requestSettings)
         }
     }
 
@@ -758,6 +781,7 @@ extension View {
 private enum CardAdditionSheetDestination: String, Identifiable {
     case chooser
     case aiSearchPaywall
+    case settings
     case manualForm
     case batchReview
 

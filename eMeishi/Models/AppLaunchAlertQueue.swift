@@ -30,6 +30,8 @@ nonisolated struct AppLaunchAlertQueue: Equatable, Sendable {
 @MainActor
 final class AppRootPresentationRequests: ObservableObject {
     @Published private(set) var queue = AppLaunchAlertQueue()
+    /// 設定sheetの提示要求。実際の表示・dismissはCardAdditionFlowStateだけが所有する
+    @Published private(set) var isSettingsSheetPending = false
 
     func enqueue(_ alert: AppLaunchAlert) {
         var updatedQueue = queue
@@ -43,5 +45,16 @@ final class AppRootPresentationRequests: ObservableObject {
         guard let alert = updatedQueue.dequeue() else { return nil }
         queue = updatedQueue
         return alert
+    }
+
+    func requestSettingsSheet() {
+        guard !isSettingsSheetPending else { return }
+        isSettingsSheetPending = true
+    }
+
+    func consumeSettingsSheetRequest() -> Bool {
+        guard isSettingsSheetPending else { return false }
+        isSettingsSheetPending = false
+        return true
     }
 }
