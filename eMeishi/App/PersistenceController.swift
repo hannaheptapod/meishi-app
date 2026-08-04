@@ -87,6 +87,16 @@ struct PersistenceController {
         cards[6].addToTags(tagIT); cards[6].addToTags(tagClient)     // 田中由美: IT+取引先
 
         try? context.save()
+
+        // App Store スクリーンショット撮影時だけ一覧・グラフが埋まる件数へ増強する。
+        // 通常 UI テストは基本 9 件への assert を持つため START_SCREEN なしでは何もしない
+        if ScreenshotMode.isCaptureRun {
+            ScreenshotMockSupport.enrichPreviewForCapture(
+                context: context,
+                baseCards: cards,
+                tags: [tagImportant, tagIT, tagClient]
+            )
+        }
         return controller
     }()
 
