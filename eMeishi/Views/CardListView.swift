@@ -23,6 +23,7 @@ struct CardListView: View {
 
     @EnvironmentObject private var viewModel: CardListViewModel
     @EnvironmentObject private var navigationState: AppNavigationState
+    @EnvironmentObject private var rootPresentationRequests: AppRootPresentationRequests
     @State private var presentationState = CardListPresentationState()
     @State private var confirmationCommitState = DismissalCommitState<CardListConfirmationCommit>()
     @StateObject private var contextMenuInteractionGate = ContextMenuInteractionGate<CardListContextMenuAction>()
@@ -484,7 +485,9 @@ struct CardListView: View {
             }
         case "FormOCR":  requestPresentation(.sheet(.mockOCRForm))
         case "Paywall":  requestPresentation(.sheet(.paywall))
-        case "Settings": navigationState.showSettings()
+        case "Settings":
+            navigationState.prepareForSettingsSheet()
+            rootPresentationRequests.requestSettingsSheet()
         case "List":
             // iPad の一覧撮影は detail 列を空にせず、先頭名刺の詳細を表示した状態で撮る
             guard usesSidebarLayout else { break }
@@ -594,7 +597,8 @@ struct CardListView: View {
                 .accessibilityIdentifier("tagManager")
                 Divider()
                 Button {
-                    navigationState.showSettings()
+                    navigationState.prepareForSettingsSheet()
+                    rootPresentationRequests.requestSettingsSheet()
                 } label: {
                     Label("設定", systemImage: "gearshape")
                 }

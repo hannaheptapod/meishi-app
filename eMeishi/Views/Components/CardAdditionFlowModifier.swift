@@ -29,6 +29,8 @@ struct CardAdditionFlowModifier: ViewModifier {
     @State private var shouldAutoPromptPendingOCR = true
     @State private var contextRefreshDeferralToken: UUID?
     @State private var didSaveCardInCurrentSheet = false
+    @State private var isProgressAlertPresented = false
+    @State private var pendingProgressAlertWork: (() -> Void)?
 
     func body(content: Content) -> some View {
         content
@@ -67,6 +69,13 @@ struct CardAdditionFlowModifier: ViewModifier {
                 .frame(width: 0, height: 0)
                 BatchProgressAlertPresenter(
                     title: progressAlertTitle,
+                    onPresented: {
+                        isProgressAlertPresented = true
+                        if let work = pendingProgressAlertWork {
+                            pendingProgressAlertWork = nil
+                            work()
+                        }
+                    },
                     onCancel: { cancelBatchPreparation() }
                 )
                 .frame(width: 0, height: 0)
@@ -81,10 +90,19 @@ struct CardAdditionFlowModifier: ViewModifier {
                     presentRequestedRootSheetIfPossible()
                 }
             }
+            .onChange(of: rootPresentationRequests.isSettingsSheetPending) { _, requested in
+                if requested {
+                    presentRequestedRootSheetIfPossible()
+                }
+            }
             .onChange(of: rootPresentationRequests.queue) { _, _ in
                 presentDeferredPromptOrRequest()
             }
             .onChange(of: flowState) { _, state in
+                if state != .importingPhotos && state != .preparingCameraBatch {
+                    isProgressAlertPresented = false
+                    pendingProgressAlertWork = nil
+                }
                 guard state == .idle else { return }
                 presentDeferredPromptOrRequest()
             }
@@ -115,6 +133,8 @@ struct CardAdditionFlowModifier: ViewModifier {
                     .chooser
                 case .aiSearchPaywall:
                     .aiSearchPaywall
+                case .settings:
+                    .settings
                 case .manualForm:
                     .manualForm
                 case .batchReview:
@@ -126,7 +146,7 @@ struct CardAdditionFlowModifier: ViewModifier {
             set: { destination in
                 guard destination == nil else { return }
                 switch flowState {
-                case .chooser, .aiSearchPaywall, .manualForm, .batchReview:
+                case .chooser, .aiSearchPaywall, .settings, .manualForm, .batchReview:
                     flowState.send(.sheetDismissRequested)
                 default:
                     break
@@ -227,6 +247,20 @@ struct CardAdditionFlowModifier: ViewModifier {
             PaywallView(context: .aiSearch)
                 .environmentObject(entitlementStore)
 
+        case .settings:
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完了") {
+                                flowState.send(.sheetDismissRequested)
+                            }
+                            .fontWeight(.semibold)
+                            .accessibilityIdentifier("settingsDoneButton")
+                        }
+                    }
+            }
+
         case .manualForm:
             CardFormView(onSave: {
                 recordSuccessfulCardSave()
@@ -310,7 +344,7 @@ struct CardAdditionFlowModifier: ViewModifier {
     private func presentRequestedRootSheetIfPossible() {
         guard flowState == .idle else { return }
 
-        // 同じrootのsheet所有者を1つに固定し、AI検索のPaywallと追加フローが
+        // 同じrootのsheet所有者を1つに固定し、AI検索のPaywall・追加フロー・設定が
         // 同時に提示されないよう、先に届いたユーザー操作を状態機械へ取り込む。
         if navigationState.isAISearchPaywallRequested {
             flowState.send(.requestAISearchPaywall)
@@ -318,6 +352,8 @@ struct CardAdditionFlowModifier: ViewModifier {
         } else if navigationState.isCardAdditionRequested {
             flowState.send(.requestAddition)
             navigationState.consumeCardAdditionRequest()
+        } else if rootPresentationRequests.consumeSettingsSheetRequest() {
+            flowState.send(.requestSettings)
         }
     }
 
@@ -405,26 +441,27 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func prepareCameraBatch(generation: UUID) async {
-        let progressAlertShownAt = ContinuousClock.now
         do {
             try Task.checkCancellation()
             try await PendingOCRStore.shared.persist(batchInputs, queueID: generation)
             try Task.checkCancellation()
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .preparingCameraBatch else { return }
-            isPendingQueueAvailable = true
-            beginCardMutationSessionIfNeeded()
-            flowState.send(.cameraPreparationSucceeded)
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .preparingCameraBatch else { return }
+                isPendingQueueAvailable = true
+                beginCardMutationSessionIfNeeded()
+                flowState.send(.cameraPreparationSucceeded)
+            }
         } catch is CancellationError {
             return
         } catch {
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .preparingCameraBatch else { return }
-            isPendingQueueAvailable = false
-            batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
-            flowState.send(.cameraPreparationFailed)
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .preparingCameraBatch else { return }
+                isPendingQueueAvailable = false
+                batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
+                flowState.send(.cameraPreparationFailed)
+            }
         }
     }
 
@@ -440,7 +477,6 @@ struct CardAdditionFlowModifier: ViewModifier {
     }
 
     private func importSelectedPhotos(_ items: [PhotosPickerItem], generation: UUID) async {
-        let progressAlertShownAt = ContinuousClock.now
         defer {
             if batchGeneration == generation {
                 selectedPhotoItems = []
@@ -459,13 +495,14 @@ struct CardAdditionFlowModifier: ViewModifier {
 
         guard !batchInputs.isEmpty else {
             let reason = result.failures.first?.reason.message ?? "画像を読み込めませんでした"
-            await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-            guard batchGeneration == generation,
-                  flowState == .importingPhotos else { return }
-            flowState.send(.photoImportFailed(CardAdditionMessage(
-                title: "写真の読込み",
-                message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
-            )))
+            performWhenProgressAlertSettled {
+                guard batchGeneration == generation,
+                      flowState == .importingPhotos else { return }
+                flowState.send(.photoImportFailed(CardAdditionMessage(
+                    title: "写真の読込み",
+                    message: "読込みに失敗しました。\(reason)。もう一度お試しください。"
+                )))
+            }
             return
         }
 
@@ -486,21 +523,23 @@ struct CardAdditionFlowModifier: ViewModifier {
             isPendingQueueAvailable = false
             batchWarningMessage = "未完了の読み取り情報を保存できませんでした。アプリ終了後の再開はできませんが、このまま確認を続けられます。"
         }
-        await delayUntilProgressAlertSettled(since: progressAlertShownAt)
-        guard batchGeneration == generation,
-              flowState == .importingPhotos else { return }
-        beginCardMutationSessionIfNeeded()
-        flowState.send(.photoImportSucceeded)
+        performWhenProgressAlertSettled {
+            guard batchGeneration == generation,
+                  flowState == .importingPhotos else { return }
+            beginCardMutationSessionIfNeeded()
+            flowState.send(.photoImportSucceeded)
+        }
     }
 
-    /// 進行アラートのpresentation animation完了前にitemをnilへ戻すと、
-    /// SwiftUIがdismiss要求を取りこぼしてアラートが画面に残留する。
-    /// 最低表示時間を保証して、遷移イベントを必ずanimation完了後に送る。
-    private func delayUntilProgressAlertSettled(since start: ContinuousClock.Instant) async {
-        let minimumDwell: Duration = .milliseconds(800)
-        let elapsed = ContinuousClock.now - start
-        guard elapsed < minimumDwell else { return }
-        try? await Task.sleep(for: minimumDwell - elapsed)
+    /// 進行アラートのpresentation animation完了前に取り下げを伴う遷移を送ると、
+    /// dismiss要求がanimationと競合してアラートが画面に残留する。
+    /// UIAlertControllerのpresent完了通知（onPresented）を受けるまで処理を保留する。
+    private func performWhenProgressAlertSettled(_ work: @escaping () -> Void) {
+        if isProgressAlertPresented {
+            work()
+        } else {
+            pendingProgressAlertWork = work
+        }
     }
 
     private func loadPendingOCR() async {
@@ -742,6 +781,7 @@ extension View {
 private enum CardAdditionSheetDestination: String, Identifiable {
     case chooser
     case aiSearchPaywall
+    case settings
     case manualForm
     case batchReview
 

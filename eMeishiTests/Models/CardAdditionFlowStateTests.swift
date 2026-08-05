@@ -39,6 +39,7 @@ struct CardAdditionFlowStateTests {
             .idle,
             .chooser,
             .aiSearchPaywall,
+            .settings,
             .manualForm,
             .batchReview,
             .dismissingSheet(to: .action(.photos)),
@@ -166,6 +167,24 @@ struct CardAdditionFlowStateTests {
         state.send(.photoPickerDismissRequested)
         #expect(state == .dismissingPhotoPicker(shouldImport: false))
         state.send(.photoPickerDismissed)
+        #expect(state == .idle)
+    }
+
+    @Test
+    func settingsSheetUsesTheSameExclusiveRootPresentation() {
+        var state = CardAdditionFlowState.idle
+
+        state.send(.requestSettings)
+        #expect(state == .settings)
+        #expect(state.presentation == .sheet)
+
+        // 設定表示中に他のルート要求が届いても提示を奪わない
+        state.send(.requestAddition)
+        #expect(state == .settings)
+
+        state.send(.sheetDismissRequested)
+        #expect(state == .dismissingSheet(to: .idle))
+        state.send(.sheetDismissed)
         #expect(state == .idle)
     }
 

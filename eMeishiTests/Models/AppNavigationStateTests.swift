@@ -113,18 +113,30 @@ struct AppNavigationStateTests {
         #expect(state.selectedCardURI == nil)
     }
 
-    @Test func settingsSelectsCardsAndPresentsAsRootSheet() {
+    @Test func settingsPreparationKeepsDetailRouteIntact() {
         let state = AppNavigationState()
         state.selectedTab = .insights
         let syntheticURI = URL(string: "x-coredata://synthetic/card/settings-sheet")!
         state.showCardDetail(syntheticURI)
 
-        state.showSettings()
+        state.prepareForSettingsSheet()
 
         #expect(state.selectedTab == .cards)
-        #expect(state.isSettingsPresented)
+        #expect(state.cardListRootMode == .browsing)
         // 設定はsheet提示なのでSplit Viewのdetail列（route）を奪わない
         #expect(state.activeCardsRoute == .detail(syntheticURI))
+    }
+
+    @Test func settingsSheetRequestIsHeldByRootPresentationRequestsUntilConsumed() {
+        let requests = AppRootPresentationRequests()
+
+        #expect(!requests.consumeSettingsSheetRequest())
+
+        requests.requestSettingsSheet()
+        #expect(requests.isSettingsSheetPending)
+        #expect(requests.consumeSettingsSheetRequest())
+        #expect(!requests.isSettingsSheetPending)
+        #expect(!requests.consumeSettingsSheetRequest())
     }
 
     @Test func navigationBackReturnsEveryDestinationToTheCardsRoot() {

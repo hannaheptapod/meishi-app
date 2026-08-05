@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.managedObjectContext) private var viewContext
     @EnvironmentObject private var entitlementStore: EntitlementStore
+    @EnvironmentObject private var rootPresentationRequests: AppRootPresentationRequests
     @StateObject private var cardListViewModel = CardListViewModel()
     @StateObject private var navigationState = AppNavigationState()
     @State private var compactPresentedRoute: CompactCardsRoutePresentation?
@@ -43,22 +44,6 @@ struct ContentView: View {
             }
         }
         .cardAdditionFlow()
-        // 設定は幅クラスに関わらずルートからのsheetで提示する。
-        // Split Viewのdetail列に出すと一覧の選択状態と無関係な画面が詳細位置を占有する
-        .sheet(isPresented: $navigationState.isSettingsPresented) {
-            NavigationStack {
-                SettingsView()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("完了") {
-                                navigationState.isSettingsPresented = false
-                            }
-                            .fontWeight(.semibold)
-                            .accessibilityIdentifier("settingsDoneButton")
-                        }
-                    }
-            }
-        }
         .environmentObject(cardListViewModel)
         .environmentObject(navigationState)
         .overlay(alignment: .bottomTrailing) {
@@ -80,7 +65,9 @@ struct ContentView: View {
             guard ScreenshotMode.isActive else { return }
             switch ScreenshotMode.startScreen {
             case "Insights": navigationState.selectedTab = .insights
-            case "Settings": navigationState.showSettings()
+            case "Settings":
+                navigationState.prepareForSettingsSheet()
+                rootPresentationRequests.requestSettingsSheet()
             default: navigationState.selectedTab = .cards
             }
         }
