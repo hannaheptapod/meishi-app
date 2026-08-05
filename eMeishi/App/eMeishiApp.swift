@@ -33,6 +33,12 @@ struct EMeishiApp: App {
         // UIテスト時はロック不要、ロック無効時も解除済みで起動
         _isUnlocked = State(initialValue: uiTest || !SettingsStore.shared.isAppLockEnabled)
 
+        // App Store スクリーンショット撮影時は Pro 状態で撮る。
+        // Paywall だけはロック状態そのものが被写体なので無課金のままにする
+        if ScreenshotMode.isCaptureRun, ScreenshotMode.startScreen != "Paywall" {
+            EntitlementStore.shared.setup(isGrandfathered: true)
+        }
+
         let elapsedMilliseconds = Int(
             (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
         )

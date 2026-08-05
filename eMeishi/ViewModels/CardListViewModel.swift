@@ -2362,6 +2362,30 @@ class CardListViewModel: ObservableObject {
     // MARK: - デバッグ用
 
 #if DEBUG
+    /// App Store スクリーンショット撮影用：シミュレータでは LLM が動作しないため、
+    /// AI 自然言語検索の確定結果を直接注入する。撮影ラン（START_SCREEN あり）以外では呼ばない
+    func applyCaptureUnifiedSearchMock() {
+        let query = "IT関係の人"
+        searchText = query
+
+        let request = BusinessCard.fetchRequest()
+        let cards = (try? context.fetch(request)) ?? []
+        let matchedIDs = cards.filter { card in
+            let company = card.company ?? ""
+            let department = card.department ?? ""
+            let hasITTag = (card.tags as? Set<Tag>)?.contains { $0.name == "IT" } ?? false
+            return hasITTag
+                || company.contains("テック") || company.contains("ソフト")
+                || company.contains("ネット") || department.contains("開発")
+        }.compactMap(\.id)
+
+        applySemanticSearchResults(
+            Set(matchedIDs),
+            for: query,
+            message: "IT関連の会社・職種の名刺を\(matchedIDs.count)件見つけました"
+        )
+    }
+
     func seedSampleData() {
         let cal = Calendar.current
         let now = Date()

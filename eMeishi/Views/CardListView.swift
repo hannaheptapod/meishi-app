@@ -29,6 +29,7 @@ struct CardListView: View {
     @StateObject private var contextMenuInteractionGate = ContextMenuInteractionGate<CardListContextMenuAction>()
     @State private var didPrepareInitialAppearance = false
     @State private var refreshAfterSheetDismissal = false
+    @State private var isCaptureDetailSelectionPending = false
     @State private var confirmationCommitTask: Task<Void, Never>?
     @State private var viewLifetimeID = UUID()
 
@@ -157,6 +158,9 @@ struct CardListView: View {
             }
             .onChange(of: viewModel.importResultMessage) { _, _ in
                 consumeImportResultPresentation()
+            }
+            .onChange(of: viewModel.isListDisplayReady) { _, _ in
+                selectFirstCardForCaptureIfReady()
             }
     }
 
@@ -472,15 +476,34 @@ struct CardListView: View {
         switch screen {
         case "Tags":     requestPresentation(.sheet(.tagManager))
         case "UnifiedSearch":
-            viewModel.searchText = "IT関係の人"
-            viewModel.submitUnifiedSearch()
+            // 撮影ランではシミュレータで LLM が動かないため確定結果を注入する
+            viewModel.applyCaptureUnifiedSearchMock()
+            // iPad は検索結果の先頭を detail 列へ表示した状態で撮る
+            if usesSidebarLayout {
+                isCaptureDetailSelectionPending = true
+                selectFirstCardForCaptureIfReady()
+            }
         case "FormOCR":  requestPresentation(.sheet(.mockOCRForm))
         case "Paywall":  requestPresentation(.sheet(.paywall))
         case "Settings":
             navigationState.prepareForSettingsSheet()
             rootPresentationRequests.requestSettingsSheet()
+        case "List":
+            // iPad の一覧撮影は detail 列を空にせず、先頭名刺の詳細を表示した状態で撮る
+            guard usesSidebarLayout else { break }
+            isCaptureDetailSelectionPending = true
+            selectFirstCardForCaptureIfReady()
         default: break
         }
+    }
+
+    /// 一覧の初期ロード完了を待ってから先頭名刺を選択する（撮影ラン専用）
+    private func selectFirstCardForCaptureIfReady() {
+        guard isCaptureDetailSelectionPending,
+              viewModel.isListDisplayReady,
+              let first = viewModel.filteredCardItems.first else { return }
+        isCaptureDetailSelectionPending = false
+        navigationState.showCardDetail(first.id)
     }
 
     // MARK: - 選択件数タイトル
