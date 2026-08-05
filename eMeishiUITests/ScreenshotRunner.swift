@@ -15,7 +15,7 @@ import XCTest
 //
 // 取得した PNG は `scripts/capture-shots.sh` が xcresulttool で抽出する。
 //
-// 命名規則: 01_form_ocr / 02_card_list / 03_ai_chat / 04_insights /
+// 命名規則: 01_form_ocr / 02_card_list / 03_ai_search / 04_insights /
 //          05_duplicate / 06_tags
 @MainActor
 final class ScreenshotRunnerTests: XCTestCase {
@@ -77,12 +77,12 @@ final class ScreenshotRunnerTests: XCTestCase {
     }
 
     @MainActor
-    func test03_AIChat() async throws {
-        launchApp(startScreen: "AIChat")
-        let chatTitle = app.navigationBars["AI検索"]
-        XCTAssertTrue(chatTitle.waitForExistence(timeout: 8))
+    func test03_UnifiedSearch() async throws {
+        launchApp(startScreen: "UnifiedSearch")
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 8))
         await waitForUI(1.5)
-        saveScreenshot(named: "03_ai_chat")
+        saveScreenshot(named: "03_ai_search")
     }
 
     @MainActor

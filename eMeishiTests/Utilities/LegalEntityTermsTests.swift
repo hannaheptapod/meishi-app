@@ -77,4 +77,14 @@ struct LegalEntityTermsTests {
         #expect(terms.contains("(株)"))
         #expect(terms.contains("（有）"))
     }
+
+    // OCR customWords は語彙ヒントなので、記号形の括弧略称とひらがな読みを含めない。
+    @Test func ocrCustomWordsExcludeBracketedAndReadingForms() {
+        let words = LegalEntityTerms.ocrCustomWords
+        #expect(words.contains("株式会社"))
+        #expect(words.contains("Inc."))
+        #expect(!words.contains("(株)"))
+        #expect(!words.contains("（株）"))
+        #expect(!words.contains("かぶしきがいしゃ"))
+    }
 }

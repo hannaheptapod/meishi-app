@@ -1,6 +1,7 @@
 import Foundation
 import CloudKit
 import CryptoKit
+import os
 
 /// CloudKit Public Database からオンデバイスLLMモデルファイルをダウンロードするサービス。
 /// Anemll 変換済み Qwen3-0.6B-ctx512（3モデル分割方式）に対応。
@@ -22,8 +23,30 @@ actor CloudKitModelService {
 
     static let shared = CloudKitModelService()
 
-    private let database = CKContainer(identifier: "iCloud.com.jinks.emeishi").publicCloudDatabase
+    private static let containerIdentifier = "iCloud.com.jinks.emeishi"
+    private let entitlementChecker: any CloudKitEntitlementChecking
     private let recordType = "MLModelPackage"
+    private let stableChannelRecordID = CKRecord.ID(recordName: "model-v2-channel-stable")
+
+    struct VersionManifest: Decodable, Sendable {
+        struct FileEntry: Decodable, Sendable {
+            struct Chunk: Decodable, Sendable {
+                let recordName: String
+                let size: Int64
+                let sha256: String
+            }
+
+            let relativePath: String
+            let size: Int64
+            let sha256: String
+            let chunks: [Chunk]
+        }
+
+        let schemaVersion: Int
+        let version: String
+        let chunkBytes: Int64
+        let files: [FileEntry]
+    }
 
     // MARK: - モデルフィールド定義
 
@@ -73,6 +96,10 @@ actor CloudKitModelService {
 
     enum CloudKitModelError: LocalizedError {
         case noRecordFound
+        case cloudKitUnavailable
+        case versionedDistributionUnavailable
+        case invalidManifest(String)
+        case unsafeRelativePath(String)
         case missingAsset(String)
         case missingChunkCount
         case chunkConcatenationFailed(String)
@@ -80,6 +107,14 @@ actor CloudKitModelService {
 
         var errorDescription: String? {
             switch self {
+            case .cloudKitUnavailable:
+                return "この環境ではCloudKitモデル配布を利用できません"
+            case .versionedDistributionUnavailable:
+                return "バージョン付きモデル配布がまだ設定されていません"
+            case .invalidManifest(let reason):
+                return "モデルmanifestが不正です: \(reason)"
+            case .unsafeRelativePath(let path):
+                return "許可されていないモデルパスです: \(path)"
             case .noRecordFound:
                 return "CloudKit にモデルレコードが見つかりません"
             case .missingAsset(let field):
@@ -94,7 +129,9 @@ actor CloudKitModelService {
         }
     }
 
-    private init() {}
+    init(entitlementChecker: any CloudKitEntitlementChecking = SignedCloudKitEntitlementChecker()) {
+        self.entitlementChecker = entitlementChecker
+    }
 
     // MARK: - モデルダウンロード
 
@@ -104,8 +141,41 @@ actor CloudKitModelService {
     /// CKAsset.fileURL は operation 完了後に無効になるため、すべてのファイルコピーを
     /// perRecordResultBlock コールバック内（operation 生存中）で完結させる。
     func downloadModel(modelDir: URL,
-                       tokenizerDestination: URL,
                        progress: @escaping @Sendable @MainActor (Double) -> Void) async throws {
+        let fm = FileManager.default
+        let parent = modelDir.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".\(modelDir.lastPathComponent).download.\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
+
+        // v2のchannelまたはmanifestが未配置の場合だけ、従来方式へフォールバックする。
+        do {
+            try await downloadVersionedModel(
+                modelDir: staging,
+                tokenizerDestination: staging.appendingPathComponent("tokenizer.json"),
+                progress: progress
+            )
+        } catch CloudKitModelError.versionedDistributionUnavailable {
+            AppLogger.cloudKit.info("バージョン付きモデルが未配置のため従来方式へフォールバック")
+            try await downloadLegacyModel(
+                modelDir: staging,
+                tokenizerDestination: staging.appendingPathComponent("tokenizer.json"),
+                progress: progress
+            )
+        }
+
+        try Task.checkCancellation()
+        try await ModelInstallService.shared.install(stagingDirectory: staging, at: modelDir)
+        await progress(1)
+    }
+
+    private func downloadLegacyModel(modelDir: URL,
+                                     tokenizerDestination: URL,
+                                     progress: @escaping @Sendable @MainActor (Double) -> Void) async throws {
         // Step 1: 小ファイル + weightChunkCount + SHA256 を一括取得
         let smallKeys: [String] = modelConfigs.flatMap { config in
             [config.coremlDataField, config.metadataField, config.modelMilField, config.sha256Field]
@@ -156,6 +226,194 @@ actor CloudKitModelService {
         await progress(1.0)
     }
 
+    // MARK: - バージョン付きモデル配布 v2
+
+    private func downloadVersionedModel(
+        modelDir: URL,
+        tokenizerDestination: URL,
+        progress: @escaping @Sendable @MainActor (Double) -> Void
+    ) async throws {
+        let database = try cloudDatabase()
+        let channel = try await fetchVersionedRecord(stableChannelRecordID, database: database)
+        guard let version = channel["embedWeightSHA256"] as? String, !version.isEmpty else {
+            throw CloudKitModelError.versionedDistributionUnavailable
+        }
+
+        let manifestID = CKRecord.ID(recordName: Self.manifestRecordName(version: version))
+        let manifestRecord = try await fetchVersionedRecord(manifestID, database: database)
+        guard let asset = manifestRecord[tokenizerField] as? CKAsset,
+              let assetURL = asset.fileURL else {
+            throw CloudKitModelError.versionedDistributionUnavailable
+        }
+        let manifestData = try Data(contentsOf: assetURL)
+        guard let expectedManifestSHA = manifestRecord["embedWeightSHA256"] as? String,
+              Self.isSHA256(expectedManifestSHA),
+              Self.sha256(manifestData) == expectedManifestSHA.lowercased() else {
+            throw CloudKitModelError.invalidManifest("manifestのSHA-256が一致しません")
+        }
+        let manifest = try Self.validatedManifest(from: manifestData, expectedVersion: version)
+
+        let fm = FileManager.default
+        let totalChunks = max(1, manifest.files.reduce(0) { $0 + $1.chunks.count })
+        var completedChunks = 0
+
+        for file in manifest.files {
+            try Task.checkCancellation()
+            let destination = modelDir.appendingPathComponent(file.relativePath)
+            try fm.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            guard fm.createFile(atPath: destination.path, contents: nil) else {
+                throw CloudKitModelError.invalidManifest("ファイルを作成できません: \(file.relativePath)")
+            }
+            let handle = try FileHandle(forWritingTo: destination)
+            do {
+                for chunk in file.chunks {
+                    try Task.checkCancellation()
+                    let record = try await database.record(
+                        for: CKRecord.ID(recordName: chunk.recordName)
+                    )
+                    guard let chunkAsset = record[weightChunkPrefix + "0"] as? CKAsset,
+                          let chunkURL = chunkAsset.fileURL else {
+                        throw CloudKitModelError.missingAsset(weightChunkPrefix + "0")
+                    }
+                    let data = try Data(contentsOf: chunkURL, options: .mappedIfSafe)
+                    let actualChunkSHA = Self.sha256(data)
+                    guard Int64(data.count) == chunk.size,
+                          actualChunkSHA == chunk.sha256.lowercased() else {
+                        throw CloudKitModelError.sha256Mismatch(
+                            model: chunk.recordName,
+                            expected: chunk.sha256,
+                            actual: actualChunkSHA
+                        )
+                    }
+                    try handle.write(contentsOf: data)
+                    completedChunks += 1
+                    await progress(Double(completedChunks) / Double(totalChunks) * 0.95)
+                }
+                try handle.synchronize()
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+
+            let fileSize = try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            guard Int64(fileSize ?? -1) == file.size else {
+                throw CloudKitModelError.invalidManifest("ファイルサイズが一致しません: \(file.relativePath)")
+            }
+            let actual = try computeSHA256(of: destination)
+            guard actual == file.sha256.lowercased() else {
+                throw CloudKitModelError.sha256Mismatch(
+                    model: file.relativePath,
+                    expected: file.sha256,
+                    actual: actual
+                )
+            }
+        }
+
+        // tokenizerDestinationは従来方式との共通引数。v2 manifestでも配置を確認する。
+        guard fm.fileExists(atPath: tokenizerDestination.path) else {
+            throw CloudKitModelError.invalidManifest("tokenizer.jsonがありません")
+        }
+    }
+
+    nonisolated private static func manifestRecordName(version: String) -> String {
+        "model-v2-\(version.replacingOccurrences(of: ".", with: "-"))-manifest"
+    }
+
+    nonisolated private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func validatedManifest(
+        from data: Data,
+        expectedVersion: String
+    ) throws -> VersionManifest {
+        let manifest: VersionManifest
+        do {
+            manifest = try JSONDecoder().decode(VersionManifest.self, from: data)
+        } catch {
+            throw CloudKitModelError.invalidManifest("JSONを解析できません")
+        }
+        guard manifest.schemaVersion == 2,
+              manifest.version == expectedVersion,
+              !manifest.version.isEmpty,
+              manifest.chunkBytes > 0,
+              manifest.chunkBytes <= 10 * 1024 * 1024,
+              !manifest.files.isEmpty else {
+            throw CloudKitModelError.invalidManifest("schema、versionまたはchunkBytesが不正です")
+        }
+
+        let allowedRoots: Set<String> = [
+            "qwen_embeddings.mlmodelc",
+            "qwen_FFN_PF_lut6_chunk_01of01.mlmodelc",
+            "qwen_lm_head_lut6.mlmodelc",
+        ]
+        var paths = Set<String>()
+        var recordNames = Set<String>()
+        for file in manifest.files {
+            let components = file.relativePath.split(separator: "/", omittingEmptySubsequences: false)
+            guard !file.relativePath.hasPrefix("/"),
+                  !file.relativePath.contains("\\"),
+                  !components.isEmpty,
+                  components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+                  components.map(String.init).joined(separator: "/") == file.relativePath else {
+                throw CloudKitModelError.unsafeRelativePath(file.relativePath)
+            }
+            let isTokenizer = file.relativePath == "tokenizer.json"
+            guard isTokenizer || (components.count > 1 && allowedRoots.contains(String(components[0]))) else {
+                throw CloudKitModelError.unsafeRelativePath(file.relativePath)
+            }
+            guard paths.insert(file.relativePath).inserted,
+                  file.size >= 0,
+                  Self.isSHA256(file.sha256),
+                  !file.chunks.isEmpty,
+                  file.chunks.reduce(Int64(0), { $0 + $1.size }) == file.size else {
+                throw CloudKitModelError.invalidManifest("ファイル定義が不正です: \(file.relativePath)")
+            }
+            for chunk in file.chunks {
+                guard !chunk.recordName.isEmpty,
+                      recordNames.insert(chunk.recordName).inserted,
+                      chunk.size > 0,
+                      chunk.size <= manifest.chunkBytes,
+                      Self.isSHA256(chunk.sha256) else {
+                    throw CloudKitModelError.invalidManifest("チャンク定義が不正です: \(chunk.recordName)")
+                }
+            }
+        }
+
+        let requiredPaths: Set<String> = Set(
+            allowedRoots.flatMap { root in
+                [
+                    "\(root)/coremldata.bin",
+                    "\(root)/metadata.json",
+                    "\(root)/model.mil",
+                    "\(root)/weights/weight.bin",
+                ]
+            } + ["tokenizer.json"]
+        )
+        guard requiredPaths.isSubset(of: paths) else {
+            throw CloudKitModelError.invalidManifest("必須モデルファイルが不足しています")
+        }
+        return manifest
+    }
+
+    nonisolated private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.unicodeScalars.allSatisfy {
+            (48...57).contains(Int($0.value)) || (97...102).contains(Int($0.value))
+        }
+    }
+
+    private func fetchVersionedRecord(_ id: CKRecord.ID, database: CKDatabase) async throws -> CKRecord {
+        do {
+            return try await database.record(for: id)
+        } catch let error as CKError where error.code == .unknownItem {
+            throw CloudKitModelError.versionedDistributionUnavailable
+        }
+    }
+
     // MARK: - SHA256 検証
 
     /// 指定モデルの weight.bin を SHA256 で検証する。
@@ -191,7 +449,8 @@ actor CloudKitModelService {
 
     private func fetchRecord(desiredKeys: [String],
                              progress: @escaping @Sendable @MainActor (Double) -> Void) async throws -> CKRecord {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
+        let database = try cloudDatabase()
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
             let operation = CKFetchRecordsOperation(recordIDs: [modelRecordID])
             operation.qualityOfService = .userInitiated
             operation.desiredKeys = desiredKeys
@@ -207,8 +466,15 @@ actor CloudKitModelService {
                     }
                 }
             }
-            self.database.add(operation)
+            database.add(operation)
         }
+    }
+
+    private func cloudDatabase() throws -> CKDatabase {
+        guard entitlementChecker.canCreateContainer(identifier: Self.containerIdentifier) else {
+            throw CloudKitModelError.cloudKitUnavailable
+        }
+        return CKContainer(identifier: Self.containerIdentifier).publicCloudDatabase
     }
 
     // MARK: - 小ファイル書き出し
@@ -283,7 +549,7 @@ actor CloudKitModelService {
         handle.write(data)
         try handle.close()
         // CloudKit キャッシュからのコピーは読み取り専用になる場合があるため明示的に書き込み権限を付与
-        if index == config.chunkRange.last! {
+        if index == config.chunkRange.upperBound - 1 {
             try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: weightDest.path)
         }
     }

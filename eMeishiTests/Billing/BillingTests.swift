@@ -356,6 +356,12 @@ struct ProductIdentifierTests {
 @MainActor
 struct PaywallContextTests {
 
+    @Test func generalContext() {
+        let ctx = PaywallContext.general
+        #expect(ctx.featureTitle == "eMeishi Pro")
+        #expect(!ctx.featureDescription.isEmpty)
+    }
+
     @Test func aiSearchContext() {
         let ctx = PaywallContext.aiSearch
         #expect(ctx.featureTitle == "AI 自然言語検索")
@@ -371,6 +377,12 @@ struct PaywallContextTests {
     @Test func insightsNarrativeContext() {
         let ctx = PaywallContext.insightsNarrative
         #expect(ctx.featureTitle == "Insights AI 解釈")
+        #expect(!ctx.featureDescription.isEmpty)
+    }
+
+    @Test func duplicateAIContext() {
+        let ctx = PaywallContext.duplicateAI
+        #expect(ctx.featureTitle == "AI 重複検出")
         #expect(!ctx.featureDescription.isEmpty)
     }
 }

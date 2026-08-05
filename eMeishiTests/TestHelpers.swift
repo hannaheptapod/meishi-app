@@ -62,7 +62,6 @@ func makeDTO(
     address: String? = nil,
     website: String? = nil,
     notes: String? = nil,
-    imageData: Data? = nil,
     createdAt: Date? = nil
 ) -> CardExportDTO {
     let phoneList: [String] = {
@@ -82,7 +81,6 @@ func makeDTO(
         address: address,
         website: website,
         notes: notes,
-        imageData: imageData,
         createdAt: createdAt
     )
 }
@@ -94,6 +92,7 @@ func makeLine(
     midY: CGFloat = 0.6,
     width: CGFloat = 0.3,
     height: CGFloat = 0.05,
+    confidence: Float = 1.0,
     textDirection: RecognizedTextDirection = .unknown
 ) -> RecognizedLine {
     RecognizedLine(
@@ -104,7 +103,7 @@ func makeLine(
             width: width,
             height: height
         ),
-        confidence: 1.0,
+        confidence: confidence,
         textDirection: textDirection
     )
 }

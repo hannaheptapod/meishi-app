@@ -4,21 +4,22 @@ struct PaywallFeatureListView: View {
 
     let context: PaywallContext
 
-    private struct Feature {
+    /// `Identifiable.id` は非隔離要件のため、MainActor既定のView型から分離する。
+    nonisolated private struct Feature {
+        let context: PaywallContext
         let icon: String
         let title: String
-        let comingSoon: Bool
     }
 
     private var features: [Feature] {
         var list: [Feature] = [
-            Feature(icon: "magnifyingglass",        title: "AI 自然言語検索",            comingSoon: false),
-            Feature(icon: "tag",                    title: "AI 一括リタグ",              comingSoon: false),
-            Feature(icon: "chart.bar.doc.horizontal", title: "Insights AI 解釈",        comingSoon: false),
-            Feature(icon: "person.2.slash",         title: "AI 重複検出",                comingSoon: false),
+            Feature(context: .aiSearch, icon: "magnifyingglass", title: "AI 自然言語検索"),
+            Feature(context: .bulkRetag, icon: "tag", title: "AI 一括リタグ"),
+            Feature(context: .insightsNarrative, icon: "chart.bar.doc.horizontal", title: "Insights AI 解釈"),
+            Feature(context: .duplicateAI, icon: "person.2.slash", title: "AI 重複検出"),
         ]
         // 現在の context に該当する機能を先頭へ
-        if let idx = list.firstIndex(where: { $0.title == context.featureTitle }) {
+        if let idx = list.firstIndex(where: { $0.context == context }) {
             let item = list.remove(at: idx)
             list.insert(item, at: 0)
         }
@@ -26,28 +27,20 @@ struct PaywallFeatureListView: View {
     }
 
     var body: some View {
+        let items = Array(features.enumerated())
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(features, id: \.title) { feature in
+            ForEach(items, id: \.offset) { _, feature in
                 HStack(spacing: 10) {
                     Image(systemName: feature.icon)
-                        .foregroundStyle(feature.comingSoon ? Color.secondary : Color.accentColor)
+                        .foregroundStyle(Color.accentColor)
                         .frame(width: 20)
                     Text(feature.title)
                         .font(.subheadline)
-                        .foregroundStyle(feature.comingSoon ? .secondary : .primary)
+                        .foregroundStyle(.primary)
                     Spacer()
-                    if feature.comingSoon {
-                        Text("近日公開")
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.quaternary, in: Capsule())
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.accent)
-                            .font(.caption.weight(.bold))
-                    }
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.caption.weight(.bold))
                 }
             }
         }

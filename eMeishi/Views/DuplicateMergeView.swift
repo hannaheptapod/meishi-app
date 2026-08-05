@@ -2,73 +2,94 @@ import SwiftUI
 import CoreData
 import os
 
+nonisolated private enum DuplicateMergePhase: Equatable, Sendable {
+    case selectingValues
+    case confirmingMerge
+}
+
 // 重複ペアのマージ画面
 // 各フィールドについて A / B どちらの値を使うか選択してマージする
 struct DuplicateMergeView: View {
 
-    let pair: DuplicatePair
+    let request: DuplicateMergeRequest
     let onComplete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selections = FieldSelections()
-    @State private var isShowingMergeConfirm = false
+    @Environment(\.managedObjectContext) private var context
+    @State private var selections: FieldSelections
+    @State private var phase: DuplicateMergePhase = .selectingValues
+    @State private var mergeError: String?
+    @State private var isMerging = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private let context = PersistenceController.shared.container.viewContext
+    /// View の State には NSManagedObject ではなく、解決時点の不変値を保持する。
+    @State private var cardA: DuplicateMergeCardSnapshot?
+    @State private var cardB: DuplicateMergeCardSnapshot?
 
-    /// ID から解決した BusinessCard ペア。両方が non-nil の場合のみマージ UI を表示する。
-    @State private var cardA: BusinessCard?
-    @State private var cardB: BusinessCard?
-    @State private var didResolve = false
+    init(request: DuplicateMergeRequest, onComplete: @escaping () -> Void) {
+        self.request = request
+        self.onComplete = onComplete
+        _cardA = State(initialValue: request.cardA)
+        _cardB = State(initialValue: request.cardB)
+        if let cardA = request.cardA, let cardB = request.cardB {
+            _selections = State(initialValue: FieldSelections(cardA: cardA, cardB: cardB))
+        } else {
+            _selections = State(initialValue: FieldSelections())
+        }
+    }
+
+    private var pair: DuplicatePair { request.pair }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let cardA, let cardB {
+                if phase == .confirmingMerge, let cardB {
+                    mergeConfirmationContent(cardB: cardB)
+                } else if let cardA, let cardB {
                     mergeContent(cardA: cardA, cardB: cardB)
-                } else if didResolve {
-                    missingCardView
                 } else {
-                    ProgressView().controlSize(.small)
+                    missingCardView
                 }
             }
-            .navigationTitle("名刺をマージ")
+            .navigationTitle(phase == .confirmingMerge ? "マージを確認" : "名刺をマージ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                    if phase == .confirmingMerge {
+                        Button("戻る", systemImage: "chevron.left") {
+                            phase = .selectingValues
+                        }
+                    } else {
+                        Button { dismiss() } label: { Image(systemName: "xmark") }
+                    }
                 }
-                if cardA != nil && cardB != nil {
+                if phase == .selectingValues, cardA != nil, cardB != nil {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("マージ") { isShowingMergeConfirm = true }
+                        Button("マージ") { phase = .confirmingMerge }
                             .bold()
+                            .disabled(isMerging)
                     }
                 }
             }
-            .confirmationDialog(
-                "名刺をマージ",
-                isPresented: $isShowingMergeConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("マージして1枚にまとめる", role: .destructive) { merge() }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                if let cardB {
-                    Text("「\(cardB.fullName.isEmpty ? "名前なし" : cardB.fullName)」は削除されます。この操作は取り消せません。")
-                }
-            }
-        }
-        .task {
-            cardA = context.businessCard(forURIString: pair.cardAIDURI)
-            cardB = context.businessCard(forURIString: pair.cardBIDURI)
-            didResolve = true
         }
     }
 
     // MARK: - メインコンテンツ
 
     @ViewBuilder
-    private func mergeContent(cardA: BusinessCard, cardB: BusinessCard) -> some View {
+    private func mergeContent(cardA: DuplicateMergeCardSnapshot, cardB: DuplicateMergeCardSnapshot) -> some View {
         List {
+            if let mergeError {
+                Section {
+                    Label {
+                        Text(mergeError)
+                            .foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
             headerSection(cardA: cardA, cardB: cardB)
             fieldRows(cardA: cardA, cardB: cardB)
         }
@@ -83,39 +104,90 @@ struct DuplicateMergeView: View {
         )
     }
 
+    /// 親sheet上に別のconfirmationDialogを重ねず、同じsheet内で最終確認を完結させる。
+    private func mergeConfirmationContent(cardB: DuplicateMergeCardSnapshot) -> some View {
+        List {
+            Section {
+                Label {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                        Text("選択した内容で1枚にまとめます")
+                            .font(.headline)
+                        Text("削除される名刺は元に戻せません。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section("削除される名刺") {
+                LabeledContent("名前", value: cardB.fullName.isEmpty ? "（名前なし）" : cardB.fullName)
+                if !cardB.company.isEmpty {
+                    LabeledContent("会社名", value: cardB.company)
+                }
+            }
+
+            if let mergeError {
+                Section {
+                    Label(mergeError, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                Button("マージして1枚にまとめる", role: .destructive) {
+                    merge()
+                }
+                .disabled(isMerging)
+                .accessibilityIdentifier("confirmDuplicateMergeButton")
+
+                Button("キャンセル", role: .cancel) {
+                    phase = .selectingValues
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
     // MARK: - ヘッダー（類似度 + 両カードのサマリー）
 
-    private func headerSection(cardA: BusinessCard, cardB: BusinessCard) -> some View {
+    private func headerSection(cardA: DuplicateMergeCardSnapshot, cardB: DuplicateMergeCardSnapshot) -> some View {
         Section {
-            HStack(spacing: 12) {
-                cardHeader(cardA, side: .a)
-                VStack(spacing: 4) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .foregroundStyle(.secondary)
-                    Text(pair.scoreText)
-                        .font(.caption2.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(scoreColor(pair.score), in: Capsule())
-                        .accessibilityLabel("類似度 \(pair.scoreText)")
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
+                        cardHeader(cardA, side: .a)
+                        DuplicateScoreBadge(scoreText: pair.scoreText)
+                        cardHeader(cardB, side: .b)
+                    }
+                } else {
+                    HStack(spacing: AppTheme.Spacing.medium) {
+                        cardHeader(cardA, side: .a)
+                        VStack(spacing: AppTheme.Spacing.xSmall) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .foregroundStyle(.secondary)
+                            DuplicateScoreBadge(scoreText: pair.scoreText)
+                        }
+                        cardHeader(cardB, side: .b)
+                    }
                 }
-                cardHeader(cardB, side: .b)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, AppTheme.Spacing.xSmall)
         } header: {
             Text("残したい値の行をタップしてください")
         }
     }
 
     @ViewBuilder
-    private func cardHeader(_ card: BusinessCard, side: Side) -> some View {
+    private func cardHeader(_ card: DuplicateMergeCardSnapshot, side: Side) -> some View {
         VStack(alignment: side == .a ? .leading : .trailing, spacing: 2) {
             Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
                 .font(.subheadline.bold())
                 .lineLimit(1)
-            if let company = card.company, !company.isEmpty {
-                Text(company)
+            if !card.company.isEmpty {
+                Text(card.company)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -131,8 +203,13 @@ struct DuplicateMergeView: View {
 
     // MARK: - フィールド行（縦並び・選択しやすい設計）
 
-    private func fieldRows(cardA: BusinessCard, cardB: BusinessCard) -> some View {
+    private func fieldRows(cardA: DuplicateMergeCardSnapshot, cardB: DuplicateMergeCardSnapshot) -> some View {
         Group {
+            Section {
+                Text("異なる項目だけを先に表示しています。残したい値を選んでください。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             mergeRow(label: "名前",   aVal: cardA.fullName,   bVal: cardB.fullName,   binding: $selections.name)
             mergeRow(label: "会社名", aVal: cardA.company,    bVal: cardB.company,    binding: $selections.company)
             mergeRow(label: "部署",   aVal: cardA.department, bVal: cardB.department, binding: $selections.department)
@@ -147,6 +224,33 @@ struct DuplicateMergeView: View {
             mergeRow(label: "住所",   aVal: cardA.address, bVal: cardB.address, binding: $selections.address)
             mergeRow(label: "Web",    aVal: cardA.website, bVal: cardB.website, binding: $selections.website)
             mergeRow(label: "メモ",   aVal: cardA.notes,   bVal: cardB.notes,   binding: $selections.notes)
+
+            Section("統合後プレビュー") {
+                previewRow("名前", value: selectedValue(cardA.fullName, cardB.fullName, side: selections.name))
+                previewRow("会社名", value: selectedValue(cardA.company, cardB.company, side: selections.company))
+                previewRow("電話", value: selectedValue(
+                    cardA.phoneList.joined(separator: "、"),
+                    cardB.phoneList.joined(separator: "、"),
+                    side: selections.phone
+                ))
+                previewRow("メール", value: selectedValue(cardA.email, cardB.email, side: selections.email))
+            }
+
+            Section("削除対象") {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(cardB.fullName.isEmpty ? "（名前なし）" : cardB.fullName)
+                        if !cardB.company.isEmpty {
+                            Text(cardB.company)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
+            }
         }
     }
 
@@ -154,7 +258,7 @@ struct DuplicateMergeView: View {
     private func mergeRow(label: String, aVal: String?, bVal: String?, binding: Binding<Side>) -> some View {
         let a = aVal ?? ""
         let b = bVal ?? ""
-        if !a.isEmpty || !b.isEmpty {
+        if (!a.isEmpty || !b.isEmpty) && a != b {
             Section(label) {
                 optionRow(value: a, side: .a, selected: binding.wrappedValue == .a) {
                     binding.wrappedValue = .a
@@ -164,6 +268,14 @@ struct DuplicateMergeView: View {
                 }
             }
         }
+    }
+
+    private func selectedValue(_ a: String?, _ b: String?, side: Side) -> String {
+        side == .a ? (a ?? "") : (b ?? "")
+    }
+
+    private func previewRow(_ label: String, value: String) -> some View {
+        LabeledContent(label, value: value.isEmpty ? "（なし）" : value)
     }
 
     @ViewBuilder
@@ -201,74 +313,45 @@ struct DuplicateMergeView: View {
     // MARK: - マージ実行
 
     private func merge() {
-        guard let a = cardA, let b = cardB else {
-            onComplete()
-            dismiss()
+        guard !isMerging else { return }
+        guard let snapshotA = cardA, let snapshotB = cardB,
+              let a = context.businessCard(forURIString: snapshotA.objectURI),
+              let b = context.businessCard(forURIString: snapshotB.objectURI) else {
+            mergeError = "対象の名刺が見つかりません。"
             return
         }
 
         // cardB が既に削除済みの場合はスキップ
         guard !b.isDeleted, b.managedObjectContext != nil else {
-            onComplete()
-            dismiss()
+            mergeError = "削除対象の名刺が見つかりません。"
             return
         }
 
-        // 名前フィールドは名前マージ選択に従って両カードから取得
-        if selections.name == .b {
-            a.lastName        = b.lastName        ?? ""
-            a.lastNameReading = b.lastNameReading ?? ""
-            a.firstName       = b.firstName       ?? ""
-            a.firstNameReading = b.firstNameReading ?? ""
-        }
-        a.company    = selections.company    == .a ? (a.company    ?? "") : (b.company    ?? "")
-        a.department = selections.department == .a ? (a.department ?? "") : (b.department ?? "")
-        a.title      = selections.title      == .a ? (a.title      ?? "") : (b.title      ?? "")
-        a.phone      = selections.phone      == .a ? (a.phone      ?? "") : (b.phone      ?? "")
-        a.email      = selections.email      == .a ? (a.email      ?? "") : (b.email      ?? "")
-        a.address    = selections.address    == .a ? (a.address    ?? "") : (b.address    ?? "")
-        a.website    = selections.website    == .a ? (a.website    ?? "") : (b.website    ?? "")
-        a.notes      = selections.notes      == .a ? (a.notes      ?? "") : (b.notes      ?? "")
-        if a.imageData == nil { a.imageData = b.imageData }
-
-        // cardB のタグを cardA に転送（未保持のものだけ追加）
-        if let bTags = b.tags as? Set<Tag> {
-            for tag in bTags {
-                a.addToTags(tag)
-            }
+        guard snapshotA.matchesCurrentValues(of: a),
+              snapshotB.matchesCurrentValues(of: b) else {
+            mergeError = "統合対象の名刺が更新されました。画面を開き直して内容を確認してください。"
+            return
         }
 
-        a.updatedAt = Date()
-
-        context.delete(b)
+        isMerging = true
+        defer { isMerging = false }
 
         do {
-            try context.save()
+            try DuplicateMergeService.merge(
+                cardA: a,
+                cardB: b,
+                selection: selections,
+                in: context
+            )
+            onComplete()
         } catch {
             AppLogger.persistence.error("マージの保存に失敗しました: \(error)")
+            mergeError = "変更を保存できませんでした。入力内容を確認して、もう一度お試しください。"
         }
-
-        onComplete()
-        dismiss()
-    }
-
-    private func scoreColor(_ score: Double) -> Color {
-        score >= 0.9 ? .red : score >= 0.8 ? .orange : .mint
     }
 }
 
 // MARK: - 選択状態
 
-private enum Side { case a, b }
-
-private struct FieldSelections {
-    var name:       Side = .a
-    var company:    Side = .a
-    var department: Side = .a
-    var title:      Side = .a
-    var phone:      Side = .a
-    var email:      Side = .a
-    var address:    Side = .a
-    var website:    Side = .a
-    var notes:      Side = .a
-}
+private typealias Side = DuplicateMergeSelection.Source
+private typealias FieldSelections = DuplicateMergeSelection

@@ -1,5 +1,4 @@
 import Foundation
-import CoreML
 import CoreData
 import os
 #if canImport(FoundationModels)
@@ -59,14 +58,14 @@ class AutoTagService {
     // MARK: - Sendable DTO
 
     /// NSManagedObject（Tag）の代わりにアクター境界を安全に越えられる Sendable 型
-    struct TagInfo: Sendable {
+    nonisolated struct TagInfo: Equatable, Sendable {
         let id: UUID
         let name: String
     }
 
     // MARK: - カード情報構造体
 
-    struct CardInfo {
+    nonisolated struct CardInfo: Equatable, Sendable {
         var company: String = ""
         var department: String = ""
         var title: String = ""
@@ -125,16 +124,14 @@ class AutoTagService {
 
     private func suggestTagsWithQwen(cardSummary: String, tags: [TagInfo]) async -> [UUID] {
         let llm = LocalLLMService.shared
-        guard let models = llm.ensureModelLoaded() else { return [] }
+        guard llm.isModelAvailable else { return [] }
 
         var suggestedIDs: [UUID] = []
         for tag in tags {
             guard !tag.name.isEmpty else { continue }
             let matches = await classifyTagMatchWithQwen(
                 tagName: tag.name,
-                cardSummary: cardSummary,
-                prefill: models.prefill,
-                tokenizer: models.tokenizer
+                cardSummary: cardSummary
             )
             if matches { suggestedIDs.append(tag.id) }
         }
@@ -155,20 +152,9 @@ class AutoTagService {
     }
 
     /// 1タグ1回の forward pass で yes/no 分類（Qwen）
-    private func classifyTagMatchWithQwen(tagName: String, cardSummary: String,
-                                          prefill: MLModel, tokenizer: Qwen25Tokenizer) async -> Bool {
+    private func classifyTagMatchWithQwen(tagName: String, cardSummary: String) async -> Bool {
         let prompt = buildTagMatchPrompt(tagName: tagName, cardSummary: cardSummary)
-        let ids = tokenizer.encode(prompt)
-        do {
-            let logits = try await LocalLLMService.shared.forwardPrefill(model: prefill, ids: ids, seqLen: ids.count)
-            guard let tokenId = LocalLLMService.shared.argmaxLastToken(logits: logits) else { return false }
-            let decoded = tokenizer.decode([tokenId]).lowercased()
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return decoded.hasPrefix("y") || decoded.hasPrefix("はい") || decoded.hasPrefix("yes")
-        } catch {
-            AppLogger.autoTag.error("Qwen タグ分類エラー: \(error)")
-            return false
-        }
+        return await LocalLLMService.shared.yesNo(prompt: prompt)
     }
 
     /// タグマッチ判定用 ChatML プロンプト

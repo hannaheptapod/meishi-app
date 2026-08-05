@@ -63,11 +63,13 @@ struct FieldDetectorJobTitleTests {
         #expect(FieldDetector.isJobTitle("代表取締役社長") == true)
         #expect(FieldDetector.isJobTitle("営業部長") == true)
         #expect(FieldDetector.isJobTitle("シニアエンジニア") == true)
+        #expect(FieldDetector.isJobTitle("アソシエイト") == true)
     }
 
     @Test func detectsEnglishTitle() {
         #expect(FieldDetector.isJobTitle("CEO") == true)
         #expect(FieldDetector.isJobTitle("Software Engineer") == true)
+        #expect(FieldDetector.isJobTitle("Associate") == true)
     }
 
     @Test func returnsFalseForShortText() {
@@ -158,6 +160,5 @@ struct FieldDetectorNLTaggerTests {
         // 環境依存のため crash しないことを確認し、true の場合も受け入れる
         let result = FieldDetector.nlTaggerDetectsPersonalName(in: "John Smith")
         _ = result // true/false どちらも許容
-        #expect(true) // クラッシュしなければ PASS
     }
 }

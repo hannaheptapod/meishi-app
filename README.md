@@ -1,10 +1,11 @@
 # eMeishi
 
-iPhoneで名刺をスマートに管理するアプリ。カメラで撮影するだけで、AIが名前・会社名・連絡先を自動で読み取り、整理して保存します。
+iPhone・iPadで名刺をスマートに管理するアプリ。カメラで撮影するだけで、AIが名前・会社名・連絡先を自動で読み取り、整理して保存します。
 
 ## 主な機能
 
-- **カメラ撮影 + AI自動読み取り** — OCR + オンデバイスAI（Apple Intelligence / Qwen3-0.6B）で名刺のフィールドを自動分類。連続撮影にも対応
+- **カメラ／写真ライブラリ + AI自動読み取り** — OCR + オンデバイスAI（Apple Intelligence / Qwen3-0.6B）で名刺のフィールドを自動分類。連続撮影と写真の最大10枚取込みに対応
+- **バックグラウンド読み取り** — 処理段階・推定残り時間を表示し、Dynamic Island／システムLive Activityから進捗を確認可能
 - **ふりがな自動生成** — 名前・会社名のふりがなを自動取得。名前順・会社名順ソートに使用
 - **連絡先連携** — iPhoneの連絡先へワンタップ保存、連絡先からのインポート
 - **CSV / vCard エクスポート** — Excel対応のCSV（UTF-8 BOM付き）、vCard 3.0/4.0
@@ -28,7 +29,9 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 | OCR | Vision Framework（RecognizeTextRequest / DetectRectanglesRequest） |
 | AI分析（Apple Intelligence対応端末） | Foundation Models（iOS 26+） |
 | AI分析（非対応端末） | Qwen3-0.6B Anemll CoreML（Embed+FFN+LMHead 3モデル・ANE対応） |
-| カメラ | UIKit UIImagePickerController（標準カメラUI + オーバーレイ） |
+| カメラ | AVFoundation（単一の全画面撮影フロー・連続撮影対応） |
+| 写真取込み | PhotosUI PhotosPicker（順序付き・最大10枚） |
+| バックグラウンド処理 | BackgroundTasks BGContinuedProcessingTask |
 | 連絡先 | Contacts Framework |
 | 生体認証 | LocalAuthentication |
 | モデル配布 | CloudKit Public Database |
@@ -37,7 +40,7 @@ iPhoneで名刺をスマートに管理するアプリ。カメラで撮影す�
 
 ```mermaid
 flowchart TD
-  A[カメラ撮影] --> B[OCR<br/>Vision Framework<br/>RecognizeTextRequest / .accurate<br/>textDirection<br/>ja-JP, en-US]
+  A[カメラ撮影 / 写真ライブラリ] --> B[OCR<br/>Vision Framework<br/>RecognizeTextRequest / .accurate<br/>textDirection<br/>ja-JP, en-US]
   B --> C[ハイブリッド前段処理 常時・LLM 不使用<br/>CardFieldClassifier.classifyStructuredFields]
   C --> C1[Pass1: 正規表現で email・phone・URL・住所・会社・部署・役職を抽出]
   C --> C2[Pass2: 座標ベース名前スコアリング<br/>フリガナ近接・フォントサイズ・位置]
@@ -56,7 +59,8 @@ flowchart TD
 
 ```text
 meishi-app/
-├── CLAUDE.md
+├── AGENTS.md                                   # AI エージェント向け開発ルール（単一ソース）
+├── CLAUDE.md                                   # AGENTS.md へのポインタ（@AGENTS.md）
 ├── README.md
 ├── eMeishi/
 │   ├── Info.plist                              # Release 用（UIFileSharingEnabled=false）
@@ -66,21 +70,35 @@ meishi-app/
 │   │   ├── Debug.xcconfig                      # INFOPLIST_FILE=Info-Debug.plist・SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG
 │   │   └── Release.xcconfig                    # INFOPLIST_FILE=Info.plist・DEBUG 条件コード除外
 │   ├── App/
-│   │   ├── eMeishiApp.swift
-│   │   └── PersistenceController.swift          # CoreData スタック・軽量マイグレーション設定
+│   │   ├── eMeishiApp.swift                    # 永続ストア読込み後にサービスを起動するアプリルート
+│   │   ├── PrivacyShieldWindow.swift            # system presentationも覆うscene専用プライバシーウィンドウ
+│   │   └── PersistenceController.swift          # CoreData スタック・読込み状態監視・軽量マイグレーション設定
 │   ├── Models/
+│   │   ├── PersistentStoreCoordinatorReference.swift # actor間でCore Data coordinatorを共有する不変参照
+│   │   ├── SecondaryViewTaskGate.swift        # 二次画面の非同期完了を操作IDで世代管理
+│   │   ├── CardDetailDisplaySnapshot.swift    # 詳細・ピークの属性・連絡先・タグを1回で確定する表示DTO
+│   │   ├── AppNavigationState.swift              # 単一の名刺詳細route・インサイトPath・ルート操作要求
+│   │   ├── AppLaunchAlertQueue.swift              # 共通ルートpresentationが消費する起動時アラートFIFO
+│   │   ├── CardAdditionFlowState.swift            # カメラ・写真・手入力・OCR確認の排他状態機械
+│   │   ├── CardDetailPresentationState.swift      # 詳細画面のsheet・全画面・alert要求
+│   │   ├── CardFormExitLifecycle.swift             # フォーム終了Taskの重複・遅延完了を防ぐ状態機械
+│   │   ├── CardListPresentationState.swift        # 一覧画面のsheet・確認・alert要求
+│   │   ├── CardFieldResolution.swift              # OCR span・フィールド候補・読み候補の共通DTO
+│   │   ├── PersistentStoreLoadState.swift         # 永続ストアの読込み中・成功・失敗状態
+│   │   ├── QueuedPresentationState.swift          # request ID付きpresentation FIFO
 │   │   ├── BusinessCard+CoreDataClass.swift
 │   │   ├── BusinessCard+CoreDataProperties.swift
 │   │   ├── Tag+CoreDataClass.swift
-│   │   └── Tag+CoreDataProperties.swift
-│   ├── ContentView.swift                        # ルートレベルに配置
+│   │   ├── Tag+CoreDataProperties.swift
+│   │   ├── CardImageInput.swift                  # カメラ・写真取込み共通のSendable画像DTO
+│   │   └── OCRProcessingState.swift              # OCR段階・進捗・ETA状態
+│   ├── ContentView.swift                        # 標準TabViewと全幅共通NavigationSplitViewによるルートナビゲーション
 │   ├── Views/
 │   │   ├── CardListView.swift
 │   │   ├── CardDetailView.swift
 │   │   ├── CardFormView.swift
-│   │   ├── CameraView.swift                    # 連続撮影カメラ（CameraBatchCapture・純UIKit管理・標準カメラUI+オーバーレイ）
+│   │   ├── CameraView.swift                    # AVFoundation連続撮影カメラ（単一fullScreenCover）
 │   │   ├── BatchReviewView.swift               # 連続撮影後の一括確認（CardFormViewを順番に表示）
-│   │   ├── AISearchChatView.swift              # AI自然言語検索のチャットUI
 │   │   ├── Billing/
 │   │   │   ├── PaywallView.swift               # Pro 購入・復元・機能紹介シート（コンテキスト別）
 │   │   │   ├── PaywallFeatureListView.swift    # Pro 機能一覧（現在コンテキストを先頭表示）
@@ -93,11 +111,24 @@ meishi-app/
 │   │   ├── PrivacyOverlayView.swift            # App Switcher プライバシーオーバーレイ
 │   │   ├── InsightsView.swift                  # 人脈インサイト（会社別・エリア別・職種別・月別統計）
 │   │   ├── SettingsView.swift                  # 読み取り方法・エクスポート設定・セキュリティ・モデル管理・プライバシーポリシー/サポートリンク
+│   │   ├── AdvancedSettingsView.swift          # 読み取り・AI・CloudKit等の高度な設定
+│   │   ├── ModelManagementView.swift           # ローカルAIモデルの状態・更新・削除
 │   │   └── Components/
 │   │       ├── CardRowView.swift               # 一覧行セル
+│   │       ├── CardThumbnailView.swift          # 中央配置・非クロップの名刺画像
+│   │       ├── CardListControls.swift           # 並べ替え・検索アクセサリ・追加シートの一覧操作部品
+│   │       ├── CardAdditionFlowModifier.swift   # 選択中タブを維持する共通追加フロー
+│   │       ├── ContextMenuInteractionGate.swift # コンテキストメニュー表示中の背面誤反応を抑止
+│   │       ├── PresentationDismissalObserver.swift # UIKit上の実dismiss完了をrequest ID付きで通知
+│   │       ├── DesignSystemComponents.swift    # 共通サーフェス・詳細値行・画像・OCR進捗・メトリクス
+│   │       ├── CardPeekView.swift              # コンテキストメニュー専用の読み取り専用プレビュー
+│   │       ├── StoredCardImageView.swift       # Core Data画像BLOBを背景取得する詳細・ピーク共通ローダー
+│   │       ├── FullScreenCardImageView.swift    # UIScrollViewベースの全画面画像表示
+│   │       ├── DuplicateScoreBadge.swift       # 重複候補の類似度を示す共通バッジ
+│   │       ├── TagSelectionChip.swift           # フォーム共通のタグ選択チップ
 │   │       └── SectionIndexView.swift          # 50音セクションインデックス
 │   ├── ViewModels/
-│   │   ├── CardListViewModel.swift
+│   │   ├── CardListViewModel.swift             # private contextで一覧検索値を生成し、表示・タグ更新を原子的に集約
 │   │   ├── CardFormViewModel.swift
 │   │   └── SettingsStore.swift                 # UserDefaults ラッパー・ReadingMethod enum
 │   ├── Services/
@@ -108,24 +139,40 @@ meishi-app/
 │   │   │   ├── AppTransactionProviding.swift   # AppTransaction / iCloud KVS の Protocol 抽象化（テスト用差替え対応）
 │   │   │   ├── ExistingUserDetector.swift      # 既存ユーザー痕跡（CoreData 名刺有無 / SettingsStore 書き込みキー）の判定
 │   │   │   ├── ProductIdentifier.swift         # SKU 定数（proMonthly / proYearly）
-│   │   │   └── PaywallContext.swift            # Paywall 表示コンテキスト（aiSearch / bulkRetag / insightsNarrative / duplicateAI）
+│   │   │   └── PaywallContext.swift            # 汎用・AI検索・一括タグ・インサイト等のPaywall表示コンテキスト
 │   │   ├── AuthenticationService.swift         # 生体認証（Face ID / Touch ID）ラッパー
 │   │   ├── OCRService.swift
+│   │   ├── PhotoImportService.swift             # PhotosPicker画像の順次ロード・正規化
+│   │   ├── CardImageProcessingService.swift      # OCR入力の縮小・外周補正・圧縮を直列化するactor
+│   │   ├── OCRProcessingCoordinator.swift       # OCR進捗・入力規模＋端末実測補正ETA・中断画像管理
+│   │   ├── OCRBackgroundTaskManager.swift       # BGContinuedProcessingTask連携
+│   │   ├── PendingOCRStore.swift                 # OCR再開キューの原子的な保存・復元
+│   │   ├── CardThumbnailService.swift           # 64pt長辺基準の表示寸法計算
+│   │   ├── DuplicateMergeService.swift          # 重複名刺の選択値統合・保存・rollback
 │   │   ├── ContactsService.swift
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
 │   │   ├── CloudKitModelUploader.swift         # #if DEBUG 限定のモデルアップローダ（開発者向け）
+│   │   ├── CloudKitEntitlementChecker.swift    # 署名entitlementとテスト環境のCloudKit利用可否判定
+│   │   ├── CardImageDecodingService.swift      # 一覧・詳細画像の縮小デコードとキャッシュ
+│   │   ├── CardFormPersistenceWorker.swift     # 編集値・タグ・画像をprivate contextで原子的に保存するactor
+│   │   ├── BulkAutoTagWriter.swift             # AI一括タグ結果を世代照合してprivate contextへ反映するactor
+│   │   ├── ModelInstallService.swift            # 検証済みモデルの原子的置換・ロールバック
 │   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
+│   │   ├── LocalLLMInferenceWorker.swift        # Core MLモデル状態と推論を直列化するactor
 │   │   ├── AISearchService.swift               # AI自然言語検索（時間表現抽出 + フィールド分類）
 │   │   ├── AutoTagService.swift                # AI自動タグ提案（既存タグからカード内容に該当するものを提案）
-│   │   ├── InsightsService.swift               # 人脈インサイト集計（会社別・エリア別・職種別・月別）
+│   │   ├── InsightsService.swift               # private contextでSendableスナップショットを生成しactorで集計する人脈インサイト
 │   │   └── Qwen25Tokenizer.swift               # BPE トークナイザー（Qwen3互換）
 │   ├── Utilities/
 │   │   ├── AppLogger.swift                     # os.Logger ラッパー
+│   │   ├── AppTheme.swift                      # ブランド色と非オレンジのグラフ配色
 │   │   ├── CardFieldClassifier.swift           # 正規表現ベースのフィールド分類（ハイブリッド前段処理）
+│   │   ├── CardFieldResolver.swift             # 名刺全体の制約による候補解決とAI応答検証
 │   │   ├── CardGroupingService.swift           # 50音セクション分割
 │   │   ├── ContactPatternExtractor.swift       # email/phone/URL/住所の正規表現抽出
 │   │   ├── DuplicateChecker.swift              # Levenshtein 距離による重複判定
+│   │   ├── ExternalURLNormalizer.swift          # WebサイトURLのhttps補完・許可スキーム判定
 │   │   ├── FieldDetector.swift                 # OCR 行からフィールド種別の初期判定
 │   │   ├── FlowLayout.swift                    # SwiftUI タグ折返しレイアウト
 │   │   ├── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
@@ -139,13 +186,17 @@ meishi-app/
 ├── eMeishiTests/
 │   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
 │   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
-│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存・キャンセル終了
 │   ├── OCRServiceTests.swift                   # OCR 行結合（横書き・縦書き）の後処理テスト
+│   ├── CardThumbnailServiceTests.swift         # 横長・縦長サムネイル寸法テスト
 │   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
 │   ├── ContactPatternExtractorTests.swift      # email/phone/URL 抽出の正規表現ロジック
 │   ├── FieldDetectorTests.swift                # 会社/部署/役職/建物/住所/英語人名の判定
-│   ├── InsightsServiceTests.swift              # InsightsService の会社別・エリア別・職種別・月別集計
+│   ├── InsightsServiceTests.swift              # InsightsService の集計・private context読込み・キャンセル伝播
 │   ├── CloudKitModelUploadTests.swift          # CloudKit モデルアップロード（CI では自動スキップ）
+│   ├── Models/                                 # ナビゲーション・追加フロー・presentation・起動状態の状態機械テスト
+│   ├── Utilities/                              # フィールド判定・URL・コンテキストメニュー等の純粋ロジックテスト
+│   ├── Views/                                  # 共通UI部品の外観設定・アクセシビリティ契約テスト
 │   └── Billing/
 │       └── BillingTests.swift                  # GrandfatherStore・EntitlementStore・ProductIdentifier・PaywallContext
 ├── eMeishiUITests/
@@ -156,8 +207,13 @@ meishi-app/
 ├── eMeishi-Unit.xctestplan                         # PR Validation 用 Unit テストプラン（Unit テストのみ）
 ├── Configuration.storekit                          # StoreKit Configuration（Xcode テスト用・proMonthly/proYearly・Family Sharing 有効）
 ├── scripts/
-│   └── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
-├── docs/                                       # GitHub Pages（プライバシーポリシー・サポート・ランディング）
+│   ├── pre-build-check.sh                      # ビルド前検証（ビルド番号・Info.plist 整合性・権限）
+│   ├── run-selected-ui-tests.sh                # UIテスト識別子検証・0件実行防止ラッパー
+│   ├── check-ui-lifecycle.sh                   # UI状態所有と遷移タイミング依存の再導入防止
+│   ├── check-test-fixture-privacy.sh           # テストfixtureへの個人情報混入防止
+│   ├── cloudkit-models.sh                      # 10MiB分割・再開・stable/rollback CLI
+│   └── tests/cloudkit-models-test.sh           # CLIマニフェスト・チャンク検証
+├── docs/                                       # GitHub Pages・UIライフサイクル監査台帳・リリースフロー手順
 ├── metadata/                                   # App Store Connect メタデータ
 │   ├── app_info.yaml                           # アプリ基本情報（カテゴリ・URL 等）
 │   └── version/<x.y.z>/ja.json                 # バージョンごとの description・keywords・whatsNew
@@ -171,7 +227,7 @@ meishi-app/
 - iOS 26.0 以降
 - Xcode 26.0 以降
 - **Swift 6.0 言語モード**（`SWIFT_VERSION = 6.0` / `SWIFT_STRICT_CONCURRENCY = complete`）
-- iPhone（実機推奨。シミュレータではAI機能が制限されます）
+- iPhone / iPad（実機推奨。シミュレータではAI機能が制限されます）
 
 ## ビルド
 

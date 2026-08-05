@@ -181,6 +181,22 @@ for key in NSCameraUsageDescription NSContactsUsageDescription NSFaceIDUsageDesc
 done
 
 echo ""
+echo "=== テストデータの個人情報ガード ==="
+if ./scripts/check-test-fixture-privacy.sh; then
+  ok "ユーザー提供データのテスト・文書転用なし"
+else
+  fail "テストデータの個人情報ガードに違反"
+fi
+
+echo ""
+echo "=== UIライフサイクルガード ==="
+if ./scripts/check-ui-lifecycle.sh; then
+  ok "ルートUI状態・固定時間待機の回帰なし"
+else
+  fail "UIライフサイクルガードに違反"
+fi
+
+echo ""
 echo "=== CloudKit Production schema deploy ==="
 # CloudKit は Dev → Prod への schema deploy が手動（Dashboard の "Deploy Schema
 # Changes" ボタンでのみ反映）。未 deploy のまま TestFlight/本番に出ると、

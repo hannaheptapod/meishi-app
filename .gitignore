@@ -99,3 +99,5 @@ backend/
 screenshots/ipad/
 screenshots/framed/
 
+# CloudKit モデル配布 CLI のチャンク・再開状態
+.cloudkit-model-upload/

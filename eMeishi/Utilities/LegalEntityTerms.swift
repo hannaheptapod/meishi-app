@@ -2,7 +2,7 @@ import Foundation
 
 // 法人格（会社格）の一元管理。検出・除去・正規化で共通利用する。
 // CardFieldClassifier（検出）・BusinessCard（ソートキー・読み除去）・DuplicateChecker（正規化比較）で参照。
-enum LegalEntityTerms {
+nonisolated enum LegalEntityTerms {
 
     // MARK: - 日本語法人格（漢字）
 
@@ -49,6 +49,10 @@ enum LegalEntityTerms {
 
     /// CardFieldClassifier の会社名検出で使用
     static let allDetectionTerms: [String] = kanjiTerms + englishTerms + abbreviatedTerms
+
+    /// OCR の customWords 用。括弧略称は記号形で認識辞書に効かず、
+    /// ひらがな読みは名刺上に現れないため除外する。
+    static let ocrCustomWords: [String] = kanjiTerms + englishTerms
 
     // MARK: - 除去
 

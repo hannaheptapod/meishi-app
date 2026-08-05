@@ -1,4 +1,3 @@
-import CoreData
 import SwiftUI
 
 // MARK: - 名刺のアバター（一覧・詳細で共通）
@@ -15,7 +14,8 @@ import SwiftUI
 
 struct CardAvatarView: View {
 
-    @ObservedObject var card: BusinessCard
+    let initials: String
+    let company: String
     var size: CGFloat
 
     @Environment(\.colorScheme) private var colorScheme
@@ -43,10 +43,12 @@ struct CardAvatarView: View {
     }
 
     private var primaryCharacter: String? {
-        if let last = card.lastName?.trimmingCharacters(in: .whitespaces), !last.isEmpty {
-            return String(last.prefix(1))
+        let trimmedInitials = initials.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedInitials.isEmpty {
+            return String(trimmedInitials.prefix(1))
         }
-        if let comp = card.company?.trimmingCharacters(in: .whitespaces), !comp.isEmpty {
+        let comp = company.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !comp.isEmpty {
             return String(comp.prefix(1)).uppercased()
         }
         return nil
@@ -54,11 +56,13 @@ struct CardAvatarView: View {
 
     /// 色相のキーは「会社優先」。同じ会社の人を同色にまとめる。
     private var colorKey: String? {
-        if let comp = card.company?.trimmingCharacters(in: .whitespaces), !comp.isEmpty {
+        let comp = company.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !comp.isEmpty {
             return comp
         }
-        if let last = card.lastName?.trimmingCharacters(in: .whitespaces), !last.isEmpty {
-            return last
+        let trimmedInitials = initials.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedInitials.isEmpty {
+            return trimmedInitials
         }
         return nil
     }
@@ -92,43 +96,28 @@ struct CardAvatarView: View {
 }
 
 #if DEBUG
-#Preview("CardAvatarView パターン") { @MainActor in
-    let context = PersistenceController.preview.container.viewContext
-
-    let makeCard: @MainActor (String?, String?, String?) -> BusinessCard = { last, first, company in
-        let c = BusinessCard(context: context)
-        c.id = UUID()
-        c.lastName = last
-        c.firstName = first
-        c.company = company
-        return c
-    }
-
-    let cards: [BusinessCard] = [
-        makeCard("田中", "太郎", "株式会社サンプル"),
-        makeCard("鈴木", nil,    nil),
-        makeCard(nil,    nil,    "Apple Inc."),
-        makeCard(nil,    nil,    nil),
-        makeCard("田中", "次郎", nil),
-        makeCard("田中", "三郎", nil),
-        makeCard("佐藤", "花子", nil),
-        makeCard("高橋", "一郎", nil),
+#Preview("CardAvatarView パターン") {
+    let samples = [
+        ("山", "サンプル商事"),
+        ("川", ""),
+        ("", "Example Inc."),
+        ("", ""),
     ]
 
     return ScrollView {
         VStack(spacing: 16) {
             HStack(spacing: 12) {
-                ForEach(cards, id: \.id) { card in
+                ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
                     VStack(spacing: 4) {
-                        CardAvatarView(card: card, size: 40)
-                        Text(card.lastName ?? card.company ?? "(空)")
+                        CardAvatarView(initials: sample.0, company: sample.1, size: 40)
+                        Text(sample.0.isEmpty ? sample.1 : sample.0)
                             .font(.caption2)
                     }
                 }
             }
             HStack(spacing: 12) {
-                ForEach(cards, id: \.id) { card in
-                    CardAvatarView(card: card, size: 58)
+                ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
+                    CardAvatarView(initials: sample.0, company: sample.1, size: 58)
                 }
             }
         }

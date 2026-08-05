@@ -162,6 +162,22 @@ struct DuplicateCheckerLegalEntityTests {
         #expect(NameProcessor.generateReading(from: "山田") == "やまだ")
     }
 
+    @Test func generateCompanyReadingUsesAlphabetNamesForInitialisms() {
+        #expect(NameReadingGenerator.generateCompanyReading(from: "T") == "てぃー")
+        #expect(NameReadingGenerator.generateCompanyReading(from: "NTTデータ") == "えぬてぃーてぃーでーた")
+        #expect(
+            BusinessCard.stripLegalEntityReading(
+                from: NameReadingGenerator.generateCompanyReading(from: "株式会社ABC商事")
+            ) == "えーびーしーしょうじ"
+        )
+        #expect(NameReadingGenerator.generateCompanyReading(from: "A・B商事") == "えーびーしょうじ")
+        #expect(NameReadingGenerator.generateCompanyReading(from: "t商事") == "てぃーしょうじ")
+    }
+
+    @Test func generateCompanyReadingDoesNotSpellEnglishWordsLetterByLetter() {
+        #expect(NameReadingGenerator.generateCompanyReading(from: "Apple Japan") == "")
+    }
+
     // MARK: - メール推定改善テスト
 
     @Test func readingsMatchToleratesDoubleVowel() {
@@ -209,5 +225,17 @@ struct DuplicateCheckerLegalEntityTests {
             #expect(r.lastNameReading == "やまだ")
             #expect(r.firstNameReading == "ひふみ")
         }
+    }
+
+    @Test func inferReadingFromEmailSurvivesIncorrectOCRNameSplit() {
+        // 架空名を誤分割しても、予約済みドメインのメール由来候補を失わない。
+        let result = NameReadingGenerator.inferReadingFromEmail(
+            email: "yamada.hanako@example.invalid",
+            lastName: "山田花",
+            firstName: "子"
+        )
+
+        #expect(result?.lastNameReading == "やまだ")
+        #expect(result?.firstNameReading == "はなこ")
     }
 }

@@ -1,257 +1,566 @@
+import CoreData
 import SwiftUI
+import UIKit
 
 // 名刺詳細画面
 struct CardDetailView: View {
 
-    @ObservedObject var card: BusinessCard
-
     @EnvironmentObject private var listViewModel: CardListViewModel
-    @State private var isShowingEditForm = false
-    @State private var exportItem: ExportItem? = nil
-    @State private var alertMessage: String? = nil
-    @State private var isShowingAlert = false
+    @Environment(\.managedObjectContext) private var viewContext
+    @Environment(\.openURL) private var openURL
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var presentationState = CardDetailPresentationState()
+    @State private var isSavingToContacts = false
+    @State private var viewLifetimeID: UUID?
+    @State private var contactsExportRequestID: UUID?
+    @State private var contactsExportTask: Task<Void, Never>?
+    @State private var shareExportRequestID: UUID?
+    @State private var shareExportTask: Task<Void, Never>?
+    @State private var openURLRequestID: UUID?
+    @State private var item: CardListItemSnapshot
 
     private let contactsService = ContactsService.shared
     private let exportService   = ExportService.shared
+    private let cardDataTransferWorker = CardDataTransferWorker()
+
+    @MainActor
+    init(item: CardListItemSnapshot) {
+        _item = State(initialValue: item)
+    }
 
     var body: some View {
-        List {
-            // ── プロフィールヘッダー ──
-            Section {
-                HStack(spacing: 14) {
-                    avatarView
-                    VStack(alignment: .leading, spacing: 3) {
-                        if !card.fullNameReading.isEmpty {
-                            Text(card.fullNameReading)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(card.fullName.isEmpty ? "（名前なし）" : card.fullName)
-                            .font(.title3.bold())
-                        if let company = card.company, !company.isEmpty {
-                            Text(company)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let department = card.department, !department.isEmpty {
-                            Text(department)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let title = card.title, !title.isEmpty {
-                            Text(title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+        let imageRequest = StoredCardImageRequest.businessCard(
+            objectURI: item.id,
+            imageIdentifier: item.imageIdentifier,
+            coordinator: viewContext.persistentStoreCoordinator
+        )
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xLarge) {
+                StoredCardImageHero(
+                    request: imageRequest,
+                    initials: displaySnapshot.initials,
+                    maximumHeight: 420,
+                    showsExpansionIndicator: true,
+                    onTap: imageRequest == nil ? nil : {
+                        requestPresentation(.fullScreen(.cardImage(objectURI: currentCardURI)))
+                    }
+                )
+                .accessibilityIdentifier("cardImagePreview")
+                .accessibilityValue(item.imageIdentifier)
+
+                profileSection
+
+                if !displaySnapshot.contacts.isEmpty {
+                    ContentSection("連絡先") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(displaySnapshot.contacts.enumerated()), id: \.element.id) { index, item in
+                                if index > 0 {
+                                    Divider()
+                                }
+                                DetailValueRow(
+                                    title: item.title,
+                                    value: item.value,
+                                    isLink: item.destination != nil,
+                                    actionLabel: "\(item.title)を開く",
+                                    actionSystemImage: item.systemImage,
+                                    action: item.destination.map { destination in
+                                        { open(destination, label: item.title) }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
-                .padding(.vertical, 4)
-            }
 
-            // ── 名刺画像（高さ上限あり） ──
-            if let data = card.imageData, let image = UIImage(data: data) {
-                Section {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 220)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-
-            // ── 連絡先（電話 + メール） ──
-            let phoneList = card.phoneList
-            let hasEmail  = !(card.email ?? "").isEmpty
-            if !phoneList.isEmpty || hasEmail {
-                Section("連絡先") {
-                    ForEach(phoneList, id: \.self) { phone in
-                        let digits = phone.filter { $0.isNumber || $0 == "+" }
-                        if let url = URL(string: "tel:\(digits)") {
-                            Label {
-                                Link(phone, destination: url)
-                                    .tint(.blue)
-                            } icon: {
-                                Image(systemName: "phone")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityHint("タップして電話をかける")
-                        } else {
-                            Label(phone, systemImage: "phone")
-                                .foregroundStyle(.primary, .secondary)
-                        }
-                    }
-                    if let email = card.email, !email.isEmpty {
-                        if let url = URL(string: "mailto:\(email)") {
-                            Label {
-                                Link(email, destination: url)
-                                    .tint(.blue)
-                            } icon: {
-                                Image(systemName: "envelope")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityHint("タップしてメールを送る")
-                        } else {
-                            Label(email, systemImage: "envelope")
-                                .foregroundStyle(.primary, .secondary)
-                        }
+                if !displaySnapshot.notes.isEmpty {
+                    ContentSection("メモ") {
+                        Text(displaySnapshot.notes)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-            }
 
-            // ── その他（住所・Web・メモ） ──
-            let hasAddress = !(card.address ?? "").isEmpty
-            let hasWebsite = !(card.website ?? "").isEmpty
-            let hasNotes   = !(card.notes   ?? "").isEmpty
-            if hasAddress || hasWebsite || hasNotes {
-                Section("その他") {
-                    if let address = card.address, !address.isEmpty {
-                        Label {
-                            if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                               let mapURL = URL(string: "maps://?q=\(encoded)") {
-                                Link(address, destination: mapURL)
-                                    .tint(.blue)
-                            } else {
-                                Text(address)
+                if !displaySnapshot.tags.isEmpty || displaySnapshot.createdAt != nil {
+                    ContentSection("タグ・登録情報") {
+                        if !displaySnapshot.tags.isEmpty {
+                            FlowLayout(spacing: 6) {
+                                ForEach(displaySnapshot.tags) { tag in
+                                    HStack(spacing: 4) {
+                                        Circle().fill(Color(hex: tag.colorHex)).frame(width: 8, height: 8)
+                                        Text(tag.name).font(.caption)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color(hex: tag.colorHex).opacity(0.12), in: .capsule)
+                                }
                             }
-                        } icon: {
-                            Image(systemName: "mappin.and.ellipse")
-                                .foregroundStyle(.secondary)
                         }
-                        .accessibilityHint("タップして地図アプリで開く")
-                    }
-                    if let website = card.website, !website.isEmpty {
-                        if let url = URL(string: website) {
-                            Label {
-                                Link(website, destination: url)
-                                    .tint(.blue)
-                            } icon: {
-                                Image(systemName: "globe")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityHint("タップしてブラウザで開く")
-                        } else {
-                            Label(website, systemImage: "globe")
-                                .foregroundStyle(.primary, .secondary)
-                        }
-                    }
-                    if let notes = card.notes, !notes.isEmpty {
-                        Label(notes, systemImage: "note.text")
-                            .foregroundStyle(.primary, .secondary)
-                    }
-                }
-            }
-
-            // ── タグ ──
-            if !card.tagArray.isEmpty {
-                Section("タグ") {
-                    FlowLayout(spacing: 6) {
-                        ForEach(card.tagArray) { tag in
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(tag.color)
-                                    .frame(width: 8, height: 8)
-                                Text(tag.tagName)
+                        if let createdAt = displaySnapshot.createdAt {
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xSmall) {
+                                Text("登録日時")
                                     .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.body)
+                                    .textSelection(.enabled)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(tag.color.opacity(0.12))
-                            .clipShape(Capsule())
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel("タグ: \(tag.tagName)\(tag.colorName.isEmpty ? "" : "、\(tag.colorName)")")
+                            .padding(.top, displaySnapshot.tags.isEmpty ? 0 : AppTheme.Spacing.medium)
                         }
                     }
                 }
             }
-
-            // ── 登録日時 ──
-            if let createdAt = card.createdAt {
-                Section {
-                    Label(
-                        createdAt.formatted(date: .abbreviated, time: .shortened),
-                        systemImage: "calendar"
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                } header: {
-                    Text("登録日時")
-                }
-            }
+            .frame(maxWidth: AppTheme.contentMaximumWidth)
+            .padding(.horizontal, AppTheme.Spacing.large)
+            .padding(.vertical, AppTheme.Spacing.xLarge)
+            .frame(maxWidth: .infinity)
         }
-        .navigationTitle(card.fullName.isEmpty ? "名刺詳細" : card.fullName)
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle("名刺詳細")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) {
-                    Button {
-                        listViewModel.toggleFavorite(card)
-                    } label: {
-                        Image(systemName: card.isFavorite ? "star.fill" : "star")
-                            .foregroundStyle(card.isFavorite ? .yellow : .secondary)
-                    }
-                    .accessibilityLabel(card.isFavorite ? "お気に入り解除" : "お気に入りに追加")
-                    Button("編集") { isShowingEditForm = true }
-                }
-            }
-            // アクションを底部ツールバーに配置
-            ToolbarItemGroup(placement: .bottomBar) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    Task { await exportToContacts() }
+                    toggleFavorite()
                 } label: {
-                    Label("連絡先に保存", systemImage: "person.crop.circle.badge.plus")
+                    Image(systemName: displaySnapshot.isFavorite ? "star.fill" : "star")
+                        .foregroundStyle(displaySnapshot.isFavorite ? .yellow : .secondary)
                 }
-                Spacer()
-                Button {
-                    shareVCard()
-                } label: {
-                    Label("vCard として共有", systemImage: "square.and.arrow.up")
+                .accessibilityLabel(displaySnapshot.isFavorite ? "お気に入り解除" : "お気に入りに追加")
+                .sensoryFeedback(.selection, trigger: displaySnapshot.isFavorite)
+
+                Button("編集") {
+                    requestPresentation(.sheet(.editCard(objectURI: currentCardURI)))
                 }
+                    .tint(Color.primary)
             }
+            detailBottomToolbarContent
         }
-        .sheet(isPresented: $isShowingEditForm, onDismiss: listViewModel.fetchCards) {
-            CardFormView(card: card, onSave: { isShowingEditForm = false })
+        .sheet(item: sheetPresentationBinding, onDismiss: {
+            completeCurrentPresentationDismissal()
+        }) { request in
+            sheetContent(for: request)
         }
-        .sheet(item: $exportItem) { item in
-            ShareSheet(activityItems: [item.url])
+        .fullScreenCover(item: fullScreenPresentationBinding, onDismiss: {
+            completeCurrentPresentationDismissal()
+        }) { request in
+            fullScreenContent(for: request)
         }
-        .alert("連絡先", isPresented: $isShowingAlert, presenting: alertMessage) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { msg in
-            Text(msg)
+        .alert(item: alertPresentationBinding) { request in
+            alert(for: request)
+        }
+        .background {
+            PresentationDismissalObserver(
+                activeID: activeAlertRequest?.id,
+                dismissingID: dismissingAlertRequestID,
+                onDismissalCompleted: completeAlertPresentationDismissal
+            )
+            .frame(width: 0, height: 0)
+        }
+        .onAppear {
+            // 再表示時は前回の非同期完了を受け付けない新しい画面寿命として扱う。
+            viewLifetimeID = UUID()
+            refreshDisplaySnapshot()
+        }
+        .onChange(of: listViewModel.cardsContentRevision) { _, _ in
+            refreshDisplaySnapshot()
+        }
+        .onDisappear {
+            cancelViewOwnedWork()
         }
     }
 
-    // MARK: - アバター（一覧と統一して Circle）
+    // MARK: - Presentation state
+
+    private var sheetPresentationBinding: Binding<CardDetailPresentationRequest?> {
+        let requestID = activeSheetRequest?.id
+        return Binding(
+            get: { activeSheetRequest },
+            set: { request in
+                guard request == nil, let requestID else { return }
+                presentationState.clearActive(requestID: requestID)
+            }
+        )
+    }
+
+    private var fullScreenPresentationBinding: Binding<CardDetailPresentationRequest?> {
+        let requestID = activeFullScreenRequest?.id
+        return Binding(
+            get: { activeFullScreenRequest },
+            set: { request in
+                guard request == nil, let requestID else { return }
+                presentationState.clearActive(requestID: requestID)
+            }
+        )
+    }
+
+    private var alertPresentationBinding: Binding<CardDetailPresentationRequest?> {
+        let requestID = activeAlertRequest?.id
+        return Binding(
+            get: { activeAlertRequest },
+            set: { request in
+                guard request == nil, let requestID else { return }
+                presentationState.clearActive(requestID: requestID)
+            }
+        )
+    }
+
+    private var activeSheetRequest: CardDetailPresentationRequest? {
+        guard let request = presentationState.active,
+              case .sheet = request.destination else { return nil }
+        return request
+    }
+
+    private var activeFullScreenRequest: CardDetailPresentationRequest? {
+        guard let request = presentationState.active,
+              case .fullScreen = request.destination else { return nil }
+        return request
+    }
+
+    private var activeAlertRequest: CardDetailPresentationRequest? {
+        guard let request = presentationState.active,
+              case .alert = request.destination else { return nil }
+        return request
+    }
 
     @ViewBuilder
-    private var avatarView: some View {
-        CardAvatarView(card: card, size: 58)
-            .accessibilityLabel("\(card.fullName.isEmpty ? "名前なし" : card.fullName)のアバター")
+    private func sheetContent(for request: CardDetailPresentationRequest) -> some View {
+        if case .sheet(let destination) = request.destination {
+            switch destination {
+            case .editCard(let objectURI):
+                if let card = listViewModel.cardForEditing(objectURI: objectURI) {
+                    CardFormView(card: card, onSave: {
+                        completeEdit(requestID: request.id)
+                    })
+                    .environmentObject(listViewModel)
+                } else {
+                    unavailableSheet(
+                        title: "名刺を編集できません",
+                        description: "この名刺は削除されたか、同期によって更新されています。",
+                        requestID: request.id
+                    )
+                }
+            case .shareExport(let url):
+                ShareSheet(activityItems: [url])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fullScreenContent(for request: CardDetailPresentationRequest) -> some View {
+        if case .fullScreen(.cardImage(let objectURI)) = request.destination,
+           let imageRequest = StoredCardImageRequest.businessCard(
+               objectURI: objectURI,
+               imageIdentifier: item.imageIdentifier,
+               coordinator: viewContext.persistentStoreCoordinator
+           ) {
+            FullScreenCardImageView(
+                request: imageRequest
+            ) {
+                presentationState.clearActive(requestID: request.id)
+            }
+        } else {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                ContentUnavailableView(
+                    "名刺画像を表示できません",
+                    systemImage: "photo.badge.exclamationmark"
+                )
+                .foregroundStyle(.white)
+            }
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    presentationState.clearActive(requestID: request.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .tint(.white)
+                .padding()
+                .accessibilityLabel("閉じる")
+            }
+        }
+    }
+
+    private func alert(for request: CardDetailPresentationRequest) -> Alert {
+        guard case .alert(.message(let title, let message)) = request.destination else {
+            return Alert(title: Text("エラー"))
+        }
+        return Alert(
+            title: Text(title),
+            message: Text(message),
+            dismissButton: .cancel(Text("OK"))
+        )
+    }
+
+    private func unavailableSheet(
+        title: String,
+        description: String,
+        requestID: UUID
+    ) -> some View {
+        NavigationStack {
+            ContentUnavailableView(
+                title,
+                systemImage: "exclamationmark.triangle",
+                description: Text(description)
+            )
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") {
+                        presentationState.clearActive(requestID: requestID)
+                    }
+                }
+            }
+        }
+    }
+
+    private func requestPresentation(_ destination: CardDetailPresentationDestination) {
+        presentationState.request(destination)
+    }
+
+    private func completeEdit(requestID: UUID) {
+        guard presentationState.active?.id == requestID else { return }
+        refreshDisplaySnapshot()
+        // 一覧更新はCoreData変更通知の統一路線へ任せ、sheet dismissal前の再フェッチを避ける。
+        presentationState.clearActive(requestID: requestID)
+    }
+
+    private var dismissingAlertRequestID: UUID? {
+        guard let request = presentationState.dismissing,
+              case .alert = request.destination else { return nil }
+        return request.id
+    }
+
+    private func completeAlertPresentationDismissal(requestID: UUID) {
+        presentationState.presentNext(afterDismissing: requestID)
+    }
+
+    private func completeCurrentPresentationDismissal() {
+        guard let requestID = presentationState.dismissing?.id else { return }
+        presentationState.presentNext(afterDismissing: requestID)
+    }
+
+    private var currentCardURI: URL {
+        item.id
+    }
+
+    private var displaySnapshot: CardDetailDisplaySnapshot { item.detail }
+
+    @ToolbarContentBuilder
+    private var detailBottomToolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .bottomBar) {
+            saveToContactsButton
+            if horizontalSizeClass != .regular {
+                Spacer()
+            }
+            shareCardButton
+            if horizontalSizeClass == .regular {
+                Spacer()
+            }
+        }
+    }
+
+    private var saveToContactsButton: some View {
+        Button {
+            startContactsExport()
+        } label: {
+            Label {
+                Text("連絡先に保存")
+            } icon: {
+                if isSavingToContacts {
+                    ProgressView()
+                } else {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                }
+            }
+        }
+        .tint(Color.primary)
+        .disabled(isSavingToContacts)
+        .accessibilityIdentifier("saveToContactsButton")
+    }
+
+    private var shareCardButton: some View {
+        Button {
+            shareVCard()
+        } label: {
+            Label {
+                Text("共有")
+            } icon: {
+                if shareExportRequestID != nil {
+                    ProgressView()
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+        }
+        .tint(Color.primary)
+        .disabled(shareExportRequestID != nil)
+        .accessibilityIdentifier("shareCardButton")
+    }
+
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.small) {
+            if !displaySnapshot.fullNameReading.isEmpty {
+                Text(displaySnapshot.fullNameReading)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Text(displaySnapshot.displayName)
+                .font(.largeTitle.weight(.bold))
+                .accessibilityIdentifier("cardDetailName")
+            if !displaySnapshot.company.isEmpty {
+                Text(displaySnapshot.company)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("cardDetailCompany")
+            }
+            if !displaySnapshot.affiliation.isEmpty {
+                Text(displaySnapshot.affiliation)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.xSmall)
+        .textSelection(.enabled)
+    }
+
+    private func refreshDisplaySnapshot() {
+        guard let refreshed = listViewModel.listItem(for: currentCardURI) else { return }
+        item = refreshed
+    }
+
+    private func toggleFavorite() {
+        listViewModel.toggleFavorite(objectURI: currentCardURI)
+        item = item.settingFavorite(!item.row.isFavorite)
+    }
+
+    private func open(_ destination: URL, label: String) {
+        guard let lifetimeID = viewLifetimeID else { return }
+        let requestID = UUID()
+        openURLRequestID = requestID
+        openURL(destination) { accepted in
+            guard viewLifetimeID == lifetimeID,
+                  openURLRequestID == requestID else { return }
+            openURLRequestID = nil
+            guard !accepted else { return }
+            requestPresentation(
+                .alert(.message(title: "リンクを開けません", message: "\(label)を開けませんでした。"))
+            )
+        }
     }
 
     // MARK: - アクション
 
-    private func exportToContacts() async {
-        let dto = card.toExportDTO()
-        do {
-            try await contactsService.export(card: dto)
-            alertMessage = "\(card.fullName) を連絡先に保存しました。"
-            isShowingAlert = true
-        } catch {
-            alertMessage = error.localizedDescription
-            isShowingAlert = true
+    private func startContactsExport() {
+        guard !isSavingToContacts,
+              let lifetimeID = viewLifetimeID else { return }
+
+        let requestID = UUID()
+        contactsExportRequestID = requestID
+        isSavingToContacts = true
+        contactsExportTask = Task {
+            await exportToContacts(lifetimeID: lifetimeID, requestID: requestID)
         }
     }
 
-    private func shareVCard() {
-        do {
-            let url = try exportService.exportVCard(from: [card.toExportDTO()])
-            exportItem = ExportItem(url: url)
-        } catch {
-            alertMessage = "vCard の生成に失敗しました: \(error.localizedDescription)"
-            isShowingAlert = true
+    private func exportToContacts(lifetimeID: UUID, requestID: UUID) async {
+        guard let coordinator = viewContext.persistentStoreCoordinator else {
+            guard finishContactsExport(lifetimeID: lifetimeID, requestID: requestID) else { return }
+            requestPresentation(
+                .alert(.message(title: "連絡先", message: "名刺データを読み込めませんでした。"))
+            )
+            return
         }
+        let request = ContactExportRequest(
+            objectURI: currentCardURI,
+            coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+        )
+        do {
+            try await contactsService.export(request: request)
+            guard finishContactsExport(lifetimeID: lifetimeID, requestID: requestID) else { return }
+            requestPresentation(
+                .alert(.message(title: "連絡先", message: "連絡先に保存しました。"))
+            )
+        } catch is CancellationError {
+            _ = finishContactsExport(lifetimeID: lifetimeID, requestID: requestID)
+        } catch {
+            guard finishContactsExport(lifetimeID: lifetimeID, requestID: requestID) else { return }
+            requestPresentation(
+                .alert(.message(title: "連絡先", message: error.localizedDescription))
+            )
+        }
+    }
+
+    @discardableResult
+    private func finishContactsExport(lifetimeID: UUID, requestID: UUID) -> Bool {
+        guard !Task.isCancelled,
+              viewLifetimeID == lifetimeID,
+              contactsExportRequestID == requestID else { return false }
+        contactsExportRequestID = nil
+        contactsExportTask = nil
+        isSavingToContacts = false
+        return true
+    }
+
+    private func cancelViewOwnedWork() {
+        viewLifetimeID = nil
+        openURLRequestID = nil
+        contactsExportRequestID = nil
+        contactsExportTask?.cancel()
+        contactsExportTask = nil
+        isSavingToContacts = false
+        shareExportRequestID = nil
+        shareExportTask?.cancel()
+        shareExportTask = nil
+    }
+
+    private func shareVCard() {
+        guard shareExportRequestID == nil,
+              let lifetimeID = viewLifetimeID,
+              let coordinator = viewContext.persistentStoreCoordinator else { return }
+        let requestID = UUID()
+        shareExportRequestID = requestID
+        let objectURI = currentCardURI
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        let worker = cardDataTransferWorker
+        let exporter = exportService
+
+        shareExportTask = Task {
+            do {
+                let dto = try await worker.loadCard(
+                    objectURI: objectURI,
+                    coordinatorReference: coordinatorReference
+                )
+                try Task.checkCancellation()
+                let url = try await exporter.exportVCardInBackground(from: [dto])
+                guard finishShareExport(lifetimeID: lifetimeID, requestID: requestID) else { return }
+                requestPresentation(.sheet(.shareExport(url: url)))
+            } catch is CancellationError {
+                _ = finishShareExport(lifetimeID: lifetimeID, requestID: requestID)
+            } catch {
+                guard finishShareExport(lifetimeID: lifetimeID, requestID: requestID) else { return }
+                requestPresentation(
+                    .alert(
+                        .message(
+                            title: "共有できません",
+                            message: "vCard の生成に失敗しました: \(error.localizedDescription)"
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    private func finishShareExport(lifetimeID: UUID, requestID: UUID) -> Bool {
+        guard !Task.isCancelled,
+              viewLifetimeID == lifetimeID,
+              shareExportRequestID == requestID else { return false }
+        shareExportRequestID = nil
+        shareExportTask = nil
+        return true
     }
 }
 

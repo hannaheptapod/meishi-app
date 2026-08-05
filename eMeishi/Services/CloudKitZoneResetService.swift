@@ -24,11 +24,14 @@ final class CloudKitZoneResetService: ObservableObject {
 
     private static let containerIdentifier = "iCloud.com.jinks.emeishi"
     private static let coreDataZoneName = "com.apple.coredata.cloudkit.zone"
+    private let entitlementChecker: any CloudKitEntitlementChecking
 
     @Published private(set) var isResetting = false
     @Published private(set) var lastError: String?
 
-    private init() {}
+    init(entitlementChecker: any CloudKitEntitlementChecking = SignedCloudKitEntitlementChecker()) {
+        self.entitlementChecker = entitlementChecker
+    }
 
     /// CoreData の CloudKit zone を削除する。
     /// 削除後は `iCloudSyncEnabled` / `cloudKitContainerUnavailable` を false に倒し、
@@ -38,6 +41,11 @@ final class CloudKitZoneResetService: ObservableObject {
         isResetting = true
         lastError = nil
         defer { isResetting = false }
+
+        guard entitlementChecker.canCreateContainer(identifier: Self.containerIdentifier) else {
+            lastError = "この環境ではiCloud同期の修復を実行できません"
+            return false
+        }
 
         let container = CKContainer(identifier: Self.containerIdentifier)
         let db = container.privateCloudDatabase
