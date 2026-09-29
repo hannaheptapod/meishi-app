@@ -894,6 +894,10 @@ class CardListViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var isImporting = false
     @Published var importResultMessage: String? = nil
+    /// 画像を保持している名刺の件数（設定画面の一括画像削除で表示する）。
+    @Published private(set) var cardsWithImageCount = 0
+    @Published private(set) var isRemovingCardImages = false
+    @Published var cardImageCleanupMessage: String? = nil
     @Published var searchText: String = "" {
         didSet {
             invalidateSemanticSearchIfNeeded()
@@ -986,6 +990,7 @@ class CardListViewModel: ObservableObject {
     private let cardDataTransferWorker = CardDataTransferWorker()
     private let contactImportStoreWriter = ContactImportStoreWriter()
     private let bulkAutoTagWriter = BulkAutoTagWriter()
+    private let cardImageCleanupWriter = CardImageCleanupWriter()
     private let searchDebounceDuration: Duration
     private var listQuerySnapshots: [CardListQuerySnapshot] = []
     private var listItems: [CardListItemSnapshot] = []
@@ -1008,6 +1013,7 @@ class CardListViewModel: ObservableObject {
     private var fileExportGeneration = UUID()
     private var deleteAllCardsTask: Task<Void, Never>?
     private var deleteAllCardsGeneration = UUID()
+    private var cardImageCleanupTask: Task<Void, Never>?
     private var bulkAutoTagGeneration = UUID()
     private static let recentSearchesDefaultsKey = "cardSearchRecentQueries"
 
@@ -2326,6 +2332,7 @@ class CardListViewModel: ObservableObject {
                 )
                 guard !Task.isCancelled, deleteAllCardsGeneration == generation else { return }
                 fetchCards()
+                await refreshCardsWithImageCount()
             } catch is CancellationError {
                 guard deleteAllCardsGeneration == generation else { return }
                 deleteAllCardsTask = nil
@@ -2339,9 +2346,54 @@ class CardListViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 名刺画像の一括削除（Issue #203）
+
+    /// 画像を保持している名刺の件数を読み直す。画像Dataは読み込まずcountだけを実行する。
+    func refreshCardsWithImageCount() async {
+        guard let coordinator = context.persistentStoreCoordinator else { return }
+        do {
+            cardsWithImageCount = try await cardImageCleanupWriter.countCardsWithImage(
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            AppLogger.persistence.error("画像付き名刺の件数取得に失敗しました: \(error)")
+        }
+    }
+
+    /// 全名刺の画像だけを削除し、文字情報は残す。
+    /// 設定画面を閉じても中断しないよう、taskはViewではなくViewModelが所有する。
+    func removeAllCardImages() {
+        guard !isRemovingCardImages else { return }
+        guard let coordinator = context.persistentStoreCoordinator else {
+            errorMessage = "画像の削除に失敗しました: \(CardDataTransferError.missingPersistentStore.localizedDescription)"
+            return
+        }
+        let coordinatorReference = PersistentStoreCoordinatorReference(coordinator: coordinator)
+        isRemovingCardImages = true
+        cardImageCleanupMessage = nil
+        cardImageCleanupTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let count = try await cardImageCleanupWriter.removeAllImages(
+                    coordinatorReference: coordinatorReference
+                )
+                cardImageCleanupMessage = "\(count)件の名刺から画像を削除しました"
+                fetchCards()
+            } catch {
+                errorMessage = "画像の削除に失敗しました: \(error.localizedDescription)"
+            }
+            await refreshCardsWithImageCount()
+            isRemovingCardImages = false
+            cardImageCleanupTask = nil
+        }
+    }
+
     /// テストからprivate writerと最終一覧更新の完了を待つ。
     func waitForPendingDataMutation() async {
         await deleteAllCardsTask?.value
+        await cardImageCleanupTask?.value
         await waitForPendingListUpdate()
     }
 

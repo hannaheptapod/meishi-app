@@ -26,6 +26,7 @@ nonisolated enum SettingsAlertDestination: Equatable, Sendable {
 
 nonisolated enum SettingsPresentation: Equatable, Sendable {
     case deleteAllConfirmation
+    case removeAllImagesConfirmation
     case seedConfirmation
     case paywall
     case alert(SettingsAlertDestination)
@@ -33,6 +34,7 @@ nonisolated enum SettingsPresentation: Equatable, Sendable {
 
 nonisolated private enum SettingsConfirmationCommit: Equatable, Sendable {
     case deleteAllCards
+    case removeAllCardImages
     case seedSampleData
 }
 
@@ -112,6 +114,7 @@ struct SettingsView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             biometricType = AuthenticationService.shared.refreshAvailableBiometricType()
+            await listViewModel.refreshCardsWithImageCount()
         }
         .onDisappear(perform: cancelViewOwnedTasks)
     }
@@ -384,21 +387,60 @@ struct SettingsView: View {
 
         confirmationCommitState.removeAll()
         presentationState.removeAll()
+
+        // 完了表示は次回の設定画面へ持ち越さない。削除中なら完了時の結果表示を残す。
+        if !listViewModel.isRemovingCardImages {
+            listViewModel.cardImageCleanupMessage = nil
+        }
     }
 
     // MARK: - データ管理
 
     private var dataSection: some View {
-        Section("データ管理") {
+        Section {
+            Button(role: .destructive) {
+                presentationState.request(.removeAllImagesConfirmation)
+            } label: {
+                // 隣の「すべての名刺を削除」と同じく、アイコンはtint・タイトルはdestructive色に揃える。
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("名刺画像をすべて削除")
+                        Text(
+                            listViewModel.isRemovingCardImages
+                                ? "削除中…"
+                                : "画像付きの名刺 \(listViewModel.cardsWithImageCount)件"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "photo.slash")
+                }
+            }
+            .disabled(
+                isRestoringPurchases
+                    || listViewModel.isRemovingCardImages
+                    || listViewModel.cardsWithImageCount == 0
+            )
+            .accessibilityIdentifier("removeAllCardImagesButton")
+            if let message = listViewModel.cardImageCleanupMessage {
+                Label(message, systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button(role: .destructive) {
                 presentationState.request(.deleteAllConfirmation)
             } label: {
                 Label("すべての名刺を削除", systemImage: "trash")
             }
-            .disabled(isRestoringPurchases)
+            .disabled(isRestoringPurchases || listViewModel.isRemovingCardImages)
             if let err = listViewModel.errorMessage {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
+        } header: {
+            Text("データ管理")
+        } footer: {
+            Text("名刺画像を削除すると、読み取った文字情報を残したまま端末とiCloudの使用容量を減らせます。")
         }
     }
 
@@ -497,7 +539,7 @@ struct SettingsView: View {
     private var activeSettingsConfirmation: SettingsPresentation? {
         guard let destination = presentationState.active?.destination else { return nil }
         switch destination {
-        case .deleteAllConfirmation, .seedConfirmation:
+        case .deleteAllConfirmation, .removeAllImagesConfirmation, .seedConfirmation:
             return destination
         case .paywall, .alert:
             return nil
@@ -508,6 +550,8 @@ struct SettingsView: View {
         switch activeSettingsConfirmation {
         case .deleteAllConfirmation:
             return "すべての名刺を削除しますか？"
+        case .removeAllImagesConfirmation:
+            return "名刺画像をすべて削除しますか？"
         case .seedConfirmation:
             return "サンプル名刺を50件追加しますか？"
         case .paywall, .alert, nil:
@@ -519,6 +563,8 @@ struct SettingsView: View {
         switch activeSettingsConfirmation {
         case .deleteAllConfirmation:
             return "この操作は取り消せません。"
+        case .removeAllImagesConfirmation:
+            return "\(listViewModel.cardsWithImageCount)件の名刺から画像を削除します。氏名や会社名などの文字情報は残ります。iCloud同期中の他のデバイスからも画像が削除され、この操作は取り消せません。"
         case .seedConfirmation:
             return "既存のデータは削除されません。"
         case .paywall, .alert, nil:
@@ -532,6 +578,10 @@ struct SettingsView: View {
         case .deleteAllConfirmation:
             Button("すべて削除", role: .destructive) {
                 scheduleConfirmationCommit(.deleteAllCards)
+            }
+        case .removeAllImagesConfirmation:
+            Button("画像を削除", role: .destructive) {
+                scheduleConfirmationCommit(.removeAllCardImages)
             }
         case .seedConfirmation:
 #if DEBUG
@@ -613,7 +663,7 @@ struct SettingsView: View {
     private func scheduleConfirmationCommit(_ action: SettingsConfirmationCommit) {
         guard let active = presentationState.active else { return }
         switch active.destination {
-        case .deleteAllConfirmation, .seedConfirmation:
+        case .deleteAllConfirmation, .removeAllImagesConfirmation, .seedConfirmation:
             guard confirmationCommitState.schedule(action, for: active.id) else { return }
             finishActivePresentation(expectedID: active.id)
         case .paywall, .alert:
@@ -625,6 +675,8 @@ struct SettingsView: View {
         switch action {
         case .deleteAllCards:
             listViewModel.deleteAllCards()
+        case .removeAllCardImages:
+            listViewModel.removeAllCardImages()
         case .seedSampleData:
 #if DEBUG
             listViewModel.seedSampleData()

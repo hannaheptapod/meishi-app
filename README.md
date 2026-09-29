@@ -9,6 +9,7 @@ iPhone・iPadで名刺をスマートに管理するアプリ。カメラで撮�
 - **ふりがな自動生成** — 名前・会社名のふりがなを自動取得。名前順・会社名順ソートに使用
 - **連絡先連携** — iPhoneの連絡先へワンタップ保存、連絡先からのインポート
 - **CSV / vCard エクスポート** — Excel対応のCSV（UTF-8 BOM付き）、vCard 3.0/4.0
+- **名刺画像の削除** — 編集画面で1枚ずつ、または設定から全名刺の画像を一括削除し、文字情報だけを残して容量を節約
 - **重複検出 + マージ** — Levenshtein距離ベースの類似度判定 + AIによるボーダーライン二次判定
 - **タグ管理** — ユーザー定義タグ（名前・色・並べ替え）で自由にグループ分け
 - **AI自然言語検索** — 「先月会った渋谷のエンジニア」のような自然文で名刺を検索
@@ -157,6 +158,7 @@ meishi-app/
 │   │   ├── CardImageDecodingService.swift      # 一覧・詳細画像の縮小デコードとキャッシュ
 │   │   ├── CardFormPersistenceWorker.swift     # 編集値・タグ・画像をprivate contextで原子的に保存するactor
 │   │   ├── BulkAutoTagWriter.swift             # AI一括タグ結果を世代照合してprivate contextへ反映するactor
+│   │   ├── CardImageCleanupWriter.swift        # 全名刺の画像だけをbatch単位でnil化するactor（文字情報・updatedAtは維持）
 │   │   ├── ModelInstallService.swift            # 検証済みモデルの原子的置換・ロールバック
 │   │   ├── LocalLLMService.swift               # Anemll Qwen3-0.6B ANE対応 CoreML 推論（Embed+FFN+LMHead）・stateful KV cache・Documents/AppSupport 二重パス
 │   │   ├── LocalLLMInferenceWorker.swift        # Core MLモデル状態と推論を直列化するactor
@@ -186,7 +188,7 @@ meishi-app/
 ├── eMeishiTests/
 │   ├── eMeishiTests.swift                      # 機能テスト（OCR・DuplicateChecker・ExportService・AutoTagService 等）
 │   ├── CardListViewModelTests.swift            # CardListViewModel の検索・ソート・一括操作ロジック
-│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存・キャンセル終了
+│   ├── CardFormViewModelTests.swift            # CardFormViewModel の init・タグ操作・save() 正規化・OCR画像保存・画像削除・キャンセル終了
 │   ├── OCRServiceTests.swift                   # OCR 行結合（横書き・縦書き）の後処理テスト
 │   ├── CardThumbnailServiceTests.swift         # 横長・縦長サムネイル寸法テスト
 │   ├── CardGroupingServiceTests.swift          # CardGroupingService のセクション分割・グループ化
