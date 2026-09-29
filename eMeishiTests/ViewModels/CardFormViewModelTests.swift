@@ -369,6 +369,41 @@ struct CardFormViewModelSaveTests {
         #expect(card.imageData == originalImageData)
     }
 
+    @Test func removeCapturedImageClearsOnlyImageOnSave() async throws {
+        let ctx = makeContext()
+        let card = BusinessCard(context: ctx)
+        card.id = UUID()
+        card.lastName = "山田"
+        card.company = "例示商事株式会社"
+        card.imageData = Data((0..<128).map(UInt8.init))
+        card.createdAt = Date()
+        card.updatedAt = Date()
+        try ctx.save()
+
+        let vm = CardFormViewModel(card: card, context: ctx)
+        vm.beginEditSnapshotLoading()
+        vm.applyEditSnapshot(try await vm.loadEditSnapshot())
+        vm.removeCapturedImage()
+        #expect(vm.capturedImageData == nil)
+        try await vm.save()
+
+        ctx.refresh(card, mergeChanges: false)
+        #expect(card.imageData == nil)
+        #expect(card.lastName == "山田")
+        #expect(card.company == "例示商事株式会社")
+    }
+
+    @Test func removeCapturedImageIsIgnoredWhileOCRIsRunning() {
+        let vm = CardFormViewModel(context: makeContext())
+        let imageData = Data([0x01, 0x02, 0x03])
+        vm.setPreparedImageData(imageData)
+        vm.isProcessingOCR = true
+
+        vm.removeCapturedImage()
+
+        #expect(vm.capturedImageData == imageData)
+    }
+
     @Test func saveKeepsUncertainCompanyReadingBlank() async throws {
         let ctx = makeContext()
         let vm = CardFormViewModel(context: ctx)

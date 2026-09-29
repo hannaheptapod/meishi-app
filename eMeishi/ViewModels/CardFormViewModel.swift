@@ -137,6 +137,13 @@ class CardFormViewModel: ObservableObject {
         capturedImageData = data
     }
 
+    /// 名刺画像だけを外す。OCR結果のテキスト項目は変更せず、保存時にimageDataをnilで上書きする。
+    /// OCR中は画像が解析入力として使われているため受け付けない。
+    func removeCapturedImage() {
+        guard capturedImageData != nil, !isProcessingOCR else { return }
+        capturedImageData = nil
+    }
+
     // MARK: - 初期化（新規作成）
 
     // デフォルト引数式は nonisolated で評価されるため @MainActor シングルトンを直接参照できない。

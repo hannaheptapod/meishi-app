@@ -710,6 +710,27 @@ struct CardListViewModelBulkOperationTests {
 
         #expect(vm.cards.isEmpty)
     }
+
+    @Test func removeAllCardImagesKeepsCardsAndReportsCount() async throws {
+        let context = makeTestContext()
+        let withImage = makeCard(context: context, lastName: "山田")
+        withImage.imageData = Data(repeating: 0x01, count: 64)
+        _ = makeCard(context: context, lastName: "佐藤")
+        try context.save()
+
+        let vm = CardListViewModel(context: context)
+        await vm.waitForPendingListUpdate()
+        await vm.refreshCardsWithImageCount()
+        #expect(vm.cardsWithImageCount == 1)
+
+        vm.removeAllCardImages()
+        await vm.waitForPendingDataMutation()
+
+        #expect(vm.cards.count == 2)
+        #expect(vm.cardsWithImageCount == 0)
+        #expect(vm.isRemovingCardImages == false)
+        #expect(vm.cardImageCleanupMessage == "1件の名刺から画像を削除しました")
+    }
 }
 
 // MARK: - タグ管理

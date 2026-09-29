@@ -126,6 +126,18 @@ struct CardFormView: View {
                             initials: "",
                             maximumHeight: 220
                         )
+                        if !viewModel.isProcessingOCR {
+                            Button(role: .destructive) {
+                                viewModel.removeCapturedImage()
+                            } label: {
+                                Label("画像を削除", systemImage: "photo.slash")
+                            }
+                            .accessibilityIdentifier("removeCardImageButton")
+                        }
+                    } footer: {
+                        if !viewModel.isProcessingOCR {
+                            Text("保存すると画像だけが削除され、読み取った文字情報は残ります。")
+                        }
                     }
                 }
 
