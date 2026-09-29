@@ -8,6 +8,7 @@ iPhone・iPadで名刺をスマートに管理するアプリ。カメラで撮�
 - **バックグラウンド読み取り** — 処理段階・推定残り時間を表示し、Dynamic Island／システムLive Activityから進捗を確認可能
 - **ふりがな自動生成** — 名前・会社名のふりがなを自動取得。名前順・会社名順ソートに使用
 - **連絡先連携** — iPhoneの連絡先へワンタップ保存、連絡先からのインポート
+- **vCard インポート** — 他の名刺アプリから書き出した .vcf（2.1/3.0/4.0・UTF-8/Shift_JIS）を読み仮名込みで取り込み
 - **CSV / vCard エクスポート** — Excel対応のCSV（UTF-8 BOM付き）、vCard 3.0/4.0
 - **重複検出 + マージ** — Levenshtein距離ベースの類似度判定 + AIによるボーダーライン二次判定
 - **タグ管理** — ユーザー定義タグ（名前・色・並べ替え）で自由にグループ分け
@@ -120,6 +121,7 @@ meishi-app/
 │   │       ├── CardAdditionFlowModifier.swift   # 選択中タブを維持する共通追加フロー
 │   │       ├── ContextMenuInteractionGate.swift # コンテキストメニュー表示中の背面誤反応を抑止
 │   │       ├── PresentationDismissalObserver.swift # UIKit上の実dismiss完了をrequest ID付きで通知
+│   │       ├── VCardDocumentPicker.swift        # .vcfを1件選ぶUIDocumentPickerラッパー（asCopy）
 │   │       ├── DesignSystemComponents.swift    # 共通サーフェス・詳細値行・画像・OCR進捗・メトリクス
 │   │       ├── CardPeekView.swift              # コンテキストメニュー専用の読み取り専用プレビュー
 │   │       ├── StoredCardImageView.swift       # Core Data画像BLOBを背景取得する詳細・ピーク共通ローダー
@@ -150,6 +152,7 @@ meishi-app/
 │   │   ├── CardThumbnailService.swift           # 64pt長辺基準の表示寸法計算
 │   │   ├── DuplicateMergeService.swift          # 重複名刺の選択値統合・保存・rollback
 │   │   ├── ContactsService.swift
+│   │   ├── VCardImportService.swift            # .vcfの文字コード判定・UTF-16変換・読み仮名補完（X-PHONETIC-ORG/SORT-AS/SOUND）
 │   │   ├── ExportService.swift
 │   │   ├── CloudKitModelService.swift          # CloudKit Public DB からモデルDL・Embed/FFN/LMHead 3モデル対応・weight チャンク結合
 │   │   ├── CloudKitModelUploader.swift         # #if DEBUG 限定のモデルアップローダ（開発者向け）

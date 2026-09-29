@@ -271,6 +271,18 @@ struct CardListView: View {
                 .environmentObject(viewModel)
             case .shareExport(let url):
                 ShareSheet(activityItems: [url])
+            case .vCardFilePicker:
+                VCardDocumentPicker(
+                    onPick: { url in
+                        presentationState.clearActive(requestID: request.id)
+                        // 結果のalertはsheetの離脱完了後にpresentation queueから表示される。
+                        Task { await viewModel.importFromVCardFile(at: url) }
+                    },
+                    onCancel: {
+                        presentationState.clearActive(requestID: request.id)
+                    }
+                )
+                .ignoresSafeArea()
             }
         }
     }
@@ -581,6 +593,13 @@ struct CardListView: View {
                 }
                 .disabled(viewModel.isImporting)
                 .accessibilityIdentifier("importFromContacts")
+                Button {
+                    requestPresentation(.sheet(.vCardFilePicker))
+                } label: {
+                    Label("vCardファイルからインポート", systemImage: "person.crop.rectangle.badge.plus")
+                }
+                .disabled(viewModel.isImporting)
+                .accessibilityIdentifier("importFromVCardFile")
                 if viewModel.hasDisplayedCards {
                     Divider()
                     Button { viewModel.exportCSV() } label: {
