@@ -989,6 +989,7 @@ class CardListViewModel: ObservableObject {
     private let tagDisplaySnapshotLoader = TagDisplaySnapshotLoader()
     private let cardDataTransferWorker = CardDataTransferWorker()
     private let contactImportStoreWriter = ContactImportStoreWriter()
+    private let vCardImportService = VCardImportService()
     private let bulkAutoTagWriter = BulkAutoTagWriter()
     private let cardImageCleanupWriter = CardImageCleanupWriter()
     private let searchDebounceDuration: Duration
@@ -2297,6 +2298,53 @@ class CardListViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - vCardファイルからインポート（Issue #204）
+
+    /// ドキュメントピッカーで選ばれた.vcfを名刺として取り込む。
+    /// `removeAfterReading`はピッカーが作ったコピーを読み込み後に削除するかどうか。
+    func importFromVCardFile(at url: URL, removeAfterReading: Bool = true) async {
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
+        let hadCards = hasDisplayedCards
+        do {
+            let contacts = try await vCardImportService.contacts(
+                fromFileAt: url,
+                removeAfterReading: removeAfterReading
+            )
+            try Task.checkCancellation()
+            guard let coordinator = context.persistentStoreCoordinator else {
+                throw CardDataTransferError.missingPersistentStore
+            }
+            let count = try await contactImportStoreWriter.insert(
+                contacts: contacts,
+                coordinatorReference: PersistentStoreCoordinatorReference(coordinator: coordinator)
+            )
+            try Task.checkCancellation()
+            fetchCards()
+            importResultMessage = Self.vCardImportResultMessage(
+                insertedCount: count,
+                hadExistingCards: hadCards
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 重複判定は取込後に非同期で走るため件数は示さず、確認先だけを案内する。
+    nonisolated static func vCardImportResultMessage(
+        insertedCount: Int,
+        hadExistingCards: Bool
+    ) -> String {
+        var message = "\(insertedCount)件の名刺をインポートしました"
+        if insertedCount > 0, hadExistingCards {
+            message += "\n\n既存の名刺と重複している可能性があります。メニューの「重複チェック」で確認できます。"
+        }
+        return message
     }
 
     // MARK: - 削除

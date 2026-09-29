@@ -514,7 +514,7 @@ enum NameReadingGenerator {
     }
 
     /// カタカナをひらがなに変換する（長音符 ー を保存する）
-    nonisolated private static func katakanaToHiragana(_ text: String) -> String {
+    nonisolated static func katakanaToHiragana(_ text: String) -> String {
         let placeholder: Character = "\u{FFFC}"
         let preserved = String(text.map { $0 == "ー" ? placeholder : $0 })
         let mutable = NSMutableString(string: preserved)

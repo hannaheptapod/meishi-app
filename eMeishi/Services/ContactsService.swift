@@ -85,8 +85,11 @@ actor ContactImportStoreWriter {
                     )
                     card.setValue(UUID(), forKey: "id")
                     card.setValue(Self.nilIfEmpty(contact.lastName), forKey: "lastName")
+                    card.setValue(Self.nilIfEmpty(contact.lastNameReading), forKey: "lastNameReading")
                     card.setValue(Self.nilIfEmpty(contact.firstName), forKey: "firstName")
+                    card.setValue(Self.nilIfEmpty(contact.firstNameReading), forKey: "firstNameReading")
                     card.setValue(Self.nilIfEmpty(contact.company), forKey: "company")
+                    card.setValue(Self.nilIfEmpty(contact.companyReading), forKey: "companyReading")
                     card.setValue(Self.nilIfEmpty(contact.department), forKey: "department")
                     card.setValue(Self.nilIfEmpty(contact.title), forKey: "title")
                     card.setValue(Self.nilIfEmpty(contact.phone), forKey: "phone")
@@ -160,10 +163,14 @@ actor ContactImportStoreWriter {
 
 nonisolated struct ImportedContact: Sendable {
     let lastName: String
+    let lastNameReading: String
     let firstName: String
+    let firstNameReading: String
     let company: String
+    let companyReading: String
     let department: String
     let title: String
+    /// 複数の電話番号は`BusinessCard.phone`と同じく改行区切りで保持する。
     let phone: String
     let email: String
     let address: String
@@ -172,8 +179,11 @@ nonisolated struct ImportedContact: Sendable {
 
     init(
         lastName: String = "",
+        lastNameReading: String = "",
         firstName: String = "",
+        firstNameReading: String = "",
         company: String = "",
+        companyReading: String = "",
         department: String = "",
         title: String = "",
         phone: String = "",
@@ -183,8 +193,11 @@ nonisolated struct ImportedContact: Sendable {
         notes: String = ""
     ) {
         self.lastName = lastName
+        self.lastNameReading = lastNameReading
         self.firstName = firstName
+        self.firstNameReading = firstNameReading
         self.company = company
+        self.companyReading = companyReading
         self.department = department
         self.title = title
         self.phone = phone
@@ -194,19 +207,77 @@ nonisolated struct ImportedContact: Sendable {
         self.notes = notes
     }
 
-    nonisolated init(cnContact c: CNContact) {
+    /// 連絡先・vCardの値を名刺の項目へ写す。
+    /// 名刺はメール・住所・URLを1件ずつしか持てないため、2件目以降はメモへ残して取りこぼさない。
+    /// `supplement`は`CNContactVCardSerialization`が読まない読み仮名（vCard 4.0の`SORT-AS`等）の補完に使う。
+    nonisolated init(cnContact c: CNContact, supplement: VCardReadingSupplement = .empty) {
         lastName   = c.familyName
         firstName  = c.givenName
         company    = c.organizationName
         department = c.departmentName
         title      = c.jobTitle
-        phone     = c.phoneNumbers.first?.value.stringValue ?? ""
-        email     = c.emailAddresses.first?.value as String? ?? ""
-        address   = c.postalAddresses.first.map {
+
+        lastNameReading = ImportedReadingNormalizer.normalize(
+            Self.value(c, CNContactPhoneticFamilyNameKey) { $0.phoneticFamilyName }
+                ?? supplement.lastNameReading
+        )
+        firstNameReading = ImportedReadingNormalizer.normalize(
+            Self.value(c, CNContactPhoneticGivenNameKey) { $0.phoneticGivenName }
+                ?? supplement.firstNameReading
+        )
+        companyReading = ImportedReadingNormalizer.normalize(
+            Self.value(c, CNContactPhoneticOrganizationNameKey) { $0.phoneticOrganizationName }
+                ?? supplement.companyReading
+        )
+
+        var phones: [String] = []
+        for labeled in c.phoneNumbers {
+            let number = Self.stripTelScheme(labeled.value.stringValue)
+            if !number.isEmpty, !phones.contains(number) {
+                phones.append(number)
+            }
+        }
+        phone = phones.joined(separator: "\n")
+
+        let emails = c.emailAddresses.map { $0.value as String }.filter { !$0.isEmpty }
+        let addresses = c.postalAddresses.map {
             CNPostalAddressFormatter.string(from: $0.value, style: .mailingAddress)
-        } ?? ""
-        website   = c.urlAddresses.first?.value as String? ?? ""
-        notes     = ""
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        let urls = c.urlAddresses.map { $0.value as String }.filter { !$0.isEmpty }
+        email   = emails.first ?? ""
+        address = addresses.first ?? ""
+        website = urls.first ?? ""
+
+        // CNContactStore経由ではNotes entitlementが必要なため、キーが取得済みのときだけ読む。
+        var noteLines: [String] = []
+        if c.isKeyAvailable(CNContactNoteKey) {
+            let note = c.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !note.isEmpty { noteLines.append(note) }
+        }
+        noteLines += emails.dropFirst().map { "メール: \($0)" }
+        noteLines += addresses.dropFirst().map { "住所: \($0)" }
+        noteLines += urls.dropFirst().map { "URL: \($0)" }
+        notes = noteLines.joined(separator: "\n")
+    }
+
+    /// 未取得キーへのアクセスは例外になるため、取得済みかを確かめてから空でない値だけを返す。
+    private nonisolated static func value(
+        _ contact: CNContact,
+        _ key: String,
+        _ read: (CNContact) -> String
+    ) -> String? {
+        guard contact.isKeyAvailable(key) else { return nil }
+        let value = read(contact).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// vCard 4.0の`TEL;VALUE=uri:tel:+81-...`は`tel:`付きで渡されるため取り除く。
+    private nonisolated static func stripTelScheme(_ number: String) -> String {
+        let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("tel:") else { return trimmed }
+        return String(trimmed.dropFirst(4))
     }
 }
 
@@ -308,6 +379,9 @@ private actor ContactsStoreWorker {
             CNContactEmailAddressesKey as CNKeyDescriptor,
             CNContactPostalAddressesKey as CNKeyDescriptor,
             CNContactUrlAddressesKey as CNKeyDescriptor,
+            CNContactPhoneticFamilyNameKey as CNKeyDescriptor,
+            CNContactPhoneticGivenNameKey as CNKeyDescriptor,
+            CNContactPhoneticOrganizationNameKey as CNKeyDescriptor,
         ]
         let request = CNContactFetchRequest(keysToFetch: keys)
         request.sortOrder = .familyName

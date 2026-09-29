@@ -10,6 +10,7 @@ nonisolated enum CardListPresentationDestination: Equatable, Sendable {
         case paywall
         case mockOCRForm
         case shareExport(url: URL)
+        case vCardFilePicker
     }
 
     enum Confirmation: Equatable, Sendable {
