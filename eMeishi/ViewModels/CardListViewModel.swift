@@ -990,6 +990,8 @@ class CardListViewModel: ObservableObject {
     private let cardDataTransferWorker = CardDataTransferWorker()
     private let contactImportStoreWriter = ContactImportStoreWriter()
     private let vCardImportService = VCardImportService()
+    private var pendingIncomingVCardFiles: [URL] = []
+    private var incomingVCardImportTask: Task<Void, Never>?
     private let bulkAutoTagWriter = BulkAutoTagWriter()
     private let cardImageCleanupWriter = CardImageCleanupWriter()
     private let searchDebounceDuration: Duration
@@ -2332,6 +2334,37 @@ class CardListViewModel: ObservableObject {
             return
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - 共有シート・「このAppで開く」から受け取ったvCard（Issue #204）
+
+    /// 受け取った.vcfを順に取り込む。連絡先・ファイル選択からの取り込み中に届いた場合も捨てずに待つ。
+    func enqueueIncomingVCardFile(_ url: URL) {
+        pendingIncomingVCardFiles.append(url)
+        guard incomingVCardImportTask == nil else { return }
+        incomingVCardImportTask = Task { [weak self] in
+            await self?.importPendingIncomingVCardFiles()
+        }
+    }
+
+    /// 受け取り済みの.vcfをすべて取り込み終えるまで待つ。
+    func waitForIncomingVCardImports() async {
+        await incomingVCardImportTask?.value
+    }
+
+    private func importPendingIncomingVCardFiles() async {
+        defer { incomingVCardImportTask = nil }
+        while !pendingIncomingVCardFiles.isEmpty {
+            // importFromVCardFileは取り込み中の呼び出しを無視するため、先行する取り込みの完了を待つ。
+            while isImporting {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            let url = pendingIncomingVCardFiles.removeFirst()
+            await importFromVCardFile(
+                at: url,
+                removeAfterReading: IncomingVCardFile.isCopyInsideApp(url)
+            )
         }
     }
 

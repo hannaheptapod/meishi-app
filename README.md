@@ -8,7 +8,7 @@ iPhone・iPadで名刺をスマートに管理するアプリ。カメラで撮�
 - **バックグラウンド読み取り** — 処理段階・推定残り時間を表示し、Dynamic Island／システムLive Activityから進捗を確認可能
 - **ふりがな自動生成** — 名前・会社名のふりがなを自動取得。名前順・会社名順ソートに使用
 - **連絡先連携** — iPhoneの連絡先へワンタップ保存、連絡先からのインポート
-- **vCard インポート** — 他の名刺アプリから書き出した .vcf（2.1/3.0/4.0・UTF-8/Shift_JIS）を読み仮名込みで取り込み
+- **vCard インポート** — 他の名刺アプリから書き出した .vcf（2.1/3.0/4.0・UTF-8/Shift_JIS）を読み仮名込みで取り込み。ファイル選択に加え、他アプリの共有シート・「このAppで開く」からも受け取り可能
 - **CSV / vCard エクスポート** — Excel対応のCSV（UTF-8 BOM付き）、vCard 3.0/4.0
 - **名刺画像の削除** — 編集画面で1枚ずつ、または設定から全名刺の画像を一括削除し、文字情報だけを残して容量を節約
 - **重複検出 + マージ** — Levenshtein距離ベースの類似度判定 + AIによるボーダーライン二次判定
@@ -180,6 +180,7 @@ meishi-app/
 │   │   ├── ExternalURLNormalizer.swift          # WebサイトURLのhttps補完・許可スキーム判定
 │   │   ├── FieldDetector.swift                 # OCR 行からフィールド種別の初期判定
 │   │   ├── FlowLayout.swift                    # SwiftUI タグ折返しレイアウト
+│   │   ├── IncomingVCardFile.swift             # 共有シート等から受け取った.vcfの判定・アプリ内コピーの削除可否
 │   │   ├── LegalEntityTerms.swift              # 法人格リスト一元管理（漢字・読み・英語・略称）
 │   │   ├── NameProcessor.swift                 # 名前の分割・正規化
 │   │   ├── NameReadingGenerator.swift          # ふりがな自動生成（CFStringTokenizer）

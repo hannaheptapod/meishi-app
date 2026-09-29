@@ -32,6 +32,8 @@ final class AppRootPresentationRequests: ObservableObject {
     @Published private(set) var queue = AppLaunchAlertQueue()
     /// 設定sheetの提示要求。実際の表示・dismissはCardAdditionFlowStateだけが所有する
     @Published private(set) var isSettingsSheetPending = false
+    /// 共有シート・「このAppで開く」から受け取った.vcf。一覧への取り込みはContentViewが行う
+    @Published private(set) var pendingIncomingVCardFiles: [URL] = []
 
     func enqueue(_ alert: AppLaunchAlert) {
         var updatedQueue = queue
@@ -56,5 +58,17 @@ final class AppRootPresentationRequests: ObservableObject {
         guard isSettingsSheetPending else { return false }
         isSettingsSheetPending = false
         return true
+    }
+
+    func enqueueIncomingVCardFile(_ url: URL) {
+        pendingIncomingVCardFiles.append(url)
+    }
+
+    /// 受け取った順に全件を取り出す。
+    func consumeIncomingVCardFiles() -> [URL] {
+        guard !pendingIncomingVCardFiles.isEmpty else { return [] }
+        let urls = pendingIncomingVCardFiles
+        pendingIncomingVCardFiles = []
+        return urls
     }
 }

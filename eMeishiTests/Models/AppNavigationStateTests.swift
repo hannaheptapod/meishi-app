@@ -139,6 +139,34 @@ struct AppNavigationStateTests {
         #expect(!requests.consumeSettingsSheetRequest())
     }
 
+    @Test func incomingVCardFilesAreHeldByRootPresentationRequestsInArrivalOrder() {
+        let requests = AppRootPresentationRequests()
+        let first = URL(fileURLWithPath: "/synthetic/Inbox/first.vcf")
+        let second = URL(fileURLWithPath: "/synthetic/Inbox/second.vcf")
+
+        #expect(requests.consumeIncomingVCardFiles().isEmpty)
+
+        requests.enqueueIncomingVCardFile(first)
+        requests.enqueueIncomingVCardFile(second)
+        #expect(requests.consumeIncomingVCardFiles() == [first, second])
+        #expect(requests.pendingIncomingVCardFiles.isEmpty)
+        #expect(requests.consumeIncomingVCardFiles().isEmpty)
+    }
+
+    @Test func incomingVCardImportReturnsToTheCardsRootAndKeepsSelectionMode() {
+        let state = AppNavigationState()
+        let syntheticURI = URL(string: "x-coredata://synthetic/card/incoming-vcard")!
+        state.showCardDetail(syntheticURI)
+        state.setCardListSelectionActive(true)
+        state.selectedTab = .insights
+
+        state.prepareForIncomingVCardImport()
+
+        #expect(state.selectedTab == .cards)
+        #expect(state.activeCardsRoute == nil)
+        #expect(state.cardListRootMode == .selecting)
+    }
+
     @Test func navigationBackReturnsEveryDestinationToTheCardsRoot() {
         let state = AppNavigationState()
         let syntheticURI = URL(string: "x-coredata://synthetic/card/back-route")!
