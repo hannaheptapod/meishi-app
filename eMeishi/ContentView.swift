@@ -62,6 +62,8 @@ struct ContentView: View {
         }
         .onAppear {
             clearStaleSplitSelectionIfNeeded()
+            // ストア読み込み中に受け取った.vcfは、ContentView生成後にここで取り込む。
+            importIncomingVCardFiles()
             guard ScreenshotMode.isActive else { return }
             switch ScreenshotMode.startScreen {
             case "Insights": navigationState.selectedTab = .insights
@@ -73,6 +75,9 @@ struct ContentView: View {
         }
         .onChange(of: navigationState.activeCardsRoute) { _, _ in
             syncCompactCardsRoutePresentation()
+        }
+        .onChange(of: rootPresentationRequests.pendingIncomingVCardFiles) { _, _ in
+            importIncomingVCardFiles()
         }
         .onChange(of: horizontalSizeClass) { _, _ in
             syncCompactCardsRoutePresentation()
@@ -407,6 +412,17 @@ struct ContentView: View {
             return true
         case .insights:
             return navigationState.insightsPath.isEmpty
+        }
+    }
+
+    /// 共有シート・「このAppで開く」から受け取った.vcfを取り込む（Issue #204）。
+    /// 結果は一覧のalertで示すため、先に名刺タブの一覧へ戻す。
+    private func importIncomingVCardFiles() {
+        let urls = rootPresentationRequests.consumeIncomingVCardFiles()
+        guard !urls.isEmpty else { return }
+        navigationState.prepareForIncomingVCardImport()
+        for url in urls {
+            cardListViewModel.enqueueIncomingVCardFile(url)
         }
     }
 

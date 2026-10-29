@@ -19,6 +19,8 @@ struct EMeishiApp: App {
     @State private var protectionRenderGeneration = UUID()
     @State private var renderedProtectionGeneration: UUID?
     @State private var didStartServices = false
+    /// ロック中に受け取った.vcf。取り込み結果のalertがロック画面より前面に出るため、解除まで保留する
+    @State private var heldIncomingVCardFiles: [URL] = []
 
     private let isUITest = ProcessInfo.processInfo.arguments.contains("-UITestMode")
     @StateObject private var settings = SettingsStore.shared
@@ -74,6 +76,12 @@ struct EMeishiApp: App {
             )
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
+            }
+            .onOpenURL { url in
+                receiveOpenedURL(url)
+            }
+            .onChange(of: isUnlocked) { _, _ in
+                releaseHeldIncomingVCardFilesIfAccessible()
             }
             .task(id: storeLoadMonitor.state) {
                 guard storeLoadMonitor.state == .loaded,
@@ -199,9 +207,39 @@ struct EMeishiApp: App {
             backgroundedAt = nil
             renderedProtectionGeneration = nil
             protectionRenderGeneration = UUID()
+            releaseHeldIncomingVCardFilesIfAccessible()
         @unknown default:
             break
         }
+    }
+
+    /// 共有シート・「このAppで開く」から渡された.vcf（Issue #204）。
+    /// ここでは受け取るだけで、取り込みはContentViewが一覧のViewModelへ渡す。
+    private func receiveOpenedURL(_ url: URL) {
+        guard IncomingVCardFile.isVCard(url) else { return }
+        heldIncomingVCardFiles.append(url)
+        releaseHeldIncomingVCardFilesIfAccessible()
+    }
+
+    private func releaseHeldIncomingVCardFilesIfAccessible() {
+        guard !heldIncomingVCardFiles.isEmpty, isContentAccessible else { return }
+        let urls = heldIncomingVCardFiles
+        heldIncomingVCardFiles = []
+        for url in urls {
+            rootPresentationRequests.enqueueIncomingVCardFile(url)
+        }
+    }
+
+    /// ロック画面が出ておらず、この後の復帰処理でロックされる見込みもない状態。
+    private var isContentAccessible: Bool {
+        guard settings.isAppLockEnabled, !isUITest else { return true }
+        guard isUnlocked else { return false }
+        // scenePhaseが.activeになる前にURLが届いた場合、猶予を過ぎていれば直後にロックされる。
+        if let backgroundedAt,
+           Date().timeIntervalSince(backgroundedAt) >= Double(settings.lockGracePeriodSeconds) {
+            return false
+        }
+        return true
     }
 
     private func markProtectionOverlayRendered(generation: UUID) {

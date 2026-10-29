@@ -100,6 +100,13 @@ final class AppNavigationState: ObservableObject {
         cardListRootMode = .browsing
     }
 
+    /// 共有シート等から受け取ったvCardの取り込み結果は一覧上のalertで示すため、
+    /// 名刺タブの一覧へ戻す。選択モードは解除しない（alertは選択モード中でも表示できる）
+    func prepareForIncomingVCardImport() {
+        selectedTab = .cards
+        activeCardsRoute = nil
+    }
+
     func requestCardAddition() {
         isCardAdditionRequested = true
     }
